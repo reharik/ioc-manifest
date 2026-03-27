@@ -182,9 +182,17 @@ Re-run \`npm run gen:manifest\` after adding/removing injectable factories.
     bundlesManifest === undefined
       ? "undefined"
       : JSON.stringify(bundlesManifest, null, 2);
+  const manifestTypeImports =
+    bundlesManifest === undefined
+      ? "IocContractManifest"
+      : "IocBundlesManifest, IocContractManifest";
+  const bundlesExportLine =
+    bundlesManifest === undefined
+      ? "export const iocBundlesManifest = undefined;"
+      : `export const iocBundlesManifest: IocBundlesManifest = ${bundlesSource};`;
 
   return `${header}
-import type { IocBundlesManifest, IocContractManifest } from "${manifestImportFromPackage}";
+import type { ${manifestTypeImports} } from "${manifestImportFromPackage}";
 ${importLines.join("\n")}
 
 export const iocModuleImports = [
@@ -193,8 +201,7 @@ ${moduleArrayLines.join("\n")}
 
 export const iocManifestByContract: IocContractManifest =
 ${contractLines.join("\n")};
-
-export const iocBundlesManifest: IocBundlesManifest | undefined = ${bundlesSource};
+${bundlesExportLine}
 `;
 };
 

@@ -114,8 +114,7 @@ export const iocManifestByContract: IocContractManifest = {
     },
   },
 };
-
-export const iocBundlesManifest: IocBundlesManifest | undefined = {
+export const iocBundlesManifest: IocBundlesManifest = {
   services: {
     album: [
       {
