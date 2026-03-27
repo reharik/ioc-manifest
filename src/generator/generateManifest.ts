@@ -20,6 +20,11 @@ import type { ManifestRuntimePaths } from "./manifestPaths.js";
 import { buildBundlePlan } from "../bundles/resolveBundlePlan.js";
 
 const require = createRequire(import.meta.url);
+const packageJson = require("../../package.json") as { name?: unknown };
+const packageName =
+  typeof packageJson.name === "string" && packageJson.name.length > 0
+    ? packageJson.name
+    : "ioc-manifest";
 const prettierCliPath = path.join(
   path.dirname(require.resolve("prettier/package.json")),
   "bin",
@@ -201,7 +206,7 @@ export const generateManifest = async (
     plans,
     bundlesPlan,
     manifestOutPath,
-    projectRoot,
+    packageName,
   );
 
   formatGeneratedFileWithPrettier(manifestOutPath, projectRoot);

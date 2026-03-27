@@ -146,23 +146,10 @@ const serializeMetadataBlock = (
   return lines.join("\n");
 };
 
-const getCoreManifestImportSpecifier = (
-  manifestOutPath: string,
-  projectRoot: string,
-): string => {
-  const manifestDir = path.dirname(manifestOutPath);
-  const coreDir = path.join(projectRoot, "src", "core");
-  let rel = path.relative(manifestDir, coreDir).replace(/\\/g, "/");
-  if (!rel.startsWith(".")) {
-    rel = `./${rel}`;
-  }
-  return `${rel}/manifest.js`;
-};
-
 const serializeIocContractManifestSource = (
   manifest: IocContractManifest,
   bundlesManifest: IocBundlesManifest | undefined,
-  manifestImportFromGenerated: string,
+  manifestImportFromPackage: string,
   importLines: string[],
   moduleArrayLines: string[],
 ): string => {
@@ -197,7 +184,7 @@ Re-run \`npm run gen:manifest\` after adding/removing injectable factories.
       : JSON.stringify(bundlesManifest, null, 2);
 
   return `${header}
-import type { IocBundlesManifest, IocContractManifest } from "${manifestImportFromGenerated}";
+import type { IocBundlesManifest, IocContractManifest } from "${manifestImportFromPackage}";
 ${importLines.join("\n")}
 
 export const iocModuleImports = [
@@ -322,7 +309,7 @@ export const writeManifest = async (
   plans: ResolvedContractRegistration[],
   bundlesPlan: ResolvedBundleTree | undefined,
   manifestOutPath: string,
-  projectRoot: string,
+  manifestImportFromPackage: string,
 ): Promise<void> => {
   const sortedFactories = sortFactoriesForManifest(acceptedFactories);
   const modules = uniqueModuleRows(sortedFactories);
@@ -354,15 +341,10 @@ export const writeManifest = async (
     return `  ${alias},`;
   });
 
-  const manifestImportFromGenerated = getCoreManifestImportSpecifier(
-    manifestOutPath,
-    projectRoot,
-  );
-
   const manifestSource = serializeIocContractManifestSource(
     iocManifestByContract,
     iocBundlesManifest,
-    manifestImportFromGenerated,
+    manifestImportFromPackage,
     importLines,
     moduleArrayLines,
   );

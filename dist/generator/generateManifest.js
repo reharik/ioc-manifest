@@ -11,6 +11,10 @@ import { buildRegistrationPlan } from "./resolveRegistrationPlan.js";
 import { writeManifest } from "./writeManifest.js";
 import { buildBundlePlan } from "../bundles/resolveBundlePlan.js";
 const require = createRequire(import.meta.url);
+const packageJson = require("../../package.json");
+const packageName = typeof packageJson.name === "string" && packageJson.name.length > 0
+    ? packageJson.name
+    : "ioc-manifest";
 const prettierCliPath = path.join(path.dirname(require.resolve("prettier/package.json")), "bin", "prettier.cjs");
 /**
  * Format via the local `prettier` dependency (not `npx`), so generation works regardless of cwd
@@ -102,7 +106,7 @@ export const generateManifest = async (overrides) => {
     const { contractMap, acceptedFactories } = discoverFactories(files, program, projectRoot, factoryExportPrefix, { srcDir, generatedDir }, config);
     const plans = buildRegistrationPlan(contractMap, config);
     const bundlesPlan = buildBundlePlan(config?.bundles, plans);
-    await writeManifest(acceptedFactories, plans, bundlesPlan, manifestOutPath, projectRoot);
+    await writeManifest(acceptedFactories, plans, bundlesPlan, manifestOutPath, packageName);
     formatGeneratedFileWithPrettier(manifestOutPath, projectRoot);
     formatGeneratedFileWithPrettier(path.join(path.dirname(manifestOutPath), "ioc-registry.types.ts"), projectRoot);
     console.log(`Generated ${path.relative(projectRoot, manifestOutPath)} — ${acceptedFactories.length} module factory(ies), ${contractMap.size} contract(s).`);

@@ -107,16 +107,7 @@ const serializeMetadataBlock = (meta) => {
     }
     return lines.join("\n");
 };
-const getCoreManifestImportSpecifier = (manifestOutPath, projectRoot) => {
-    const manifestDir = path.dirname(manifestOutPath);
-    const coreDir = path.join(projectRoot, "src", "core");
-    let rel = path.relative(manifestDir, coreDir).replace(/\\/g, "/");
-    if (!rel.startsWith(".")) {
-        rel = `./${rel}`;
-    }
-    return `${rel}/manifest.js`;
-};
-const serializeIocContractManifestSource = (manifest, bundlesManifest, manifestImportFromGenerated, importLines, moduleArrayLines) => {
+const serializeIocContractManifestSource = (manifest, bundlesManifest, manifestImportFromPackage, importLines, moduleArrayLines) => {
     const header = `/* AUTO-GENERATED. DO NOT EDIT.
 Re-run \`npm run gen:manifest\` after adding/removing injectable factories.
 */
@@ -140,7 +131,7 @@ Re-run \`npm run gen:manifest\` after adding/removing injectable factories.
         ? "undefined"
         : JSON.stringify(bundlesManifest, null, 2);
     return `${header}
-import type { IocBundlesManifest, IocContractManifest } from "${manifestImportFromGenerated}";
+import type { IocBundlesManifest, IocContractManifest } from "${manifestImportFromPackage}";
 ${importLines.join("\n")}
 
 export const iocModuleImports = [
@@ -231,7 +222,7 @@ const replaceFileFromTemp = async (targetPath, contents) => {
         throw error;
     }
 };
-export const writeManifest = async (acceptedFactories, plans, bundlesPlan, manifestOutPath, projectRoot) => {
+export const writeManifest = async (acceptedFactories, plans, bundlesPlan, manifestOutPath, manifestImportFromPackage) => {
     const sortedFactories = sortFactoriesForManifest(acceptedFactories);
     const modules = uniqueModuleRows(sortedFactories);
     const moduleIndexByPath = buildModuleIndexByPath(modules);
@@ -252,8 +243,7 @@ export const writeManifest = async (acceptedFactories, plans, bundlesPlan, manif
         }
         return `  ${alias},`;
     });
-    const manifestImportFromGenerated = getCoreManifestImportSpecifier(manifestOutPath, projectRoot);
-    const manifestSource = serializeIocContractManifestSource(iocManifestByContract, iocBundlesManifest, manifestImportFromGenerated, importLines, moduleArrayLines);
+    const manifestSource = serializeIocContractManifestSource(iocManifestByContract, iocBundlesManifest, manifestImportFromPackage, importLines, moduleArrayLines);
     await replaceFileFromTemp(manifestOutPath, manifestSource);
     const typesPath = path.join(path.dirname(manifestOutPath), "ioc-registry.types.ts");
     const typesSource = buildCradleTypeSource(plans, bundlesPlan);

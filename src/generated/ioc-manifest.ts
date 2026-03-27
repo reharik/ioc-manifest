@@ -2,10 +2,7 @@
 Re-run `npm run gen:manifest` after adding/removing injectable factories.
 */
 
-import type {
-  IocBundlesManifest,
-  IocContractManifest,
-} from "../core/manifest.js";
+import type { IocBundlesManifest, IocContractManifest } from "ioc-manifest";
 import * as ioc_examples_a_single_implementation from "../examples/a-single-implementation.js";
 import * as ioc_examples_b_multiple_implementations from "../examples/b-multiple-implementations.js";
 import * as ioc_examples_c_default_selection from "../examples/c-default-selection.js";
