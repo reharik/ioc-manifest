@@ -2,7 +2,7 @@
 Re-run `npm run gen:manifest` after adding/removing injectable factories.
 */
 
-import type { IocBundlesManifest, IocContractManifest } from "ioc-manifest";
+import type { IocContractManifest } from "ioc-manifest";
 import * as ioc_examples_a_single_implementation from "../examples/a-single-implementation.js";
 import * as ioc_examples_b_multiple_implementations from "../examples/b-multiple-implementations.js";
 import * as ioc_examples_c_default_selection from "../examples/c-default-selection.js";
@@ -114,31 +114,4 @@ export const iocManifestByContract: IocContractManifest = {
     },
   },
 };
-export const iocBundlesManifest: IocBundlesManifest = {
-  services: {
-    album: [
-      {
-        contractName: "AlbumService",
-        registrationKey: "albumService",
-      },
-    ],
-    media: {
-      read: [
-        {
-          contractName: "MediaStorage",
-          registrationKey: "mediaStorage",
-        },
-      ],
-    },
-    read: [
-      {
-        contractName: "AlbumService",
-        registrationKey: "albumService",
-      },
-      {
-        contractName: "MediaStorage",
-        registrationKey: "mediaStorage",
-      },
-    ],
-  },
-};
+export const iocBundlesManifest = undefined;

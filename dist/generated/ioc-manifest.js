@@ -110,32 +110,5 @@ export const iocManifestByContract = {
         },
     },
 };
-export const iocBundlesManifest = {
-    services: {
-        album: [
-            {
-                contractName: "AlbumService",
-                registrationKey: "albumService",
-            },
-        ],
-        media: {
-            read: [
-                {
-                    contractName: "MediaStorage",
-                    registrationKey: "mediaStorage",
-                },
-            ],
-        },
-        read: [
-            {
-                contractName: "AlbumService",
-                registrationKey: "albumService",
-            },
-            {
-                contractName: "MediaStorage",
-                registrationKey: "mediaStorage",
-            },
-        ],
-    },
-};
+export const iocBundlesManifest = undefined;
 //# sourceMappingURL=ioc-manifest.js.map
