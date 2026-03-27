@@ -1,5 +1,34 @@
 import type { ResolvedContractRegistration } from "../generator/resolveRegistrationPlan.js";
 
+const collectReservedCradleKeys = (
+  plans: readonly ResolvedContractRegistration[],
+): Set<string> => {
+  const reserved = new Set<string>();
+  for (const plan of plans) {
+    reserved.add(plan.contractKey);
+    if (plan.collectionKey !== undefined) {
+      reserved.add(plan.collectionKey);
+    }
+    for (const impl of plan.implementations) {
+      reserved.add(impl.registrationKey);
+    }
+  }
+  return reserved;
+};
+
+const assertBundleRootKeysDoNotCollide = (
+  bundleRoot: ResolvedBundleTree,
+  reserved: Set<string>,
+): void => {
+  for (const key of Object.keys(bundleRoot)) {
+    if (reserved.has(key)) {
+      throw new Error(
+        `[ioc-config] bundles root key ${JSON.stringify(key)} collides with an existing Awilix registration key (contract default, implementation, or collection). Choose a different bundles property name.`,
+      );
+    }
+  }
+};
+
 export type IocBundleReference = {
   $bundleRef: string;
 };
@@ -253,5 +282,6 @@ export const buildBundlePlan = (
   if (Array.isArray(resolved)) {
     throw new Error("[ioc-config] bundles root must be an object");
   }
+  assertBundleRootKeysDoNotCollide(resolved, collectReservedCradleKeys(plans));
   return resolved;
 };

@@ -124,11 +124,13 @@ const registerBundles = (container, bundlesManifest) => {
     if (bundlesManifest === undefined) {
         return;
     }
-    registerPair(container, {
-        iocBundles: asFunction((cradle) => {
-            return resolveBundleNodeFromCradle(cradle, bundlesManifest);
-        }),
-    });
+    const rootKeys = Object.keys(bundlesManifest).sort((a, b) => a.localeCompare(b));
+    for (const key of rootKeys) {
+        const node = bundlesManifest[key];
+        registerPair(container, {
+            [key]: asFunction((cradle) => resolveBundleNodeFromCradle(cradle, node), { lifetime: Lifetime.TRANSIENT }),
+        });
+    }
 };
 /**
  * Registers discovered injectable factories from a generated manifest into an Awilix container.

@@ -66,7 +66,7 @@ describe("registerIocFromManifest", () => {
   });
 
   describe("When resolving generated bundles", () => {
-    it("should preserve configured shape and resolve leaves to contract defaults", () => {
+    it("should register bundle roots on the cradle and resolve leaves to contract defaults", () => {
       const container = createContainer<IocGeneratedCradle>();
       registerIocFromManifest(
         container,
@@ -75,20 +75,18 @@ describe("registerIocFromManifest", () => {
         iocBundlesManifest,
       );
 
-      const bundles = container.resolve("iocBundles") as {
-        services: {
-          album: AlbumService[];
-          media: { read: MediaStorage[] };
-          read: Array<AlbumService | MediaStorage>;
-        };
+      const services = container.resolve("services") as {
+        album: AlbumService[];
+        media: { read: MediaStorage[] };
+        read: Array<AlbumService | MediaStorage>;
       };
 
-      assert.strictEqual(typeof bundles, "object");
-      assert.strictEqual(bundles.services.album.length, 1);
-      assert.strictEqual(bundles.services.album[0]?.describe().includes("albums"), true);
-      assert.strictEqual(bundles.services.media.read.length, 1);
-      assert.strictEqual(bundles.services.media.read[0]?.label, "direct-contract");
-      assert.strictEqual(bundles.services.read.length, 2);
+      assert.strictEqual(typeof services, "object");
+      assert.strictEqual(services.album.length, 1);
+      assert.strictEqual(services.album[0]?.describe().includes("albums"), true);
+      assert.strictEqual(services.media.read.length, 1);
+      assert.strictEqual(services.media.read[0]?.label, "direct-contract");
+      assert.strictEqual(services.read.length, 2);
     });
   });
 });

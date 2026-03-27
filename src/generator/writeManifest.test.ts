@@ -147,7 +147,10 @@ describe("writeManifest", () => {
       assert.ok(!manifestSource.includes("OLD_CONTENT_SHOULD_BE_REPLACED"));
       assert.ok(!typesSource.includes("OLD_TYPES_SHOULD_BE_REPLACED"));
       assert.ok(manifestSource.includes("iocManifestByContract"));
-      assert.ok(typesSource.includes("export interface IocGeneratedCradle"));
+      assert.ok(typesSource.includes("export interface IocGeneratedTypes"));
+      assert.ok(
+        typesSource.includes("export type IocGeneratedCradle = IocGeneratedTypes"),
+      );
 
       const files = await fs.readdir(generatedDir);
       assert.ok(

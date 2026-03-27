@@ -209,11 +209,18 @@ const registerBundles = <TCradle extends object>(
   if (bundlesManifest === undefined) {
     return;
   }
-  registerPair<TCradle>(container, {
-    iocBundles: asFunction((cradle: TCradle) => {
-      return resolveBundleNodeFromCradle(cradle, bundlesManifest);
-    }),
-  });
+  const rootKeys = Object.keys(bundlesManifest).sort((a, b) =>
+    a.localeCompare(b),
+  );
+  for (const key of rootKeys) {
+    const node = bundlesManifest[key]!;
+    registerPair<TCradle>(container, {
+      [key]: asFunction(
+        (cradle: TCradle) => resolveBundleNodeFromCradle(cradle, node),
+        { lifetime: Lifetime.TRANSIENT },
+      ),
+    });
+  }
 };
 
 /**

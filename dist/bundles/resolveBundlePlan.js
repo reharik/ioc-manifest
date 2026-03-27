@@ -1,3 +1,23 @@
+const collectReservedCradleKeys = (plans) => {
+    const reserved = new Set();
+    for (const plan of plans) {
+        reserved.add(plan.contractKey);
+        if (plan.collectionKey !== undefined) {
+            reserved.add(plan.collectionKey);
+        }
+        for (const impl of plan.implementations) {
+            reserved.add(impl.registrationKey);
+        }
+    }
+    return reserved;
+};
+const assertBundleRootKeysDoNotCollide = (bundleRoot, reserved) => {
+    for (const key of Object.keys(bundleRoot)) {
+        if (reserved.has(key)) {
+            throw new Error(`[ioc-config] bundles root key ${JSON.stringify(key)} collides with an existing Awilix registration key (contract default, implementation, or collection). Choose a different bundles property name.`);
+        }
+    }
+};
 const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const isBundleReference = (value) => {
     if (!isRecord(value)) {
@@ -145,6 +165,7 @@ export const buildBundlePlan = (bundles, plans) => {
     if (Array.isArray(resolved)) {
         throw new Error("[ioc-config] bundles root must be an object");
     }
+    assertBundleRootKeysDoNotCollide(resolved, collectReservedCradleKeys(plans));
     return resolved;
 };
 //# sourceMappingURL=resolveBundlePlan.js.map

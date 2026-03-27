@@ -184,31 +184,43 @@ const buildCradleTypeSource = (plans, bundlesPlan) => {
             propertyLines.push(`  ${plan.collectionKey}: Record<${union}, ${typeName}>;`);
         }
     }
-    const bundleTypeLines = [];
+    const tsPropName = (key) => /^[a-zA-Z_$][\w$]*$/.test(key) ? key : JSON.stringify(key);
     const appendBundleNodeType = (node, indent) => {
         if (Array.isArray(node)) {
-            const contractNames = Array.from(new Set(node.map((leaf) => leaf.contractName))).sort((a, b) => a.localeCompare(b));
-            const union = contractNames.length > 0 ? contractNames.join(" | ") : "never";
+            const seen = new Set();
+            const order = [];
+            for (const leaf of node) {
+                if (!seen.has(leaf.contractName)) {
+                    seen.add(leaf.contractName);
+                    order.push(leaf.contractName);
+                }
+            }
+            const union = order.length > 0 ? order.join(" | ") : "never";
             return `ReadonlyArray<${union}>`;
         }
-        const lines = ["{"];
+        const lines = [`${indent}{`];
         Object.entries(node).forEach(([key, value]) => {
-            lines.push(`${indent}  ${JSON.stringify(key)}: ${appendBundleNodeType(value, `${indent}  `)};`);
+            lines.push(`${indent}  ${tsPropName(key)}: ${appendBundleNodeType(value, `${indent}  `)};`);
         });
         lines.push(`${indent}}`);
         return lines.join("\n");
     };
     if (bundlesPlan !== undefined) {
-        bundleTypeLines.push(`export interface IocGeneratedBundles ${appendBundleNodeType(bundlesPlan, "")}`);
-        propertyLines.push("  iocBundles: IocGeneratedBundles;");
+        const bundleRootKeys = Object.keys(bundlesPlan).sort((a, b) => a.localeCompare(b));
+        for (const key of bundleRootKeys) {
+            const node = bundlesPlan[key];
+            propertyLines.push(`  ${tsPropName(key)}: ${appendBundleNodeType(node, "")};`);
+        }
     }
     const header = `/* AUTO-GENERATED. DO NOT EDIT.
 Re-run \`npm run gen:manifest\` after changing factories or IoC config.
 */
 `;
-    return `${header}${importLines.length > 0 ? importLines.join("\n") + "\n\n" : ""}${bundleTypeLines.length > 0 ? `${bundleTypeLines.join("\n")}\n\n` : ""}export interface IocGeneratedCradle {
+    return `${header}${importLines.length > 0 ? importLines.join("\n") + "\n\n" : ""}export interface IocGeneratedTypes {
 ${propertyLines.join("\n")}
 }
+
+export type IocGeneratedCradle = IocGeneratedTypes;
 `;
 };
 const replaceFileFromTemp = async (targetPath, contents) => {

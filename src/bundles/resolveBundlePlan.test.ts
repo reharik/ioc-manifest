@@ -159,4 +159,16 @@ describe("buildBundlePlan", () => {
       );
     });
   });
+
+  describe("When a bundle root key collides with a registration key", () => {
+    it("should throw with a clear message", () => {
+      const config: IocBundlesConfig = {
+        mediaStorage: ["ListAlbums"],
+      };
+      assert.throws(
+        () => buildBundlePlan(config, plans),
+        /bundles root key "mediaStorage" collides/,
+      );
+    });
+  });
 });
