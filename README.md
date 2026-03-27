@@ -29,6 +29,24 @@ The repository includes a generator that discovers factories using TypeScript ty
 
 Generated files are written via atomic temp-file replacement (no pre-delete of existing generated outputs).
 
+### Calling the generator from your app or build script
+
+`generateManifest` is exported from the package root so consumers do not need to deep-import `src/generator/...`:
+
+```ts
+import { generateManifest } from "ioc-manifest";
+
+// Uses project root + default discovery; optional explicit ioc.config path:
+await generateManifest({ iocConfigPath: "./src/ioc.config.ts" });
+```
+
+Related exports for customizing paths and merging with `ioc.config.ts`:
+
+- `resolveManifestOptions`, `mergeManifestOptionsWithIocConfig`, `DEFAULT_MANIFEST_OPTIONS`
+- Types: `ManifestOptions`, `ManifestRuntimePaths`
+
+The generator depends on `typescript`, `fast-glob`, and `prettier` at install time (they are listed as `dependencies` of `ioc-manifest`).
+
 ## Install
 
 ```bash

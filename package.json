@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "files": [
+    "dist"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -14,17 +17,19 @@
   "scripts": {
     "clean:dist": "rm -rf dist",
     "build": "npm run clean:dist && tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build",
     "test": "node --import tsx --test src/core/resolveRegistrationKey.test.ts src/generator/resolveRegistrationPlan.test.ts src/generator/contractTypeImport.integration.test.ts src/generator/discoverFactories/discoveryStrategies.integration.test.ts src/generator/generatedTypes.integration.test.ts src/generator/writeManifest.test.ts src/runtime/bootstrap.test.ts src/runtime/bootstrap.integration.test.ts",
-    "gen:manifest": "tsx src/generator/gen-manifest.ts"
+    "gen:manifest": "tsx src/generator/gen-manifest.ts",
+    "pack:dev": "npm run build && npm pack --silent"
   },
   "dependencies": {
-    "awilix": "^12.0.5"
+    "awilix": "^12.0.5",
+    "fast-glob": "^3.3.3",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "fast-glob": "^3.3.3",
-    "prettier": "^3.4.2",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "tsx": "^4.19.2"
   }
 }
