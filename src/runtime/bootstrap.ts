@@ -6,6 +6,7 @@ import {
   type NameAndRegistrationPair,
 } from "awilix";
 import type {
+  IocBundlesManifest,
   IocContractManifest,
   IocModuleNamespace,
   ModuleFactoryManifestMetadata,
@@ -187,6 +188,34 @@ const registerImplementationCollections = <TCradle extends object>(
   }
 };
 
+const resolveBundleNodeFromCradle = <TCradle extends object>(
+  cradle: TCradle,
+  node: IocBundlesManifest[string],
+): unknown => {
+  if (Array.isArray(node)) {
+    return node.map((leaf) => cradle[leaf.registrationKey as keyof TCradle]);
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node)) {
+    out[key] = resolveBundleNodeFromCradle(cradle, value);
+  }
+  return out;
+};
+
+const registerBundles = <TCradle extends object>(
+  container: AwilixContainer<TCradle>,
+  bundlesManifest: IocBundlesManifest | undefined,
+): void => {
+  if (bundlesManifest === undefined) {
+    return;
+  }
+  registerPair<TCradle>(container, {
+    iocBundles: asFunction((cradle: TCradle) => {
+      return resolveBundleNodeFromCradle(cradle, bundlesManifest);
+    }),
+  });
+};
+
 /**
  * Registers discovered injectable factories from a generated manifest into an Awilix container.
  * Call order:
@@ -198,8 +227,10 @@ export const registerIocFromManifest = <TCradle extends object>(
   container: AwilixContainer<TCradle>,
   manifestByContract: IocContractManifest,
   moduleImports: readonly IocModuleNamespace[],
+  bundlesManifest?: IocBundlesManifest,
 ): void => {
   registerImplementationFactories(container, manifestByContract, moduleImports);
   registerContractDefaultAliases(container, manifestByContract);
   registerImplementationCollections(container, manifestByContract);
+  registerBundles(container, bundlesManifest);
 };

@@ -6,6 +6,42 @@ import type { IocConfig, IocLifetime } from "./iocConfig.js";
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const isBundleReferenceShape = (value: unknown): value is { $bundleRef: string } => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const keys = Object.keys(value);
+  if (keys.length !== 1 || keys[0] !== "$bundleRef") {
+    return false;
+  }
+  return typeof value.$bundleRef === "string" && value.$bundleRef.length > 0;
+};
+
+const validateBundlesShape = (value: unknown, pathLabel: string): void => {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => {
+      if (typeof item === "string" && item.length > 0) {
+        return;
+      }
+      if (isBundleReferenceShape(item)) {
+        return;
+      }
+      throw new Error(
+        `[ioc-config] ${pathLabel}[${index}] must be a non-empty string or { $bundleRef: string }`,
+      );
+    });
+    return;
+  }
+  if (!isRecord(value)) {
+    throw new Error(
+      `[ioc-config] ${pathLabel} must be an object or an array of bundle items`,
+    );
+  }
+  for (const [key, child] of Object.entries(value)) {
+    validateBundlesShape(child, `${pathLabel}.${key}`);
+  }
+};
+
 const IOC_LIFETIMES = new Set(["singleton", "scoped", "transient"]);
 
 const isIocLifetime = (value: unknown): value is IocLifetime =>
@@ -101,6 +137,14 @@ const validateIocConfig = (raw: unknown, sourceLabel: string): IocConfig => {
         }
       }
     }
+  }
+
+  const bundles = raw.bundles;
+  if (bundles !== undefined) {
+    if (!isRecord(bundles)) {
+      throw new Error(`[ioc-config] ${sourceLabel} bundles must be an object`);
+    }
+    validateBundlesShape(bundles, `${sourceLabel} bundles`);
   }
 
   return raw as IocConfig;

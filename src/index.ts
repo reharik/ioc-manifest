@@ -6,6 +6,12 @@ export {
   type IocOverride,
 } from "./config/iocConfig.js";
 export {
+  type IocBundleLeaf,
+  type IocBundleNode,
+  type IocBundleReference,
+  type IocBundlesConfig,
+} from "./bundles/index.js";
+export {
   loadIocConfig,
   resolveIocConfigPath,
   tryLoadIocConfig,

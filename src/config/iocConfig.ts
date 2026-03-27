@@ -1,3 +1,5 @@
+import type { IocBundlesConfig } from "../bundles/resolveBundlePlan.js";
+
 export type IocLifetime = "singleton" | "scoped" | "transient";
 
 /**
@@ -22,6 +24,7 @@ export type IocConfig = {
     generatedDir?: string;
   };
   registrations?: Record<string, Record<string, IocOverride>>;
+  bundles?: IocBundlesConfig;
 };
 
 export const defineIocConfig = (config: IocConfig): IocConfig => config;

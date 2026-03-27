@@ -4,8 +4,13 @@ import type { DiscoveredFactory } from "./types.js";
 import type { ResolvedContractRegistration } from "./resolveRegistrationPlan.js";
 import type {
   IocContractManifest,
+  IocBundlesManifest,
   ModuleFactoryManifestMetadata,
 } from "../core/manifest.js";
+import type {
+  ResolvedBundleNode,
+  ResolvedBundleTree,
+} from "../bundles/resolveBundlePlan.js";
 
 /** Deterministic ordering for manifest output. */
 const sortFactoriesForManifest = (
@@ -156,6 +161,7 @@ const getCoreManifestImportSpecifier = (
 
 const serializeIocContractManifestSource = (
   manifest: IocContractManifest,
+  bundlesManifest: IocBundlesManifest | undefined,
   manifestImportFromGenerated: string,
   importLines: string[],
   moduleArrayLines: string[],
@@ -185,8 +191,13 @@ Re-run \`npm run gen:manifest\` after adding/removing injectable factories.
 
   contractLines.push("}");
 
+  const bundlesSource =
+    bundlesManifest === undefined
+      ? "undefined"
+      : JSON.stringify(bundlesManifest, null, 2);
+
   return `${header}
-import type { IocContractManifest } from "${manifestImportFromGenerated}";
+import type { IocBundlesManifest, IocContractManifest } from "${manifestImportFromGenerated}";
 ${importLines.join("\n")}
 
 export const iocModuleImports = [
@@ -195,11 +206,14 @@ ${moduleArrayLines.join("\n")}
 
 export const iocManifestByContract: IocContractManifest =
 ${contractLines.join("\n")};
+
+export const iocBundlesManifest: IocBundlesManifest | undefined = ${bundlesSource};
 `;
 };
 
 const buildCradleTypeSource = (
   plans: ResolvedContractRegistration[],
+  bundlesPlan: ResolvedBundleTree | undefined,
 ): string => {
   const typeImports = new Map<string, Set<string>>();
   for (const plan of plans) {
@@ -246,12 +260,40 @@ const buildCradleTypeSource = (
     }
   }
 
+  const bundleTypeLines: string[] = [];
+  const appendBundleNodeType = (
+    node: ResolvedBundleNode,
+    indent: string,
+  ): string => {
+    if (Array.isArray(node)) {
+      const contractNames = Array.from(
+        new Set(node.map((leaf) => leaf.contractName)),
+      ).sort((a, b) => a.localeCompare(b));
+      const union = contractNames.length > 0 ? contractNames.join(" | ") : "never";
+      return `ReadonlyArray<${union}>`;
+    }
+
+    const lines: string[] = ["{"];
+    Object.entries(node).forEach(([key, value]) => {
+      lines.push(
+        `${indent}  ${JSON.stringify(key)}: ${appendBundleNodeType(value, `${indent}  `)};`,
+      );
+    });
+    lines.push(`${indent}}`);
+    return lines.join("\n");
+  };
+
+  if (bundlesPlan !== undefined) {
+    bundleTypeLines.push(`export interface IocGeneratedBundles ${appendBundleNodeType(bundlesPlan, "")}`);
+    propertyLines.push("  iocBundles: IocGeneratedBundles;");
+  }
+
   const header = `/* AUTO-GENERATED. DO NOT EDIT.
 Re-run \`npm run gen:manifest\` after changing factories or IoC config.
 */
 `;
 
-  return `${header}${importLines.length > 0 ? importLines.join("\n") + "\n\n" : ""}export interface IocGeneratedCradle {
+  return `${header}${importLines.length > 0 ? importLines.join("\n") + "\n\n" : ""}${bundleTypeLines.length > 0 ? `${bundleTypeLines.join("\n")}\n\n` : ""}export interface IocGeneratedCradle {
 ${propertyLines.join("\n")}
 }
 `;
@@ -278,6 +320,7 @@ const replaceFileFromTemp = async (
 export const writeManifest = async (
   acceptedFactories: DiscoveredFactory[],
   plans: ResolvedContractRegistration[],
+  bundlesPlan: ResolvedBundleTree | undefined,
   manifestOutPath: string,
   projectRoot: string,
 ): Promise<void> => {
@@ -289,6 +332,7 @@ export const writeManifest = async (
     plans,
     moduleIndexByPath,
   );
+  const iocBundlesManifest: IocBundlesManifest | undefined = bundlesPlan;
 
   const importLines = modules.map((moduleEntry) => {
     const alias = aliasByPath.get(moduleEntry.modulePath);
@@ -317,6 +361,7 @@ export const writeManifest = async (
 
   const manifestSource = serializeIocContractManifestSource(
     iocManifestByContract,
+    iocBundlesManifest,
     manifestImportFromGenerated,
     importLines,
     moduleArrayLines,
@@ -328,6 +373,6 @@ export const writeManifest = async (
     path.dirname(manifestOutPath),
     "ioc-registry.types.ts",
   );
-  const typesSource = buildCradleTypeSource(plans);
+  const typesSource = buildCradleTypeSource(plans, bundlesPlan);
   await replaceFileFromTemp(typesPath, typesSource);
 };

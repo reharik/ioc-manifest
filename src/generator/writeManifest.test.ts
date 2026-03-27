@@ -68,12 +68,12 @@ describe("writeManifest", () => {
         }),
       ];
 
-      await writeManifest(acceptedFactories, plans, manifestOutPath, tempRoot);
+      await writeManifest(acceptedFactories, plans, undefined, manifestOutPath, tempRoot);
       const manifestFirst = await fs.readFile(manifestOutPath, "utf8");
       const typesPath = path.join(generatedDir, "ioc-registry.types.ts");
       const typesFirst = await fs.readFile(typesPath, "utf8");
 
-      await writeManifest(acceptedFactories, plans, manifestOutPath, tempRoot);
+      await writeManifest(acceptedFactories, plans, undefined, manifestOutPath, tempRoot);
       const manifestSecond = await fs.readFile(manifestOutPath, "utf8");
       const typesSecond = await fs.readFile(typesPath, "utf8");
 
@@ -122,7 +122,7 @@ describe("writeManifest", () => {
         }),
       ];
 
-      await writeManifest(acceptedFactories, plans, manifestOutPath, tempRoot);
+      await writeManifest(acceptedFactories, plans, undefined, manifestOutPath, tempRoot);
 
       const manifestSource = await fs.readFile(manifestOutPath, "utf8");
       const typesSource = await fs.readFile(typesPath, "utf8");

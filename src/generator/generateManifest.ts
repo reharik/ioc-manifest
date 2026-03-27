@@ -17,6 +17,7 @@ import {
 import { buildRegistrationPlan } from "./resolveRegistrationPlan.js";
 import { writeManifest } from "./writeManifest.js";
 import type { ManifestRuntimePaths } from "./manifestPaths.js";
+import { buildBundlePlan } from "../bundles/resolveBundlePlan.js";
 
 const require = createRequire(import.meta.url);
 const prettierCliPath = path.join(
@@ -193,8 +194,15 @@ export const generateManifest = async (
   );
 
   const plans = buildRegistrationPlan(contractMap, config);
+  const bundlesPlan = buildBundlePlan(config?.bundles, plans);
 
-  await writeManifest(acceptedFactories, plans, manifestOutPath, projectRoot);
+  await writeManifest(
+    acceptedFactories,
+    plans,
+    bundlesPlan,
+    manifestOutPath,
+    projectRoot,
+  );
 
   formatGeneratedFileWithPrettier(manifestOutPath, projectRoot);
   formatGeneratedFileWithPrettier(

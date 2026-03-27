@@ -41,3 +41,18 @@ export type IocContractManifest = Record<
   string,
   Record<string, ModuleFactoryManifestMetadata>
 >;
+
+export type IocBundleLeafManifest = {
+  contractName: string;
+  registrationKey: string;
+};
+
+export interface IocBundleObjectManifest {
+  [key: string]: IocBundleNodeManifest;
+}
+
+export type IocBundleNodeManifest =
+  | IocBundleLeafManifest[]
+  | IocBundleObjectManifest;
+
+export type IocBundlesManifest = Record<string, IocBundleNodeManifest>;

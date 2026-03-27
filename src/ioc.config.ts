@@ -25,4 +25,16 @@ export default defineIocConfig({
       consoleLogger: { default: true },
     },
   },
+  bundles: {
+    services: {
+      album: ["AlbumService"],
+      media: {
+        read: ["MediaStorage"],
+      },
+      read: [
+        { $bundleRef: "services.album" },
+        { $bundleRef: "services.media.read" },
+      ],
+    },
+  },
 });

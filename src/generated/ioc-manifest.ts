@@ -2,7 +2,10 @@
 Re-run `npm run gen:manifest` after adding/removing injectable factories.
 */
 
-import type { IocContractManifest } from "../core/manifest.js";
+import type {
+  IocBundlesManifest,
+  IocContractManifest,
+} from "../core/manifest.js";
 import * as ioc_examples_a_single_implementation from "../examples/a-single-implementation.js";
 import * as ioc_examples_b_multiple_implementations from "../examples/b-multiple-implementations.js";
 import * as ioc_examples_c_default_selection from "../examples/c-default-selection.js";
@@ -112,5 +115,34 @@ export const iocManifestByContract: IocContractManifest = {
       lifetime: "singleton",
       moduleIndex: 2,
     },
+  },
+};
+
+export const iocBundlesManifest: IocBundlesManifest | undefined = {
+  services: {
+    album: [
+      {
+        contractName: "AlbumService",
+        registrationKey: "albumService",
+      },
+    ],
+    media: {
+      read: [
+        {
+          contractName: "MediaStorage",
+          registrationKey: "mediaStorage",
+        },
+      ],
+    },
+    read: [
+      {
+        contractName: "AlbumService",
+        registrationKey: "albumService",
+      },
+      {
+        contractName: "MediaStorage",
+        registrationKey: "mediaStorage",
+      },
+    ],
   },
 };

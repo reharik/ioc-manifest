@@ -6,6 +6,9 @@ export {
 
 export { injectable } from "./injectable.js";
 export type {
+  IocBundleLeafManifest,
+  IocBundleNodeManifest,
+  IocBundlesManifest,
   IocContractManifest,
   IocImplementationLifetime,
   IocManifest,

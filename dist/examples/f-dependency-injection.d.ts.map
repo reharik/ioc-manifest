@@ -1,0 +1,1 @@
+{"version":3,"file":"f-dependency-injection.d.ts","sourceRoot":"","sources":["../../src/examples/f-dependency-injection.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,YAAY,EAAE,MAAM,iCAAiC,CAAC;AAEpE,MAAM,MAAM,YAAY,GAAG;IACzB,QAAQ,EAAE,MAAM,MAAM,CAAC;CACxB,CAAC;AAEF,KAAK,SAAS,GAAG;IACf,YAAY,EAAE,YAAY,CAAC;CAC5B,CAAC;AAEF,eAAO,MAAM,iBAAiB,GAAI,kBAAkB,SAAS,KAAG,YAI/D,CAAC"}
