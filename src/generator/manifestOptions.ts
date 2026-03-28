@@ -1,18 +1,23 @@
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import type { IocConfig } from "../config/iocConfig.js";
 import type { ManifestRuntimePaths } from "./manifestPaths.js";
 
-const generatorDir = path.dirname(fileURLToPath(import.meta.url));
-const defaultSrcDir = path.resolve(generatorDir, "..");
-const defaultProjectRoot = path.resolve(defaultSrcDir, "..");
-const defaultGeneratedDir = path.join(defaultSrcDir, "generated");
-
-const defaultPaths: ManifestRuntimePaths = {
-  projectRoot: defaultProjectRoot,
-  srcDir: defaultSrcDir,
-  generatedDir: defaultGeneratedDir,
-  manifestOutPath: path.join(defaultGeneratedDir, "ioc-manifest.ts"),
+/**
+ * Default layout relative to a project root: `<root>/src`, generated under `<root>/src/generated/`.
+ * Used by the CLI and generator with `projectRoot = process.cwd()` so consumers resolve manifests in
+ * their app, not inside `node_modules/ioc-manifest`.
+ */
+export const defaultManifestPathsFromProjectRoot = (
+  projectRoot: string,
+): ManifestRuntimePaths => {
+  const srcDir = path.join(projectRoot, "src");
+  const generatedDir = path.join(srcDir, "generated");
+  return {
+    projectRoot,
+    srcDir,
+    generatedDir,
+    manifestOutPath: path.join(generatedDir, "ioc-manifest.ts"),
+  };
 };
 
 export type ManifestOptions = {
@@ -22,17 +27,26 @@ export type ManifestOptions = {
   factoryExportPrefix: string;
 };
 
+const DEFAULT_INCLUDE_PATTERNS = ["examples/**/*.{ts,tsx,js,mjs,cjs}"];
+
+const DEFAULT_EXCLUDE_PATTERNS = [
+  "**/*.d.ts",
+  "**/*.test.{ts,tsx,js,mjs,cjs}",
+  "**/*.spec.{ts,tsx,js,mjs,cjs}",
+  "generated/**/*",
+  "dist/**/*",
+  "node_modules/**/*",
+];
+
+/**
+ * Snapshot defaults for patterns/prefix; `paths` use the current working directory each time they are read.
+ */
 export const DEFAULT_MANIFEST_OPTIONS: ManifestOptions = {
-  paths: defaultPaths,
-  includePatterns: ["examples/**/*.{ts,tsx,js,mjs,cjs}"],
-  excludePatterns: [
-    "**/*.d.ts",
-    "**/*.test.{ts,tsx,js,mjs,cjs}",
-    "**/*.spec.{ts,tsx,js,mjs,cjs}",
-    "generated/**/*",
-    "dist/**/*",
-    "node_modules/**/*",
-  ],
+  get paths(): ManifestRuntimePaths {
+    return defaultManifestPathsFromProjectRoot(process.cwd());
+  },
+  includePatterns: DEFAULT_INCLUDE_PATTERNS,
+  excludePatterns: DEFAULT_EXCLUDE_PATTERNS,
   factoryExportPrefix: "build",
 };
 
@@ -43,10 +57,11 @@ export const resolveManifestOptions = (
     paths?: Partial<ManifestRuntimePaths>;
   },
 ): ManifestOptions => ({
-  ...DEFAULT_MANIFEST_OPTIONS,
-  ...overrides,
+  includePatterns: overrides?.includePatterns ?? DEFAULT_INCLUDE_PATTERNS,
+  excludePatterns: overrides?.excludePatterns ?? DEFAULT_EXCLUDE_PATTERNS,
+  factoryExportPrefix: overrides?.factoryExportPrefix ?? "build",
   paths: {
-    ...DEFAULT_MANIFEST_OPTIONS.paths,
+    ...defaultManifestPathsFromProjectRoot(process.cwd()),
     ...overrides?.paths,
   },
 });

@@ -23,6 +23,7 @@ export { generateManifest } from "./generator/generateManifest.js";
 export type { ManifestOptions } from "./generator/manifestOptions.js";
 export {
   DEFAULT_MANIFEST_OPTIONS,
+  defaultManifestPathsFromProjectRoot,
   mergeManifestOptionsWithIocConfig,
   resolveManifestOptions,
 } from "./generator/manifestOptions.js";
