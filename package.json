@@ -21,7 +21,7 @@
     "clean:dist": "rm -rf dist",
     "build": "npm run clean:dist && tsc -p tsconfig.json",
     "prepublishOnly": "npm run build",
-    "test": "node --import tsx --test src/core/resolveRegistrationKey.test.ts src/bundles/resolveBundlePlan.test.ts src/generator/resolveRegistrationPlan.test.ts src/generator/contractTypeImport.integration.test.ts src/generator/discoverFactories/discoveryStrategies.integration.test.ts src/generator/generatedTypes.integration.test.ts src/generator/writeManifest.test.ts src/inspection/reports.test.ts src/runtime/bootstrap.test.ts src/runtime/bootstrap.integration.test.ts",
+    "test": "node --import tsx --test src/core/resolveRegistrationKey.test.ts src/bundles/resolveBundlePlan.test.ts src/generator/resolveRegistrationPlan.test.ts src/generator/contractTypeImport.integration.test.ts src/generator/discoverFactories/discoveryStrategies.integration.test.ts src/generator/discoverFactories/inferFactoryDependencyContracts.test.ts src/generator/generatedTypes.integration.test.ts src/generator/writeManifest.test.ts src/inspection/reports.test.ts src/runtime/bootstrap.test.ts src/runtime/bootstrap.integration.test.ts",
     "gen:manifest": "tsx src/generator/gen-manifest.ts",
     "pack:dev": "npm run build && npm pack --silent"
   },
