@@ -15,11 +15,22 @@ import {
   contractNameToCollectionRegistrationKey,
   contractNameToDefaultRegistrationKey,
 } from "../generator/naming.js";
+import { wrapIocResolutionFailure } from "./formatResolutionFailure.js";
+import {
+  frameFromManifestMeta,
+  popIocResolutionFrame,
+  pushIocResolutionFrame,
+  snapshotIocResolutionStack,
+} from "./iocResolutionStack.js";
 import {
   formatMissingDefaultImplementationMessage,
   formatMissingFactoryExportMessage,
   formatMissingModuleImportMessage,
 } from "./iocRuntimeErrors.js";
+import {
+  buildRegistrationKeyIndex,
+  type RegistrationKeyIndex,
+} from "./registrationKeyIndex.js";
 
 const lifetimeToAwilix = (
   lifetime: "singleton" | "scoped" | "transient",
@@ -54,6 +65,7 @@ const invokeResolvedFactory = <TCradle extends object>(
   factory: unknown,
   cradle: TCradle,
   meta: ModuleFactoryManifestMetadata,
+  keyIndex: RegistrationKeyIndex,
 ): unknown => {
   if (!isFactoryFunction(factory)) {
     throw new Error("[ioc] internal error: expected resolver factory function");
@@ -68,21 +80,17 @@ const invokeResolvedFactory = <TCradle extends object>(
    * - relying on `factory.length` is fragile for signatures like `(deps = {}) => ...`,
    *   which report `.length === 0` even though they conceptually accept dependencies
    */
+  pushIocResolutionFrame(frameFromManifestMeta(meta));
   try {
     return factory(cradle);
   } catch (cause: unknown) {
-    const depHint =
-      meta.dependencyContractNames !== undefined &&
-      meta.dependencyContractNames.length > 0
-        ? ` Inferred dependency contracts from the factory parameter type: ${meta.dependencyContractNames.map((c) => JSON.stringify(c)).join(", ")}. Ensure each is registered in the container.`
-        : "";
-    const prefix = `[ioc] Factory ${JSON.stringify(meta.exportName)} (${meta.modulePath}) failed while building ${JSON.stringify(meta.contractName)} (implementation ${JSON.stringify(meta.implementationName)}).${depHint}`;
-    if (cause instanceof Error && cause.message.length > 0) {
-      throw new Error(`${prefix}\nCaused by: ${cause.message}`, { cause });
-    }
-    throw new Error(prefix, {
-      cause: cause instanceof Error ? cause : undefined,
+    throw wrapIocResolutionFailure({
+      cause,
+      keyIndex,
+      stackSnapshot: snapshotIocResolutionStack(),
     });
+  } finally {
+    popIocResolutionFrame();
   }
 };
 
@@ -117,7 +125,7 @@ const resolveDefaultImplementation = (
   if (!defaultImpl) {
     if (implList.length === 0) {
       throw new Error(
-        `[ioc] Contract ${JSON.stringify(contractName)} has no implementations in the manifest. Add at least one factory and re-run manifest generation.`,
+        `[ioc] No implementation registered for contract ${JSON.stringify(contractName)} (no factories in the manifest for this contract). Add a discoverable factory and re-run manifest generation.`,
       );
     }
     throw new Error(
@@ -136,6 +144,7 @@ const registerImplementationFactories = <TCradle extends object>(
   container: AwilixContainer<TCradle>,
   manifestByContract: IocContractManifest,
   moduleImports: readonly IocModuleNamespace[],
+  keyIndex: RegistrationKeyIndex,
 ): void => {
   for (const impls of Object.values(manifestByContract)) {
     for (const meta of Object.values(impls)) {
@@ -163,7 +172,8 @@ const registerImplementationFactories = <TCradle extends object>(
 
       registerPair<TCradle>(container, {
         [meta.registrationKey]: asFunction(
-          (cradle: TCradle) => invokeResolvedFactory(factory, cradle, meta),
+          (cradle: TCradle) =>
+            invokeResolvedFactory(factory, cradle, meta, keyIndex),
           { lifetime: lifetimeToAwilix(meta.lifetime) },
         ),
       });
@@ -198,6 +208,7 @@ const registerContractDefaultAliases = <TCradle extends object>(
 const registerImplementationCollections = <TCradle extends object>(
   container: AwilixContainer<TCradle>,
   manifestByContract: IocContractManifest,
+  keyIndex: RegistrationKeyIndex,
 ): void => {
   for (const [contractName, impls] of Object.entries(manifestByContract)) {
     const implList = Object.values(impls);
@@ -211,14 +222,29 @@ const registerImplementationCollections = <TCradle extends object>(
     registerPair<TCradle>(container, {
       [collectionKey]: asFunction(
         (cradle: TCradle) => {
-          const map: Record<string, unknown> = {};
+          pushIocResolutionFrame({
+            contractName,
+            implementationName: "(collection)",
+            registrationKey: collectionKey,
+          });
+          try {
+            const map: Record<string, unknown> = {};
 
-          for (const meta of implList) {
-            map[meta.implementationName] =
-              cradle[meta.registrationKey as keyof TCradle];
+            for (const meta of implList) {
+              map[meta.implementationName] =
+                cradle[meta.registrationKey as keyof TCradle];
+            }
+
+            return map;
+          } catch (cause: unknown) {
+            throw wrapIocResolutionFailure({
+              cause,
+              keyIndex,
+              stackSnapshot: snapshotIocResolutionStack(),
+            });
+          } finally {
+            popIocResolutionFrame();
           }
-
-          return map;
         },
         { lifetime: collectionLifetime },
       ),
@@ -243,6 +269,7 @@ const resolveBundleNodeFromCradle = <TCradle extends object>(
 const registerBundles = <TCradle extends object>(
   container: AwilixContainer<TCradle>,
   bundlesManifest: IocBundlesManifest | undefined,
+  keyIndex: RegistrationKeyIndex,
 ): void => {
   if (bundlesManifest === undefined) {
     return;
@@ -254,7 +281,24 @@ const registerBundles = <TCradle extends object>(
     const node = bundlesManifest[key]!;
     registerPair<TCradle>(container, {
       [key]: asFunction(
-        (cradle: TCradle) => resolveBundleNodeFromCradle(cradle, node),
+        (cradle: TCradle) => {
+          pushIocResolutionFrame({
+            contractName: key,
+            implementationName: "(bundle)",
+            registrationKey: key,
+          });
+          try {
+            return resolveBundleNodeFromCradle(cradle, node);
+          } catch (cause: unknown) {
+            throw wrapIocResolutionFailure({
+              cause,
+              keyIndex,
+              stackSnapshot: snapshotIocResolutionStack(),
+            });
+          } finally {
+            popIocResolutionFrame();
+          }
+        },
         { lifetime: Lifetime.TRANSIENT },
       ),
     });
@@ -274,8 +318,18 @@ export const registerIocFromManifest = <TCradle extends object>(
   moduleImports: readonly IocModuleNamespace[],
   bundlesManifest?: IocBundlesManifest,
 ): void => {
-  registerImplementationFactories(container, manifestByContract, moduleImports);
+  const keyIndex = buildRegistrationKeyIndex(manifestByContract);
+  registerImplementationFactories(
+    container,
+    manifestByContract,
+    moduleImports,
+    keyIndex,
+  );
   registerContractDefaultAliases(container, manifestByContract);
-  registerImplementationCollections(container, manifestByContract);
-  registerBundles(container, bundlesManifest);
+  registerImplementationCollections(
+    container,
+    manifestByContract,
+    keyIndex,
+  );
+  registerBundles(container, bundlesManifest, keyIndex);
 };

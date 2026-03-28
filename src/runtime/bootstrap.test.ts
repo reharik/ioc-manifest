@@ -313,7 +313,7 @@ describe("registerIocFromManifest", () => {
       });
       assert.throws(
         () => registerIocFromManifest(container, manifest, moduleImports),
-        /has 2 implementations/,
+        /Multiple implementations for contract/,
       );
     });
   });
@@ -340,6 +340,172 @@ describe("registerIocFromManifest", () => {
             [{ buildSvc: "not-a-function" }],
           ),
         /has no callable factory export/,
+      );
+    });
+  });
+
+  describe("When resolution fails while building the graph", () => {
+    const meta = (
+      partial: Pick<
+        IocContractManifest[string][string],
+        "exportName" | "registrationKey" | "contractName" | "implementationName"
+      > & { moduleIndex?: number; default?: boolean },
+    ): IocContractManifest[string][string] => ({
+      modulePath: `${partial.implementationName}.ts`,
+      sourceFilePath: `${partial.implementationName}.ts`,
+      relImport: `../${partial.implementationName}.js`,
+      lifetime: "singleton",
+      moduleIndex: partial.moduleIndex ?? 0,
+      default: partial.default ?? true,
+      ...partial,
+    });
+
+    it("should include the resolution chain when a direct dependency registration is missing", () => {
+      const manifest: IocContractManifest = {
+        Root: {
+          r: meta({
+            exportName: "buildRoot",
+            registrationKey: "root",
+            contractName: "Root",
+            implementationName: "r",
+          }),
+        },
+      };
+      const moduleImports: readonly IocModuleNamespace[] = [
+        {
+          buildRoot: (deps: { missingLeaf: unknown }): unknown => deps.missingLeaf,
+        },
+      ];
+      const container = createContainer<{ root: unknown }>({
+        injectionMode: "PROXY",
+      });
+      registerIocFromManifest(container, manifest, moduleImports);
+
+      assert.throws(
+        () => container.resolve("root"),
+        (err: unknown) => {
+          assert.ok(err instanceof Error);
+          assert.match(err.message, /Cannot build Root using implementation r/);
+          assert.match(err.message, /Resolution chain:/);
+          assert.match(err.message, /missingLeaf/);
+          assert.match(err.message, /no registered implementation/);
+          return true;
+        },
+      );
+    });
+
+    it("should include the full chain when a transitive dependency registration is missing", () => {
+      const manifest: IocContractManifest = {
+        Root: {
+          r: meta({
+            exportName: "buildRoot",
+            registrationKey: "root",
+            contractName: "Root",
+            implementationName: "r",
+            default: true,
+          }),
+        },
+        LevelA: {
+          a: meta({
+            exportName: "buildA",
+            registrationKey: "levelA",
+            contractName: "LevelA",
+            implementationName: "a",
+          }),
+        },
+        LevelB: {
+          b: meta({
+            exportName: "buildB",
+            registrationKey: "levelB",
+            contractName: "LevelB",
+            implementationName: "b",
+          }),
+        },
+      };
+      const moduleImports: readonly IocModuleNamespace[] = [
+        {
+          buildRoot: (deps: { levelA: unknown }): unknown => deps.levelA,
+          buildA: (deps: { levelB: unknown }): unknown => deps.levelB,
+          buildB: (deps: { missingLeaf: unknown }): unknown => deps.missingLeaf,
+        },
+      ];
+      const container = createContainer<{
+        root: unknown;
+        levelA: unknown;
+        levelB: unknown;
+      }>({ injectionMode: "PROXY" });
+      registerIocFromManifest(container, manifest, moduleImports);
+
+      assert.throws(
+        () => container.resolve("root"),
+        (err: unknown) => {
+          assert.ok(err instanceof Error);
+          assert.match(err.message, /Root \(r\)/);
+          assert.match(err.message, /LevelA \(a\)/);
+          assert.match(err.message, /LevelB \(b\)/);
+          assert.match(err.message, /missingLeaf/);
+          assert.match(err.message, /no registered implementation/);
+          return true;
+        },
+      );
+    });
+
+    it("should include the resolution chain when a nested factory throws during construction", () => {
+      const manifest: IocContractManifest = {
+        Root: {
+          r: meta({
+            exportName: "buildRoot",
+            registrationKey: "root",
+            contractName: "Root",
+            implementationName: "r",
+            default: true,
+          }),
+        },
+        LevelA: {
+          a: meta({
+            exportName: "buildA",
+            registrationKey: "levelA",
+            contractName: "LevelA",
+            implementationName: "a",
+          }),
+        },
+        LevelB: {
+          b: meta({
+            exportName: "buildB",
+            registrationKey: "levelB",
+            contractName: "LevelB",
+            implementationName: "b",
+          }),
+        },
+      };
+      const moduleImports: readonly IocModuleNamespace[] = [
+        {
+          buildRoot: (deps: { levelA: unknown }): unknown => deps.levelA,
+          buildA: (deps: { levelB: unknown }): unknown => deps.levelB,
+          buildB: (): unknown => {
+            throw new Error("deep failure from level B");
+          },
+        },
+      ];
+      const container = createContainer<{
+        root: unknown;
+        levelA: unknown;
+        levelB: unknown;
+      }>({ injectionMode: "PROXY" });
+      registerIocFromManifest(container, manifest, moduleImports);
+
+      assert.throws(
+        () => container.resolve("root"),
+        (err: unknown) => {
+          assert.ok(err instanceof Error);
+          assert.match(err.message, /Cannot build Root using implementation r/);
+          assert.match(err.message, /Resolution chain:/);
+          assert.match(err.message, /LevelA \(a\)/);
+          assert.match(err.message, /LevelB \(b\)/);
+          assert.match(err.message, /deep failure from level B/);
+          assert.match(err.message, /factory threw while building/);
+          return true;
+        },
       );
     });
   });
