@@ -1,5 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import ts from "typescript";
+import {
+  cradleTypeImportUsesDefaultExport,
+  resolveContractTypeSourceFile,
+} from "./contractTypeSourceFile.js";
 import type { DiscoveredFactory } from "./types.js";
 import type { ResolvedContractRegistration } from "./resolveRegistrationPlan.js";
 import type {
@@ -14,6 +19,15 @@ import type {
   ResolvedBundleNode,
   ResolvedBundleTree,
 } from "../bundles/resolveBundlePlan.js";
+
+export type IocRegistryTypesBuildContext = {
+  program: ts.Program;
+  generatedDir: string;
+};
+
+export type WriteManifestOptions = {
+  registryTypesBuildContext?: IocRegistryTypesBuildContext;
+};
 
 /** Deterministic ordering for manifest output. */
 const sortFactoriesForManifest = (
@@ -364,21 +378,74 @@ ${insightLine}
 const buildCradleTypeSource = (
   plans: ResolvedContractRegistration[],
   bundlesPlan: ResolvedBundleTree | undefined,
+  registryTypesBuildContext?: IocRegistryTypesBuildContext,
 ): string => {
-  const typeImports = new Map<string, Set<string>>();
-  for (const plan of plans) {
-    const importPath = plan.contractTypeRelImport;
-    const set = typeImports.get(importPath) ?? new Set<string>();
-    set.add(plan.contractName);
-    typeImports.set(importPath, set);
-  }
+  const importLines: string[] = [];
 
-  const importLines = Array.from(typeImports.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([relImport, names]) => {
+  if (registryTypesBuildContext === undefined) {
+    const typeImports = new Map<string, Set<string>>();
+    for (const plan of plans) {
+      const importPath = plan.contractTypeRelImport;
+      const set = typeImports.get(importPath) ?? new Set<string>();
+      set.add(plan.contractName);
+      typeImports.set(importPath, set);
+    }
+    for (const [relImport, names] of Array.from(typeImports.entries()).sort(
+      ([a], [b]) => a.localeCompare(b),
+    )) {
       const sorted = Array.from(names).sort((x, y) => x.localeCompare(y));
-      return `import type { ${sorted.join(", ")} } from "${relImport}";`;
-    });
+      importLines.push(
+        `import type { ${sorted.join(", ")} } from "${relImport}";`,
+      );
+    }
+  } else {
+    const { program, generatedDir } = registryTypesBuildContext;
+    const grouped = new Map<
+      string,
+      { named: Set<string>; defaults: Set<string> }
+    >();
+
+    for (const plan of plans) {
+      const relImport = plan.contractTypeRelImport;
+      let bucket = grouped.get(relImport);
+      if (bucket === undefined) {
+        bucket = { named: new Set(), defaults: new Set() };
+        grouped.set(relImport, bucket);
+      }
+      const sourceFile = resolveContractTypeSourceFile(
+        program,
+        generatedDir,
+        relImport,
+      );
+      const useDefault =
+        sourceFile !== undefined &&
+        cradleTypeImportUsesDefaultExport(sourceFile, plan.contractName);
+      if (useDefault) {
+        bucket.defaults.add(plan.contractName);
+      } else {
+        bucket.named.add(plan.contractName);
+      }
+    }
+
+    for (const [relImport, bucket] of Array.from(grouped.entries()).sort(
+      ([a], [b]) => a.localeCompare(b),
+    )) {
+      const defaultNames = Array.from(bucket.defaults).sort((x, y) =>
+        x.localeCompare(y),
+      );
+      const namedNames = Array.from(bucket.named).sort((x, y) =>
+        x.localeCompare(y),
+      );
+      for (const d of defaultNames) {
+        importLines.push(`import type ${d} from "${relImport}";`);
+      }
+      if (namedNames.length > 0) {
+        importLines.push(
+          `import type { ${namedNames.join(", ")} } from "${relImport}";`,
+        );
+      }
+    }
+  }
 
   const propertyLines: string[] = [];
 
@@ -490,6 +557,7 @@ export const writeManifest = async (
   bundleArraysInsight: IocBundleArraysInsightManifest | undefined,
   manifestOutPath: string,
   manifestImportFromPackage: string,
+  options?: WriteManifestOptions,
 ): Promise<void> => {
   const sortedFactories = sortFactoriesForManifest(acceptedFactories);
   const modules = uniqueModuleRows(sortedFactories);
@@ -547,6 +615,10 @@ export const writeManifest = async (
     path.dirname(manifestOutPath),
     "ioc-registry.types.ts",
   );
-  const typesSource = buildCradleTypeSource(plans, bundlesPlan);
+  const typesSource = buildCradleTypeSource(
+    plans,
+    bundlesPlan,
+    options?.registryTypesBuildContext,
+  );
   await replaceFileFromTemp(typesPath, typesSource);
 };

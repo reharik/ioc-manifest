@@ -110,6 +110,12 @@ export const generateManifest = async (
     bundleResult?.arraysInsight,
     manifestOutPath,
     packageName,
+    {
+      registryTypesBuildContext: {
+        program,
+        generatedDir,
+      },
+    },
   );
 
   formatGeneratedFileWithPrettier(manifestOutPath, projectRoot);

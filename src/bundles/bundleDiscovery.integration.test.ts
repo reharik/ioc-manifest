@@ -5,7 +5,10 @@ import { describe, it } from "node:test";
 import ts from "typescript";
 import { loadIocConfig } from "../config/loadIocConfig.js";
 import { discoverFactories } from "../generator/discoverFactories/discoverFactories.js";
-import { buildRegistrationPlan } from "../generator/resolveRegistrationPlan.js";
+import {
+  buildRegistrationPlan,
+  type ResolvedContractRegistration,
+} from "../generator/resolveRegistrationPlan.js";
 import {
   analyzeBundlePlan,
   buildBundlePlan,
@@ -120,6 +123,43 @@ describe("bundle discovery by base interface", () => {
       assert.ok(resolved);
       const empty = (resolved.tree.services as { empty: unknown }).empty as unknown[];
       assert.deepStrictEqual(empty, []);
+    });
+
+    it("should skip contracts whose declared type cannot be loaded instead of failing the bundle", () => {
+      const plans = runDiscoveryAndPlans();
+      const withUnresolvableType: ResolvedContractRegistration[] = [
+        ...plans,
+        {
+          contractName: "GhostContract",
+          contractTypeRelImport: "./this-module-is-not-in-the-program.js",
+          contractKey: "ghostContract",
+          collectionKey: undefined,
+          defaultImplementationName: "ghost",
+          implementations: [],
+        },
+      ];
+      const program = makeProgram();
+      const resolved = buildBundlePlan(
+        {
+          services: {
+            read: { $discover: { baseInterface: "ReadService" } },
+          },
+        },
+        withUnresolvableType,
+        { program, generatedDir },
+      );
+      assert.ok(resolved);
+      const read = (resolved.tree.services as { read: unknown }).read as {
+        contractName: string;
+      }[];
+      const names = read.map((x) => x.contractName).sort((a, b) =>
+        a.localeCompare(b),
+      );
+      assert.deepStrictEqual(names, [
+        "AlbumService",
+        "MediaStorage",
+        "SpecialAlbumService",
+      ]);
     });
 
     it("should sort discovered contracts by contract name", () => {

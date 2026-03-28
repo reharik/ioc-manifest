@@ -1,9 +1,13 @@
 /**
  * Bundle membership by assignability to a named TypeScript interface/type alias.
  *
- * Matching uses the compiler's assignability rules (structural under the hood). Prefer a dedicated
- * contract-style interface as `baseInterface`; overly wide types (e.g. `{}`) could match unintended
- * contracts.
+ * Matching uses the compiler's assignability rules (structural under the hood). Every registered
+ * contract is considered (not only dependencies of some root); unrelated contracts are simply
+ * expected not to be assignable to the base. Contracts whose declared type cannot be loaded from
+ * the program (e.g. some node_modules declarations) are skipped for matching.
+ *
+ * Prefer a dedicated contract-style interface as `baseInterface`; overly wide types (e.g. `{}`)
+ * could match unintended contracts.
  *
  * Zero matches: expansion yields an empty bundle array (same as `read: []`). Assignability is
  * checked per discovered contract type: a base with the same name as a contract still matches that

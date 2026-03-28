@@ -1,5 +1,6 @@
 import path from "node:path";
 import ts from "typescript";
+import { resolveContractTypeSourceFile } from "../generator/contractTypeSourceFile.js";
 import {
   isBundleDiscoverLeaf,
   parseDiscoverBaseInterface,
@@ -34,31 +35,6 @@ export const bundleTreeContainsDiscover = (node: unknown): boolean => {
   return Object.values(node).some((child) => bundleTreeContainsDiscover(child));
 };
 
-const resolveModuleSourceFileForContractImport = (
-  program: ts.Program,
-  generatedDir: string,
-  contractTypeRelImport: string,
-): ts.SourceFile | undefined => {
-  const raw = contractTypeRelImport.replace(/^\.\//, "").replace(/\.js$/i, "");
-  const baseAbs = path.resolve(generatedDir, raw);
-  const candidates = [
-    `${baseAbs}.ts`,
-    `${baseAbs}.tsx`,
-    path.join(baseAbs, "index.ts"),
-    path.join(baseAbs, "index.tsx"),
-  ];
-  const normalizedCandidates = candidates.map((c) => path.normalize(c));
-  const files = program.getSourceFiles();
-  for (const cand of normalizedCandidates) {
-    const hit = files.find((sf) => path.normalize(sf.fileName) === cand);
-    if (hit !== undefined) {
-      return hit;
-    }
-  }
-  const lower = new Set(normalizedCandidates.map((c) => c.toLowerCase()));
-  return files.find((sf) => lower.has(path.normalize(sf.fileName).toLowerCase()));
-};
-
 const getTopLevelTypeDeclaration = (
   sourceFile: ts.SourceFile,
   typeName: string,
@@ -84,7 +60,7 @@ const getContractDeclaredType = (
   generatedDir: string,
   plan: ResolvedContractRegistration,
 ): ts.Type | undefined => {
-  const sourceFile = resolveModuleSourceFileForContractImport(
+  const sourceFile = resolveContractTypeSourceFile(
     program,
     generatedDir,
     plan.contractTypeRelImport,
@@ -191,20 +167,18 @@ const expandNode = (
         generatedDir,
         plan,
       );
+      /**
+       * $discover walks every registered contract (not dependency subgraph). If we cannot load the
+       * contract's declared type from the TS program (e.g. third-party .d.ts layout, missing file in
+       * program roots), skip that contract instead of failing the whole bundle — we cannot prove
+       * assignability either way.
+       */
       if (contractType === undefined) {
-        issues.push({
-          path: pathKey,
-          message: `could not resolve contract type for ${JSON.stringify(plan.contractName)} (import ${JSON.stringify(plan.contractTypeRelImport)}); cannot evaluate assignability to ${JSON.stringify(parsed.baseInterface)}`,
-        });
         continue;
       }
       if (checker.isTypeAssignableTo(contractType, base.type)) {
         matchedNames.push(plan.contractName);
       }
-    }
-
-    if (issues.length > 0) {
-      return { value: node, issues };
     }
 
     matchedNames.sort((a, b) => a.localeCompare(b));
