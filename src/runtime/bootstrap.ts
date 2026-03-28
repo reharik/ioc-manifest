@@ -15,6 +15,11 @@ import {
   contractNameToCollectionRegistrationKey,
   contractNameToDefaultRegistrationKey,
 } from "../generator/naming.js";
+import {
+  formatMissingDefaultImplementationMessage,
+  formatMissingFactoryExportMessage,
+  formatMissingModuleImportMessage,
+} from "./iocRuntimeErrors.js";
 
 const lifetimeToAwilix = (
   lifetime: "singleton" | "scoped" | "transient",
@@ -48,6 +53,7 @@ const isFactoryFunction = (
 const invokeResolvedFactory = <TCradle extends object>(
   factory: unknown,
   cradle: TCradle,
+  meta: ModuleFactoryManifestMetadata,
 ): unknown => {
   if (!isFactoryFunction(factory)) {
     throw new Error("[ioc] internal error: expected resolver factory function");
@@ -62,7 +68,22 @@ const invokeResolvedFactory = <TCradle extends object>(
    * - relying on `factory.length` is fragile for signatures like `(deps = {}) => ...`,
    *   which report `.length === 0` even though they conceptually accept dependencies
    */
-  return factory(cradle);
+  try {
+    return factory(cradle);
+  } catch (cause: unknown) {
+    const depHint =
+      meta.dependencyContractNames !== undefined &&
+      meta.dependencyContractNames.length > 0
+        ? ` Inferred dependency contracts from the factory parameter type: ${meta.dependencyContractNames.map((c) => JSON.stringify(c)).join(", ")}. Ensure each is registered in the container.`
+        : "";
+    const prefix = `[ioc] Factory ${JSON.stringify(meta.exportName)} (${meta.modulePath}) failed while building ${JSON.stringify(meta.contractName)} (implementation ${JSON.stringify(meta.implementationName)}).${depHint}`;
+    if (cause instanceof Error && cause.message.length > 0) {
+      throw new Error(`${prefix}\nCaused by: ${cause.message}`, { cause });
+    }
+    throw new Error(prefix, {
+      cause: cause instanceof Error ? cause : undefined,
+    });
+  }
 };
 
 const collectionLifetimeFromImplementations = (
@@ -94,8 +115,17 @@ const resolveDefaultImplementation = (
     (implList.length === 1 ? implList[0] : undefined);
 
   if (!defaultImpl) {
+    if (implList.length === 0) {
+      throw new Error(
+        `[ioc] Contract ${JSON.stringify(contractName)} has no implementations in the manifest. Add at least one factory and re-run manifest generation.`,
+      );
+    }
     throw new Error(
-      `[ioc] contract ${JSON.stringify(contractName)}: could not determine default implementation (expected exactly one implementation or one row with default: true).`,
+      formatMissingDefaultImplementationMessage({
+        contractName,
+        implementationNames: implList.map((m) => m.implementationName),
+        registrationKeys: implList.map((m) => m.registrationKey),
+      }),
     );
   }
 
@@ -112,20 +142,28 @@ const registerImplementationFactories = <TCradle extends object>(
       const ns = moduleImports[meta.moduleIndex];
       if (!ns) {
         throw new Error(
-          `[ioc] iocModuleImports[${meta.moduleIndex}] is missing (modulePath ${meta.modulePath})`,
+          formatMissingModuleImportMessage({
+            moduleIndex: meta.moduleIndex,
+            modulePath: meta.modulePath,
+          }),
         );
       }
 
       const factory = ns[meta.exportName];
       if (typeof factory !== "function") {
         throw new Error(
-          `[ioc] "${meta.modulePath}" has no function export ${JSON.stringify(meta.exportName)} for ${meta.contractName}`,
+          formatMissingFactoryExportMessage({
+            modulePath: meta.modulePath,
+            exportName: meta.exportName,
+            contractName: meta.contractName,
+            registrationKey: meta.registrationKey,
+          }),
         );
       }
 
       registerPair<TCradle>(container, {
         [meta.registrationKey]: asFunction(
-          (cradle: TCradle) => invokeResolvedFactory(factory, cradle),
+          (cradle: TCradle) => invokeResolvedFactory(factory, cradle, meta),
           { lifetime: lifetimeToAwilix(meta.lifetime) },
         ),
       });

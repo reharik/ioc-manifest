@@ -1,1 +1,13 @@
 export { registerIocFromManifest } from "./bootstrap.js";
+export {
+  formatMissingContractImplementationMessage,
+  formatMissingDefaultImplementationMessage,
+  formatMissingDependencyMessage,
+  formatMissingFactoryExportMessage,
+  formatMissingModuleImportMessage,
+  type MissingContractImplementationContext,
+  type MissingDefaultContext,
+  type MissingDependencyContext,
+  type MissingFactoryExportContext,
+  type MissingModuleImportContext,
+} from "./iocRuntimeErrors.js";

@@ -47,7 +47,7 @@ describe("buildBundlePlan", () => {
       };
 
       const resolved = buildBundlePlan(config, plans);
-      assert.deepStrictEqual(resolved, {
+      assert.deepStrictEqual(resolved?.tree, {
         services: {
           read: [
             { contractName: "ListAlbums", registrationKey: "listAlbums" },
@@ -74,9 +74,9 @@ describe("buildBundlePlan", () => {
 
       const resolved = buildBundlePlan(config, plans);
       assert.ok(resolved);
-      assert.deepStrictEqual(Object.keys(resolved.services), ["album", "media"]);
+      assert.deepStrictEqual(Object.keys(resolved.tree.services), ["album", "media"]);
       assert.strictEqual(
-        Array.isArray((resolved.services as Record<string, unknown>).album),
+        Array.isArray((resolved.tree.services as Record<string, unknown>).album),
         false,
       );
     });
@@ -94,7 +94,7 @@ describe("buildBundlePlan", () => {
       };
 
       const resolved = buildBundlePlan(config, plans);
-      const services = resolved?.services as Record<string, unknown>;
+      const services = resolved?.tree.services as Record<string, unknown>;
       assert.deepStrictEqual(services.allRead, [
         { contractName: "ListAlbums", registrationKey: "listAlbums" },
         { contractName: "GetAlbumById", registrationKey: "getAlbumById" },
@@ -141,7 +141,7 @@ describe("buildBundlePlan", () => {
       };
       assert.throws(
         () => buildBundlePlan(config, plans),
-        /bundles reference cycle detected/,
+        /Circular bundle reference detected/,
       );
     });
   });

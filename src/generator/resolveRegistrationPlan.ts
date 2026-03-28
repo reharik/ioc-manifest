@@ -3,6 +3,7 @@ import type {
   IocLifetime,
   IocOverride,
 } from "../config/iocConfig.js";
+import type { IocConfigOverrideField } from "../core/manifest.js";
 import type { DiscoveredFactory } from "./types.js";
 import {
   contractNameToCollectionRegistrationKey,
@@ -18,6 +19,10 @@ export type ResolvedImplementationEntry = {
   modulePath: string;
   relImport: string;
   lifetime: IocLifetime;
+  discoveredBy?: "naming" | "injectable-wrapper";
+  /** Fields present on the matching `ioc.config` registration override for this implementation. */
+  configOverridesApplied?: readonly IocConfigOverrideField[];
+  dependencyContractNames?: readonly string[];
 };
 
 export type ResolvedContractRegistration = {
@@ -113,7 +118,7 @@ const selectDefaultImplementationKey = (
 
   if (withDefault.length > 1) {
     throw new Error(
-      `[ioc] contract "${contractName}" has multiple implementations marked default: true after applying ioc.config overrides: ${listImplFactories(withDefault)}. Mark exactly one with default: true in source or in registrations[${JSON.stringify(contractName)}][implementationName], or reduce to a single implementation.`,
+      `[ioc] Contract ${JSON.stringify(contractName)} has multiple implementations marked default: true after applying ioc.config overrides: ${listImplFactories(withDefault)}. Mark exactly one with default: true in source or in registrations[${JSON.stringify(contractName)}][implementationName], or reduce to a single implementation.`,
     );
   }
 
@@ -125,8 +130,15 @@ const selectDefaultImplementationKey = (
     return Array.from(mergedByImplName.keys())[0]!;
   }
 
+  const names = Array.from(mergedByImplName.keys()).sort((a, b) =>
+    a.localeCompare(b),
+  );
+  const keys = factories
+    .map((f) => `${f.implementationName}→${JSON.stringify(f.registrationKey)}`)
+    .sort((a, b) => a.localeCompare(b))
+    .join(", ");
   throw new Error(
-    `[ioc] contract "${contractName}" has ${mergedByImplName.size} implementations and no default can be selected. Discovered: ${listImplFactories(factories)}. Set registrations[${JSON.stringify(contractName)}][implementationName].default: true in ioc.config.ts for one implementation, or mark exactly one factory with resolver default: true, or reduce to a single implementation.`,
+    `[ioc] Contract ${JSON.stringify(contractName)} has ${mergedByImplName.size} implementations (${names.map((n) => JSON.stringify(n)).join(", ")}) but none is selected as the default. Set registrations[${JSON.stringify(contractName)}][implementationName].default: true in ioc.config.ts for exactly one implementation, mark exactly one factory with resolver default: true, or reduce to a single implementation. Registration keys: ${keys}.`,
   );
 };
 
@@ -394,6 +406,17 @@ export const buildRegistrationPlan = (
     const implementations: ResolvedImplementationEntry[] =
       implementationNames.map((implementationName) => {
         const factory = mergedByImplName.get(implementationName)!;
+        const override = config?.registrations?.[contractName]?.[implementationName];
+        const configOverridesApplied: IocConfigOverrideField[] = [];
+        if (override?.name !== undefined) {
+          configOverridesApplied.push("name");
+        }
+        if (override?.lifetime !== undefined) {
+          configOverridesApplied.push("lifetime");
+        }
+        if (override?.default !== undefined) {
+          configOverridesApplied.push("default");
+        }
         return {
           implementationName,
           exportName: factory.exportName,
@@ -401,6 +424,16 @@ export const buildRegistrationPlan = (
           relImport: factory.relImport,
           registrationKey: factory.registrationKey,
           lifetime: resolveLifetime(factory),
+          ...(factory.discoveredBy !== undefined
+            ? { discoveredBy: factory.discoveredBy }
+            : {}),
+          ...(configOverridesApplied.length > 0
+            ? { configOverridesApplied }
+            : {}),
+          ...(factory.dependencyContractNames !== undefined &&
+          factory.dependencyContractNames.length > 0
+            ? { dependencyContractNames: factory.dependencyContractNames }
+            : {}),
         };
       });
 

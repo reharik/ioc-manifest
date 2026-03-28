@@ -72,10 +72,13 @@ describe("writeManifest", () => {
         acceptedFactories,
         plans,
         undefined,
+        undefined,
         manifestOutPath,
         "ioc-manifest",
       );
       const manifestFirst = await fs.readFile(manifestOutPath, "utf8");
+      const supportPath = path.join(generatedDir, "ioc-manifest.support.ts");
+      const supportFirst = await fs.readFile(supportPath, "utf8");
       const typesPath = path.join(generatedDir, "ioc-registry.types.ts");
       const typesFirst = await fs.readFile(typesPath, "utf8");
 
@@ -83,13 +86,16 @@ describe("writeManifest", () => {
         acceptedFactories,
         plans,
         undefined,
+        undefined,
         manifestOutPath,
         "ioc-manifest",
       );
       const manifestSecond = await fs.readFile(manifestOutPath, "utf8");
+      const supportSecond = await fs.readFile(supportPath, "utf8");
       const typesSecond = await fs.readFile(typesPath, "utf8");
 
       assert.strictEqual(manifestSecond, manifestFirst);
+      assert.strictEqual(supportSecond, supportFirst);
       assert.strictEqual(typesSecond, typesFirst);
     });
   });
@@ -100,9 +106,11 @@ describe("writeManifest", () => {
       const generatedDir = path.join(tempRoot, "src", "generated");
       await fs.mkdir(generatedDir, { recursive: true });
       const manifestOutPath = path.join(generatedDir, "ioc-manifest.ts");
+      const supportPath = path.join(generatedDir, "ioc-manifest.support.ts");
       const typesPath = path.join(generatedDir, "ioc-registry.types.ts");
 
       await fs.writeFile(manifestOutPath, "OLD_CONTENT_SHOULD_BE_REPLACED", "utf8");
+      await fs.writeFile(supportPath, "OLD_SUPPORT_SHOULD_BE_REPLACED", "utf8");
       await fs.writeFile(typesPath, "OLD_TYPES_SHOULD_BE_REPLACED", "utf8");
 
       const acceptedFactories: DiscoveredFactory[] = [
@@ -138,15 +146,19 @@ describe("writeManifest", () => {
         acceptedFactories,
         plans,
         undefined,
+        undefined,
         manifestOutPath,
         "ioc-manifest",
       );
 
       const manifestSource = await fs.readFile(manifestOutPath, "utf8");
+      const supportSource = await fs.readFile(supportPath, "utf8");
       const typesSource = await fs.readFile(typesPath, "utf8");
       assert.ok(!manifestSource.includes("OLD_CONTENT_SHOULD_BE_REPLACED"));
+      assert.ok(!supportSource.includes("OLD_SUPPORT_SHOULD_BE_REPLACED"));
       assert.ok(!typesSource.includes("OLD_TYPES_SHOULD_BE_REPLACED"));
-      assert.ok(manifestSource.includes("iocManifestByContract"));
+      assert.ok(manifestSource.includes("export const iocManifest"));
+      assert.ok(supportSource.includes("iocRegistrationManifest"));
       assert.ok(typesSource.includes("export interface IocGeneratedTypes"));
       assert.ok(
         typesSource.includes("export type IocGeneratedCradle = IocGeneratedTypes"),

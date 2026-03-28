@@ -1,0 +1,27 @@
+export const formatMissingDefaultImplementationMessage = (ctx) => {
+    const implList = ctx.implementationNames
+        .map((n) => JSON.stringify(n))
+        .join(", ");
+    const keys = ctx.registrationKeys.map((k) => JSON.stringify(k)).join(", ");
+    return [
+        `[ioc] Contract ${JSON.stringify(ctx.contractName)} has ${ctx.implementationNames.length} implementations (${implList}) but no default is selected for the contract slot.`,
+        `Register exactly one implementation under the contract key, mark one row with default: true in the generated manifest (via resolver metadata or ioc.config registrations), or reduce to a single implementation.`,
+        `Implementation registration keys: ${keys}.`,
+    ].join(" ");
+};
+export const formatMissingContractImplementationMessage = (ctx) => {
+    const who = ctx.requestedBy !== undefined && ctx.requestedBy.length > 0
+        ? `Requested as ${JSON.stringify(ctx.requestedBy)}. `
+        : "";
+    return `${who}No implementation is registered for contract ${JSON.stringify(ctx.contractName)}. Add a discoverable factory that returns that contract (or fix ioc.config / discovery globs), then re-run manifest generation.`;
+};
+export const formatMissingFactoryExportMessage = (ctx) => [
+    `[ioc] Module ${JSON.stringify(ctx.modulePath)} has no callable factory export ${JSON.stringify(ctx.exportName)} for contract ${JSON.stringify(ctx.contractName)} (registration ${JSON.stringify(ctx.registrationKey)}).`,
+    `Ensure the export exists at runtime, matches the manifest exportName, and is a function. Re-run manifest generation if the module path or export changed.`,
+].join(" ");
+export const formatMissingModuleImportMessage = (ctx) => `[ioc] iocModuleImports[${ctx.moduleIndex}] is missing for source ${JSON.stringify(ctx.modulePath)}. The import array must align with moduleIndex values in the manifest (re-run manifest generation).`;
+export const formatMissingDependencyMessage = (ctx) => [
+    `[ioc] While building ${ctx.implementationLabel} (${JSON.stringify(ctx.modulePath)}), dependency ${JSON.stringify(ctx.missingContractName)} could not be satisfied.`,
+    `Register an implementation for ${JSON.stringify(ctx.missingContractName)} in the manifest, or fix the factory's dependency/cradle usage.`,
+].join(" ");
+//# sourceMappingURL=iocRuntimeErrors.js.map

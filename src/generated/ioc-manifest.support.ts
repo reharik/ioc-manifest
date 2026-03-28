@@ -1,0 +1,171 @@
+/* AUTO-GENERATED. DO NOT EDIT.
+Runtime registration bindings (moduleIndex, relImport) and bundle tooling insight.
+Used by registerIocFromManifest(...) and inspection helpers. See ioc-manifest.ts for the human-oriented view.
+Re-run `npm run gen:manifest` after changing factories or IoC config.
+*/
+import type {
+  IocBundleArraysInsightManifest,
+  IocContractManifest,
+} from "ioc-manifest";
+
+export const iocRegistrationManifest: IocContractManifest = {
+  AlbumService: {
+    albumService: {
+      exportName: "buildAlbumService",
+      registrationKey: "albumService",
+      modulePath: "examples/f-dependency-injection.ts",
+      sourceFilePath: "examples/f-dependency-injection.ts",
+      relImport: "../examples/f-dependency-injection.js",
+      contractName: "AlbumService",
+      implementationName: "albumService",
+      lifetime: "singleton",
+      moduleIndex: 4,
+      default: true,
+      discoveredBy: "naming",
+      dependencyContractNames: ["MediaStorage"],
+    },
+  },
+  CacheClient: {
+    memoryCache: {
+      exportName: "buildMemoryCache",
+      registrationKey: "memoryCache",
+      modulePath: "examples/d-grouping.ts",
+      sourceFilePath: "examples/d-grouping.ts",
+      relImport: "../examples/d-grouping.js",
+      contractName: "CacheClient",
+      implementationName: "memoryCache",
+      lifetime: "singleton",
+      moduleIndex: 3,
+      default: true,
+      discoveredBy: "naming",
+    },
+  },
+  Logger: {
+    consoleLogger: {
+      exportName: "buildConsoleLogger",
+      registrationKey: "consoleLogger",
+      modulePath: "examples/a-single-implementation.ts",
+      sourceFilePath: "examples/a-single-implementation.ts",
+      relImport: "../examples/a-single-implementation.js",
+      contractName: "Logger",
+      implementationName: "consoleLogger",
+      lifetime: "singleton",
+      moduleIndex: 0,
+      default: true,
+      discoveredBy: "naming",
+      configOverridesApplied: ["default"],
+    },
+  },
+  MediaStorage: {
+    localMediaStorage: {
+      exportName: "buildLocalMediaStorage",
+      registrationKey: "localMediaStorage",
+      modulePath: "examples/b-multiple-implementations.ts",
+      sourceFilePath: "examples/b-multiple-implementations.ts",
+      relImport: "../examples/b-multiple-implementations.js",
+      contractName: "MediaStorage",
+      implementationName: "localMediaStorage",
+      lifetime: "singleton",
+      moduleIndex: 1,
+      discoveredBy: "naming",
+    },
+    mediaStorage: {
+      exportName: "buildMediaStorage",
+      registrationKey: "mediaStorage",
+      modulePath: "examples/c-default-selection.ts",
+      sourceFilePath: "examples/c-default-selection.ts",
+      relImport: "../examples/c-default-selection.js",
+      contractName: "MediaStorage",
+      implementationName: "mediaStorage",
+      lifetime: "singleton",
+      moduleIndex: 2,
+      discoveredBy: "naming",
+    },
+    s3MediaStorage: {
+      exportName: "buildS3MediaStorage",
+      registrationKey: "s3MediaStorage",
+      modulePath: "examples/b-multiple-implementations.ts",
+      sourceFilePath: "examples/b-multiple-implementations.ts",
+      relImport: "../examples/b-multiple-implementations.js",
+      contractName: "MediaStorage",
+      implementationName: "s3MediaStorage",
+      lifetime: "singleton",
+      moduleIndex: 1,
+      default: true,
+      discoveredBy: "naming",
+      configOverridesApplied: ["default"],
+    },
+  },
+  Widget: {
+    primaryWidget: {
+      exportName: "buildPrimaryWidget",
+      registrationKey: "primaryWidget",
+      modulePath: "examples/c-default-selection.ts",
+      sourceFilePath: "examples/c-default-selection.ts",
+      relImport: "../examples/c-default-selection.js",
+      contractName: "Widget",
+      implementationName: "primaryWidget",
+      lifetime: "singleton",
+      moduleIndex: 2,
+      default: true,
+      discoveredBy: "naming",
+      configOverridesApplied: ["default"],
+    },
+    secondaryWidget: {
+      exportName: "buildSecondaryWidget",
+      registrationKey: "secondaryWidget",
+      modulePath: "examples/c-default-selection.ts",
+      sourceFilePath: "examples/c-default-selection.ts",
+      relImport: "../examples/c-default-selection.js",
+      contractName: "Widget",
+      implementationName: "secondaryWidget",
+      lifetime: "singleton",
+      moduleIndex: 2,
+      discoveredBy: "naming",
+    },
+  },
+};
+
+export const iocBundleArraysInsight: IocBundleArraysInsightManifest = [
+  {
+    bundlePath: "services.album",
+    declaredMembers: ["AlbumService"],
+    expandedMembers: [
+      {
+        contractName: "AlbumService",
+        registrationKey: "albumService",
+      },
+    ],
+  },
+  {
+    bundlePath: "services.media.read",
+    declaredMembers: ["MediaStorage"],
+    expandedMembers: [
+      {
+        contractName: "MediaStorage",
+        registrationKey: "mediaStorage",
+      },
+    ],
+  },
+  {
+    bundlePath: "services.read",
+    declaredMembers: [
+      {
+        $bundleRef: "services.album",
+      },
+      {
+        $bundleRef: "services.media.read",
+      },
+    ],
+    expandedMembers: [
+      {
+        contractName: "AlbumService",
+        registrationKey: "albumService",
+      },
+      {
+        contractName: "MediaStorage",
+        registrationKey: "mediaStorage",
+      },
+    ],
+  },
+];

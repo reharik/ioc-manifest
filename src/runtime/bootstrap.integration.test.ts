@@ -4,11 +4,8 @@ import { createContainer } from "awilix";
 import type { MediaStorage } from "../examples/b-multiple-implementations.js";
 import type { AlbumService } from "../examples/f-dependency-injection.js";
 import type { IocGeneratedCradle } from "../generated/ioc-registry.types.js";
-import {
-  iocBundlesManifest,
-  iocManifestByContract,
-  iocModuleImports,
-} from "../generated/ioc-manifest.js";
+import { iocManifest } from "../generated/ioc-manifest.js";
+import { iocRegistrationManifest } from "../generated/ioc-manifest.support.js";
 import { registerIocFromManifest } from "./bootstrap.js";
 
 describe("registerIocFromManifest", () => {
@@ -17,9 +14,9 @@ describe("registerIocFromManifest", () => {
       const container = createContainer<IocGeneratedCradle>();
       registerIocFromManifest(
         container,
-        iocManifestByContract,
-        iocModuleImports,
-        iocBundlesManifest,
+        iocRegistrationManifest,
+        iocManifest.moduleImports,
+        iocManifest.bundles,
       );
       const media = container.resolve("mediaStorage") as MediaStorage;
       await media.put("k");
@@ -32,9 +29,9 @@ describe("registerIocFromManifest", () => {
       const container = createContainer<IocGeneratedCradle>();
       registerIocFromManifest(
         container,
-        iocManifestByContract,
-        iocModuleImports,
-        iocBundlesManifest,
+        iocRegistrationManifest,
+        iocManifest.moduleImports,
+        iocManifest.bundles,
       );
       const local = container.resolve("localMediaStorage") as MediaStorage;
       await local.put("k");
@@ -49,9 +46,9 @@ describe("registerIocFromManifest", () => {
       const container = createContainer<IocGeneratedCradle>();
       registerIocFromManifest(
         container,
-        iocManifestByContract,
-        iocModuleImports,
-        iocBundlesManifest,
+        iocRegistrationManifest,
+        iocManifest.moduleImports,
+        iocManifest.bundles,
       );
       const collection = container.resolve("mediaStorages") as Record<
         string,
@@ -70,9 +67,9 @@ describe("registerIocFromManifest", () => {
       const container = createContainer<IocGeneratedCradle>();
       registerIocFromManifest(
         container,
-        iocManifestByContract,
-        iocModuleImports,
-        iocBundlesManifest,
+        iocRegistrationManifest,
+        iocManifest.moduleImports,
+        iocManifest.bundles,
       );
 
       const services = container.resolve("services") as {

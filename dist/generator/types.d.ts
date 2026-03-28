@@ -17,6 +17,10 @@ export type DiscoveredFactory = {
     relImport: string;
     default?: boolean;
     lifetime?: IocLifetime;
+    /** Set when the export matched a discovery strategy. */
+    discoveredBy?: "naming" | "injectable-wrapper";
+    /** Contract types inferred from the factory deps parameter (see manifest metadata). */
+    dependencyContractNames?: string[];
 };
 export type FactoryDiscoveryFileContext = {
     absPath: string;

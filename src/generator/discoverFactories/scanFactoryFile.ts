@@ -4,6 +4,11 @@ import {
   keyFromExportName,
   resolveRegistrationKeyForFactory,
 } from "../../core/resolver.js";
+import {
+  IocDiscoverySkipReason,
+  IocDiscoveryStatus,
+  type IocDiscoveryOutcome,
+} from "./discoveryOutcomeTypes.js";
 import type { DiscoveredFactory, FactoryDiscoveryFileContext } from "../types.js";
 
 /** Structural facts about a source file, collected in one AST walk. */
@@ -175,7 +180,9 @@ const getInjectableWrappedFactoryDecl = (
   return undefined;
 };
 
-const collectFileAnalysis = (sourceFile: ts.SourceFile): FileAnalysis => {
+export const collectFileAnalysisForFactoryDiscovery = (
+  sourceFile: ts.SourceFile,
+): FileAnalysis => {
   const exportedNames = new Set<string>();
   const injectableWrappedExports = new Set<string>();
   const localTypes = new Set<string>();
@@ -286,10 +293,16 @@ const collectFileAnalysis = (sourceFile: ts.SourceFile): FileAnalysis => {
   };
 };
 
+export type ScanFactoryFileResult = {
+  sourceFilePath: string;
+  outcomes: IocDiscoveryOutcome[];
+  discovered: DiscoveredFactory[];
+};
+
 export const scanFactoryFile = (
   context: FactoryDiscoveryFileContext,
   checker: ts.TypeChecker,
-): DiscoveredFactory[] => {
+): ScanFactoryFileResult => {
   const {
     absPath,
     sourceFile,
@@ -299,13 +312,23 @@ export const scanFactoryFile = (
     paths: { srcDir, generatedDir },
   } = context;
 
-  const out: DiscoveredFactory[] = [];
+  const sourceFilePath = modulePathFromSrc(absPath, srcDir);
+  const discovered: DiscoveredFactory[] = [];
+  const outcomes: IocDiscoveryOutcome[] = [];
+
   const sourceText = sourceFile.getText();
   const shouldScan =
     sourceText.includes(factoryPrefix) || sourceText.includes("injectable(");
-  if (!shouldScan) return out;
+  if (!shouldScan) {
+    outcomes.push({
+      scope: "file",
+      status: IocDiscoveryStatus.SKIPPED,
+      skipReason: IocDiscoverySkipReason.NO_FACTORY_PATTERN_IN_SOURCE,
+    });
+    return { sourceFilePath, outcomes, discovered };
+  }
 
-  const analysis = collectFileAnalysis(sourceFile);
+  const analysis = collectFileAnalysisForFactoryDiscovery(sourceFile);
 
   const isContractInScope = (contract: string): boolean =>
     analysis.localTypes.has(contract) || analysis.importedIds.has(contract);
@@ -347,38 +370,69 @@ export const scanFactoryFile = (
     return undefined;
   };
 
-  for (const exportName of analysis.exportedNames) {
+  const candidateExports = Array.from(analysis.exportedNames)
+    .sort((a, b) => a.localeCompare(b))
+    .filter((exportName) => matchInjectableExport(exportName) !== undefined);
+
+  if (candidateExports.length === 0) {
+    outcomes.push({
+      scope: "file",
+      status: IocDiscoveryStatus.SKIPPED,
+      skipReason: IocDiscoverySkipReason.NO_MATCHING_EXPORT,
+    });
+    return { sourceFilePath, outcomes, discovered };
+  }
+
+  for (const exportName of candidateExports) {
     const match = matchInjectableExport(exportName);
-    if (!match) continue;
+    if (!match) {
+      continue;
+    }
 
     const implementationName = match.implementationName;
     if (!implementationName || implementationName.length === 0) {
-      throw new Error(
-        `[ioc] ${fileLabel}: export "${exportName}" is injectable but an implementation name could not be derived.`,
-      );
+      outcomes.push({
+        scope: "export",
+        exportName,
+        status: IocDiscoveryStatus.SKIPPED,
+        skipReason: IocDiscoverySkipReason.UNSUPPORTED_PATTERN,
+      });
+      continue;
     }
 
     const factoryDecl = analysis.factoryDeclByExport.get(exportName);
     if (!factoryDecl) {
-      throw new Error(
-        `[ioc] ${fileLabel}: export "${exportName}" is injectable but the export is not a function factory. Use an exported function declaration or a const with a function/arrow initializer (optionally wrapped with injectable(...)).`,
-      );
+      outcomes.push({
+        scope: "export",
+        exportName,
+        status: IocDiscoveryStatus.SKIPPED,
+        skipReason: IocDiscoverySkipReason.INVALID_FACTORY_SIGNATURE,
+      });
+      continue;
     }
 
     const signature = checker.getSignatureFromDeclaration(factoryDecl);
     if (!signature) {
-      throw new Error(
-        `[ioc] ${fileLabel}: export "${exportName}" — no call signature (cannot read return type).`,
-      );
+      outcomes.push({
+        scope: "export",
+        exportName,
+        status: IocDiscoveryStatus.SKIPPED,
+        skipReason: IocDiscoverySkipReason.INVALID_FACTORY_SIGNATURE,
+      });
+      continue;
     }
 
     const returnType = checker.getReturnTypeOfSignature(signature);
     const contractName = contractNameFromReturnType(checker, returnType);
 
     if (!contractName) {
-      throw new Error(
-        `[ioc] ${fileLabel}: export "${exportName}" — return type must be a single named interface, class, or type alias (not a union, inline object type, or intrinsic). Refactor the return type or add an explicit named contract type.`,
-      );
+      outcomes.push({
+        scope: "export",
+        exportName,
+        status: IocDiscoveryStatus.SKIPPED,
+        skipReason: IocDiscoverySkipReason.CONTRACT_NOT_RESOLVED,
+      });
+      continue;
     }
 
     const contractDeclSource = getContractTypeDeclarationSourceFile(
@@ -386,9 +440,14 @@ export const scanFactoryFile = (
       returnType,
     );
     if (!contractDeclSource) {
-      throw new Error(
-        `[ioc] ${fileLabel}: export "${exportName}" — could not resolve a declaration source file for contract type "${contractName}".`,
-      );
+      outcomes.push({
+        scope: "export",
+        exportName,
+        status: IocDiscoveryStatus.SKIPPED,
+        skipReason: IocDiscoverySkipReason.CONTRACT_NOT_FOUND,
+        contractName,
+      });
+      continue;
     }
 
     const contractTypeRelImport = relImportFromGeneratedDir(
@@ -397,34 +456,62 @@ export const scanFactoryFile = (
     );
 
     if (!isContractInScope(contractName)) {
-      throw new Error(
-        `[ioc] ${fileLabel}: export "${exportName}" returns "${contractName}" but that type is not in scope (export it from this file or import it). The checker needs the contract symbol available here.`,
-      );
+      outcomes.push({
+        scope: "export",
+        exportName,
+        status: IocDiscoveryStatus.SKIPPED,
+        skipReason: IocDiscoverySkipReason.CONTRACT_NOT_IMPORTED,
+        contractName,
+      });
+      continue;
     }
 
     const configRegistrationName =
       iocConfig?.registrations?.[contractName]?.[implementationName]?.name;
-    const registrationKey = resolveRegistrationKeyForFactory(
-      exportName,
-      configRegistrationName,
-      contractName,
-      {
-        modulePath: fileLabel,
-        contractName,
+    let registrationKey: string;
+    try {
+      registrationKey = resolveRegistrationKeyForFactory(
         exportName,
-      },
-    );
+        configRegistrationName,
+        contractName,
+        {
+          modulePath: fileLabel,
+          contractName,
+          exportName,
+        },
+      );
+    } catch {
+      outcomes.push({
+        scope: "export",
+        exportName,
+        status: IocDiscoveryStatus.SKIPPED,
+        skipReason: IocDiscoverySkipReason.UNSUPPORTED_PATTERN,
+        contractName,
+      });
+      continue;
+    }
 
-    out.push({
+    discovered.push({
       contractName,
       contractTypeRelImport,
       implementationName,
       exportName,
       registrationKey,
-      modulePath: modulePathFromSrc(absPath, srcDir),
+      modulePath: sourceFilePath,
       relImport: relImportFromGeneratedDir(absPath, generatedDir),
+      discoveredBy: match.matchedBy,
+    });
+
+    outcomes.push({
+      scope: "export",
+      exportName,
+      status: IocDiscoveryStatus.DISCOVERED,
+      contractName,
+      implementationName,
+      registrationKey,
+      discoveredBy: match.matchedBy,
     });
   }
 
-  return out;
+  return { sourceFilePath, outcomes, discovered };
 };

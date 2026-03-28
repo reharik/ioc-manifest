@@ -17,6 +17,7 @@ const createManifestForSingleContract = (lifetime: "singleton" | "scoped" | "tra
       exportName: "buildSvc",
       registrationKey: "svc",
       modulePath: "svc.ts",
+      sourceFilePath: "svc.ts",
       relImport: "../svc.js",
       contractName: "Svc",
       implementationName: "svc",
@@ -37,6 +38,7 @@ describe("registerIocFromManifest", () => {
             exportName: "buildZeroArg",
             registrationKey: "zeroArg",
             modulePath: "zero.ts",
+            sourceFilePath: "zero.ts",
             relImport: "../zero.js",
             contractName: "ZeroArg",
             implementationName: "zeroArg",
@@ -50,6 +52,7 @@ describe("registerIocFromManifest", () => {
             exportName: "buildSvcWithDefaultParam",
             registrationKey: "svc",
             modulePath: "svc.ts",
+            sourceFilePath: "svc.ts",
             relImport: "../svc.js",
             contractName: "Svc",
             implementationName: "svc",
@@ -99,6 +102,7 @@ describe("registerIocFromManifest", () => {
             exportName: "buildFast",
             registrationKey: "fastCounter",
             modulePath: "counter.ts",
+            sourceFilePath: "counter.ts",
             relImport: "../counter.js",
             contractName: "CounterService",
             implementationName: "fast",
@@ -110,6 +114,7 @@ describe("registerIocFromManifest", () => {
             exportName: "buildStable",
             registrationKey: "stableCounter",
             modulePath: "counter.ts",
+            sourceFilePath: "counter.ts",
             relImport: "../counter.js",
             contractName: "CounterService",
             implementationName: "stable",
@@ -141,6 +146,7 @@ describe("registerIocFromManifest", () => {
             exportName: "buildFast",
             registrationKey: "fastCounter",
             modulePath: "counter.ts",
+            sourceFilePath: "counter.ts",
             relImport: "../counter.js",
             contractName: "CounterService",
             implementationName: "fast",
@@ -152,6 +158,7 @@ describe("registerIocFromManifest", () => {
             exportName: "buildStable",
             registrationKey: "stableCounter",
             modulePath: "counter.ts",
+            sourceFilePath: "counter.ts",
             relImport: "../counter.js",
             contractName: "CounterService",
             implementationName: "stable",
@@ -185,6 +192,7 @@ describe("registerIocFromManifest", () => {
             exportName: "buildFast",
             registrationKey: "fastCounter",
             modulePath: "counter.ts",
+            sourceFilePath: "counter.ts",
             relImport: "../counter.js",
             contractName: "CounterService",
             implementationName: "fast",
@@ -196,6 +204,7 @@ describe("registerIocFromManifest", () => {
             exportName: "buildStable",
             registrationKey: "stableCounter",
             modulePath: "counter.ts",
+            sourceFilePath: "counter.ts",
             relImport: "../counter.js",
             contractName: "CounterService",
             implementationName: "stable",
@@ -229,6 +238,7 @@ describe("registerIocFromManifest", () => {
             exportName: "buildAlpha",
             registrationKey: "alphaSvc",
             modulePath: "svc.ts",
+            sourceFilePath: "svc.ts",
             relImport: "../svc.js",
             contractName: "Svc",
             implementationName: "alpha",
@@ -239,6 +249,7 @@ describe("registerIocFromManifest", () => {
             exportName: "buildBeta",
             registrationKey: "betaSvc",
             modulePath: "svc.ts",
+            sourceFilePath: "svc.ts",
             relImport: "../svc.js",
             contractName: "Svc",
             implementationName: "beta",
@@ -263,6 +274,50 @@ describe("registerIocFromManifest", () => {
     });
   });
 
+  describe("When the manifest has multiple implementations but no default binding", () => {
+    it("should throw an error that names implementations and registration keys", () => {
+      const manifest: IocContractManifest = {
+        MediaStorage: {
+          local: {
+            exportName: "buildLocal",
+            registrationKey: "localMediaStorage",
+            modulePath: "local.ts",
+            sourceFilePath: "local.ts",
+            relImport: "../local.js",
+            contractName: "MediaStorage",
+            implementationName: "local",
+            lifetime: "singleton",
+            moduleIndex: 0,
+          },
+          remote: {
+            exportName: "buildRemote",
+            registrationKey: "remoteMediaStorage",
+            modulePath: "remote.ts",
+            sourceFilePath: "remote.ts",
+            relImport: "../remote.js",
+            contractName: "MediaStorage",
+            implementationName: "remote",
+            lifetime: "singleton",
+            moduleIndex: 0,
+          },
+        },
+      };
+      const moduleImports: readonly IocModuleNamespace[] = [
+        {
+          buildLocal: (): { kind: string } => ({ kind: "local" }),
+          buildRemote: (): { kind: string } => ({ kind: "remote" }),
+        },
+      ];
+      const container = createContainer<{ mediaStorage: { kind: string } }>({
+        injectionMode: "PROXY",
+      });
+      assert.throws(
+        () => registerIocFromManifest(container, manifest, moduleImports),
+        /has 2 implementations/,
+      );
+    });
+  });
+
   describe("When manifest and module imports are inconsistent", () => {
     it("should throw clear errors for missing module imports and non-function exports", () => {
       const missingModuleContainer = createContainer<TestCradle>({
@@ -284,7 +339,7 @@ describe("registerIocFromManifest", () => {
             missingModuleManifest,
             [{ buildSvc: "not-a-function" }],
           ),
-        /has no function export/,
+        /has no callable factory export/,
       );
     });
   });

@@ -3,6 +3,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import ts from "typescript";
+import {
+  IocDiscoverySkipReason,
+  IocDiscoveryStatus,
+} from "./discoveryOutcomeTypes.js";
 import type { DiscoveredFactory } from "../types.js";
 import { discoverFactories } from "./discoverFactories.js";
 
@@ -214,24 +218,40 @@ describe("Discovery strategies (discoverFactories)", () => {
   });
 
   describe("When factories fail contract/return-type validation", () => {
-    it("should throw instead of accepting the injectable wrapped factory", () => {
+    it("should skip the export with contract_not_resolved and omit it from accepted factories", () => {
       const program = makeProgram();
       const invalidFile = path.join(fixtureDir, "invalid-factory.ts");
 
-      const invocation = (): void => {
-        discoverFactories(
-          [invalidFile],
-          program,
-          projectRoot,
-          "build",
-          {
-            srcDir,
-            generatedDir,
-          },
-        );
-      };
+      const { acceptedFactories, discoveryFiles } = discoverFactories(
+        [invalidFile],
+        program,
+        projectRoot,
+        "build",
+        {
+          srcDir,
+          generatedDir,
+        },
+        undefined,
+        { collectFileRecords: true },
+      );
 
-      assert.throws(invocation, /return type must be a single named interface/i);
+      assert.strictEqual(acceptedFactories.length, 0);
+      const record = discoveryFiles.find((f) =>
+        f.sourceFilePath.endsWith("invalid-factory.ts"),
+      );
+      assert.ok(record);
+      const exportOutcome = record.outcomes.find(
+        (o) =>
+          o.scope === "export" && o.exportName === "makeInvalidWrapped",
+      );
+      assert.ok(exportOutcome && exportOutcome.scope === "export");
+      if (exportOutcome.scope === "export") {
+        assert.strictEqual(exportOutcome.status, IocDiscoveryStatus.SKIPPED);
+        assert.strictEqual(
+          exportOutcome.skipReason,
+          IocDiscoverySkipReason.CONTRACT_NOT_RESOLVED,
+        );
+      }
     });
   });
 

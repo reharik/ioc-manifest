@@ -50,7 +50,7 @@ const selectDefaultImplementationKey = (contractName, mergedByImplName) => {
     const factories = Array.from(mergedByImplName.values());
     const withDefault = factories.filter((f) => f.default === true);
     if (withDefault.length > 1) {
-        throw new Error(`[ioc] contract "${contractName}" has multiple implementations marked default: true after applying ioc.config overrides: ${listImplFactories(withDefault)}. Mark exactly one with default: true in source or in registrations[${JSON.stringify(contractName)}][implementationName], or reduce to a single implementation.`);
+        throw new Error(`[ioc] Contract ${JSON.stringify(contractName)} has multiple implementations marked default: true after applying ioc.config overrides: ${listImplFactories(withDefault)}. Mark exactly one with default: true in source or in registrations[${JSON.stringify(contractName)}][implementationName], or reduce to a single implementation.`);
     }
     if (withDefault.length === 1) {
         return withDefault[0].implementationName;
@@ -58,7 +58,12 @@ const selectDefaultImplementationKey = (contractName, mergedByImplName) => {
     if (mergedByImplName.size === 1) {
         return Array.from(mergedByImplName.keys())[0];
     }
-    throw new Error(`[ioc] contract "${contractName}" has ${mergedByImplName.size} implementations and no default can be selected. Discovered: ${listImplFactories(factories)}. Set registrations[${JSON.stringify(contractName)}][implementationName].default: true in ioc.config.ts for one implementation, or mark exactly one factory with resolver default: true, or reduce to a single implementation.`);
+    const names = Array.from(mergedByImplName.keys()).sort((a, b) => a.localeCompare(b));
+    const keys = factories
+        .map((f) => `${f.implementationName}→${JSON.stringify(f.registrationKey)}`)
+        .sort((a, b) => a.localeCompare(b))
+        .join(", ");
+    throw new Error(`[ioc] Contract ${JSON.stringify(contractName)} has ${mergedByImplName.size} implementations (${names.map((n) => JSON.stringify(n)).join(", ")}) but none is selected as the default. Set registrations[${JSON.stringify(contractName)}][implementationName].default: true in ioc.config.ts for exactly one implementation, mark exactly one factory with resolver default: true, or reduce to a single implementation. Registration keys: ${keys}.`);
 };
 const resolveLifetime = (factory) => {
     if (factory.lifetime !== undefined) {
@@ -236,6 +241,17 @@ export const buildRegistrationPlan = (contractMap, config) => {
         const implementationNames = Array.from(mergedByImplName.keys()).sort((a, b) => a.localeCompare(b));
         const implementations = implementationNames.map((implementationName) => {
             const factory = mergedByImplName.get(implementationName);
+            const override = config?.registrations?.[contractName]?.[implementationName];
+            const configOverridesApplied = [];
+            if (override?.name !== undefined) {
+                configOverridesApplied.push("name");
+            }
+            if (override?.lifetime !== undefined) {
+                configOverridesApplied.push("lifetime");
+            }
+            if (override?.default !== undefined) {
+                configOverridesApplied.push("default");
+            }
             return {
                 implementationName,
                 exportName: factory.exportName,
@@ -243,6 +259,16 @@ export const buildRegistrationPlan = (contractMap, config) => {
                 relImport: factory.relImport,
                 registrationKey: factory.registrationKey,
                 lifetime: resolveLifetime(factory),
+                ...(factory.discoveredBy !== undefined
+                    ? { discoveredBy: factory.discoveredBy }
+                    : {}),
+                ...(configOverridesApplied.length > 0
+                    ? { configOverridesApplied }
+                    : {}),
+                ...(factory.dependencyContractNames !== undefined &&
+                    factory.dependencyContractNames.length > 0
+                    ? { dependencyContractNames: factory.dependencyContractNames }
+                    : {}),
             };
         });
         out.push({

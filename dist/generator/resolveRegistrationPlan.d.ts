@@ -1,4 +1,5 @@
 import type { IocConfig, IocLifetime, IocOverride } from "../config/iocConfig.js";
+import type { IocConfigOverrideField } from "../core/manifest.js";
 import type { DiscoveredFactory } from "./types.js";
 export type ResolvedImplementationEntry = {
     /** Stable implementation id from discovery (factory export / resolver map key). */
@@ -9,6 +10,10 @@ export type ResolvedImplementationEntry = {
     modulePath: string;
     relImport: string;
     lifetime: IocLifetime;
+    discoveredBy?: "naming" | "injectable-wrapper";
+    /** Fields present on the matching `ioc.config` registration override for this implementation. */
+    configOverridesApplied?: readonly IocConfigOverrideField[];
+    dependencyContractNames?: readonly string[];
 };
 export type ResolvedContractRegistration = {
     contractName: string;

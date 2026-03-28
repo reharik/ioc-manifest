@@ -1,4 +1,6 @@
+import type { IocBundleArrayInsight } from "../core/manifest.js";
 import type { ResolvedContractRegistration } from "../generator/resolveRegistrationPlan.js";
+import { pickSimilarKeys } from "./bundleKeySuggestions.js";
 
 const collectReservedCradleKeys = (
   plans: readonly ResolvedContractRegistration[],
@@ -14,19 +16,6 @@ const collectReservedCradleKeys = (
     }
   }
   return reserved;
-};
-
-const assertBundleRootKeysDoNotCollide = (
-  bundleRoot: ResolvedBundleTree,
-  reserved: Set<string>,
-): void => {
-  for (const key of Object.keys(bundleRoot)) {
-    if (reserved.has(key)) {
-      throw new Error(
-        `[ioc-config] bundles root key ${JSON.stringify(key)} collides with an existing Awilix registration key (contract default, implementation, or collection). Choose a different bundles property name.`,
-      );
-    }
-  }
 };
 
 export type IocBundleReference = {
@@ -49,6 +38,34 @@ export interface ResolvedBundleTree {
   [key: string]: ResolvedBundleNode;
 }
 export type ResolvedBundleNode = ResolvedBundleTree | ResolvedBundleLeaf[];
+
+export type BundlePlanIssue =
+  | { kind: "bundles_not_object" }
+  | { kind: "invalid_node_shape"; path: string }
+  | { kind: "invalid_array_item"; path: string; index: number }
+  | { kind: "empty_contract_string"; path: string; index: number }
+  | {
+      kind: "unknown_contract";
+      path: string;
+      index: number;
+      contractName: string;
+      knownContracts: string[];
+    }
+  | {
+      kind: "unknown_bundle_ref";
+      path: string;
+      index: number;
+      reference: string;
+      knownBundlePaths: string[];
+    }
+  | { kind: "bundle_cycle"; cycle: string[] }
+  | { kind: "bundle_root_must_be_object" }
+  | { kind: "bundle_root_key_collision"; key: string };
+
+export type BundlePlanResult = {
+  tree: ResolvedBundleTree;
+  arraysInsight: IocBundleArrayInsight[];
+};
 
 type RawBundleArrayItem = string | IocBundleReference;
 type RawBundleArray = readonly RawBundleArrayItem[];
@@ -74,75 +91,104 @@ const bundlePathToLabel = (segments: readonly string[]): string => {
   return `bundles.${segments.join(".")}`;
 };
 
-const validateRawArrayItems = (
+const validateRawArrayItemsSoft = (
   arrayPath: readonly string[],
   items: readonly unknown[],
-): RawBundleArray => {
+):
+  | { ok: true; items: RawBundleArray }
+  | { ok: false; issue: BundlePlanIssue } => {
   const out: RawBundleArrayItem[] = [];
-  items.forEach((item, index) => {
+  const path = arrayPath.join(".");
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
     if (typeof item === "string") {
       if (item.length === 0) {
-        throw new Error(
-          `[ioc-config] ${bundlePathToLabel(arrayPath)}[${index}] must be a non-empty contract name string or { $bundleRef: string }`,
-        );
+        return {
+          ok: false,
+          issue: { kind: "empty_contract_string", path, index },
+        };
       }
       out.push(item);
-      return;
+      continue;
     }
     if (isBundleReference(item)) {
       out.push(item);
-      return;
+      continue;
     }
-    throw new Error(
-      `[ioc-config] ${bundlePathToLabel(arrayPath)}[${index}] has invalid shape. Expected contract name string or { $bundleRef: string }`,
-    );
-  });
-  return out;
+    return {
+      ok: false,
+      issue: { kind: "invalid_array_item", path, index },
+    };
+  }
+  return { ok: true, items: out };
 };
 
-const collectBundleArrays = (
+const collectBundleArraysSoft = (
   node: unknown,
   pathSegments: string[],
   arraysByPath: Map<string, RawBundleArray>,
-): void => {
+): BundlePlanIssue[] => {
   if (Array.isArray(node)) {
     const path = pathSegments.join(".");
-    arraysByPath.set(path, validateRawArrayItems(pathSegments, node));
-    return;
+    const validated = validateRawArrayItemsSoft(pathSegments, node);
+    if (!validated.ok) {
+      return [validated.issue];
+    }
+    arraysByPath.set(path, validated.items);
+    return [];
   }
 
   if (!isRecord(node)) {
-    throw new Error(
-      `[ioc-config] ${bundlePathToLabel(pathSegments)} has invalid node shape. Expected an object or an array of contract refs`,
+    return [{ kind: "invalid_node_shape", path: pathSegments.join(".") }];
+  }
+
+  const issues: BundlePlanIssue[] = [];
+  for (const [key, value] of Object.entries(node)) {
+    issues.push(
+      ...collectBundleArraysSoft(value, [...pathSegments, key], arraysByPath),
     );
   }
-
-  for (const [key, value] of Object.entries(node)) {
-    collectBundleArrays(value, [...pathSegments, key], arraysByPath);
-  }
+  return issues;
 };
 
-const assertReferencesAndContractsExist = (
+const assertReferencesSoft = (
   arraysByPath: Map<string, RawBundleArray>,
   contractsByName: Map<string, ResolvedContractRegistration>,
-): void => {
+): BundlePlanIssue[] => {
+  const issues: BundlePlanIssue[] = [];
+  const knownBundlePaths = Array.from(arraysByPath.keys()).sort((a, b) =>
+    a.localeCompare(b),
+  );
+  const knownContracts = Array.from(contractsByName.keys()).sort((a, b) =>
+    a.localeCompare(b),
+  );
+
   for (const [arrayPath, items] of arraysByPath) {
     items.forEach((item, index) => {
       if (typeof item === "string") {
         if (!contractsByName.has(item)) {
-          throw new Error(
-            `[ioc-config] bundles.${arrayPath}[${index}] references unknown contract ${JSON.stringify(item)}. Known contracts: ${Array.from(contractsByName.keys()).sort().join(", ")}`,
-          );
+          issues.push({
+            kind: "unknown_contract",
+            path: arrayPath,
+            index,
+            contractName: item,
+            knownContracts,
+          });
         }
         return;
       }
       if (!arraysByPath.has(item.$bundleRef)) {
-        throw new Error(
-          `[ioc-config] bundles.${arrayPath}[${index}] references unknown bundle path ${JSON.stringify(item.$bundleRef)}. Only array bundle nodes can be referenced.`,
-        );
+        issues.push({
+          kind: "unknown_bundle_ref",
+          path: arrayPath,
+          index,
+          reference: item.$bundleRef,
+          knownBundlePaths,
+        });
       }
     });
   }
+  return issues;
 };
 
 const collectArrayRefs = (items: RawBundleArray): string[] =>
@@ -150,32 +196,42 @@ const collectArrayRefs = (items: RawBundleArray): string[] =>
     .filter((item): item is IocBundleReference => typeof item !== "string")
     .map((item) => item.$bundleRef);
 
-const detectReferenceCycles = (arraysByPath: Map<string, RawBundleArray>): void => {
+const detectCyclesSoft = (
+  arraysByPath: Map<string, RawBundleArray>,
+): BundlePlanIssue | undefined => {
   const visiting = new Set<string>();
   const visited = new Set<string>();
 
-  const visit = (path: string, stack: string[]): void => {
+  const visit = (path: string, stack: string[]): BundlePlanIssue | undefined => {
     if (visiting.has(path)) {
       const cycleStart = stack.indexOf(path);
-      const cyclePath = [...stack.slice(cycleStart), path]
-        .map((p) => `bundles.${p}`)
-        .join(" -> ");
-      throw new Error(`[ioc-config] bundles reference cycle detected: ${cyclePath}`);
+      const cycle = [...stack.slice(cycleStart), path];
+      return { kind: "bundle_cycle", cycle };
     }
     if (visited.has(path)) {
-      return;
+      return undefined;
     }
 
     visiting.add(path);
     const refs = collectArrayRefs(arraysByPath.get(path) ?? []);
-    refs.forEach((refPath) => visit(refPath, [...stack, path]));
+    for (const refPath of refs) {
+      const nested = visit(refPath, [...stack, path]);
+      if (nested !== undefined) {
+        return nested;
+      }
+    }
     visiting.delete(path);
     visited.add(path);
+    return undefined;
   };
 
-  Array.from(arraysByPath.keys()).forEach((path) => {
-    visit(path, []);
-  });
+  for (const path of arraysByPath.keys()) {
+    const issue = visit(path, []);
+    if (issue !== undefined) {
+      return issue;
+    }
+  }
+  return undefined;
 };
 
 const resolveBundleArray = (
@@ -212,7 +268,12 @@ const resolveBundleArray = (
       return;
     }
     resolved.push(
-      ...resolveBundleArray(item.$bundleRef, arraysByPath, contractsByName, cache),
+      ...resolveBundleArray(
+        item.$bundleRef,
+        arraysByPath,
+        contractsByName,
+        cache,
+      ),
     );
   });
 
@@ -228,7 +289,12 @@ const resolveBundleTree = (
   cache: Map<string, ResolvedBundleLeaf[]>,
 ): ResolvedBundleNode => {
   if (Array.isArray(node)) {
-    return resolveBundleArray(pathSegments.join("."), arraysByPath, contractsByName, cache);
+    return resolveBundleArray(
+      pathSegments.join("."),
+      arraysByPath,
+      contractsByName,
+      cache,
+    );
   }
 
   if (!isRecord(node)) {
@@ -250,16 +316,71 @@ const resolveBundleTree = (
   return out;
 };
 
-export const buildBundlePlan = (
+const assertBundleRootKeysSoft = (
+  bundleRoot: ResolvedBundleTree,
+  reserved: Set<string>,
+): BundlePlanIssue[] => {
+  const issues: BundlePlanIssue[] = [];
+  for (const key of Object.keys(bundleRoot)) {
+    if (reserved.has(key)) {
+      issues.push({ kind: "bundle_root_key_collision", key });
+    }
+  }
+  return issues;
+};
+
+export const formatBundlePlanIssue = (issue: BundlePlanIssue): string => {
+  switch (issue.kind) {
+    case "bundles_not_object":
+      return "[ioc-config] bundles must be an object when set";
+    case "invalid_node_shape":
+      return `[ioc-config] bundles.${issue.path} has invalid node shape. Expected an object or an array of contract refs`;
+    case "invalid_array_item":
+      return `[ioc-config] bundles.${issue.path}[${issue.index}] has invalid shape. Expected contract name string or { $bundleRef: string }`;
+    case "empty_contract_string":
+      return `[ioc-config] bundles.${issue.path}[${issue.index}] must be a non-empty contract name string or { $bundleRef: string }`;
+    case "unknown_contract": {
+      const known = issue.knownContracts.map((c) => JSON.stringify(c)).join(", ");
+      return `[ioc-config] bundles.${issue.path}[${issue.index}] references unknown contract ${JSON.stringify(issue.contractName)}. Known contracts: ${known}`;
+    }
+    case "unknown_bundle_ref": {
+      const suggested = pickSimilarKeys(
+        issue.reference,
+        issue.knownBundlePaths,
+        5,
+      );
+      const hint =
+        suggested.length > 0
+          ? ` Similar bundle paths: ${suggested.map((s) => JSON.stringify(s)).join(", ")}.`
+          : "";
+      return `[ioc-config] bundles.${issue.path}[${issue.index}] references unknown bundle path ${JSON.stringify(issue.reference)}. Only array bundle nodes can be referenced.${hint}`;
+    }
+    case "bundle_cycle": {
+      const cyclePath = issue.cycle.map((p) => `bundles.${p}`).join(" -> ");
+      return `[ioc-config] Circular bundle reference detected: ${cyclePath}. Remove or break the cycle so bundle expansion can finish.`;
+    }
+    case "bundle_root_must_be_object":
+      return "[ioc-config] bundles root must be an object";
+    case "bundle_root_key_collision":
+      return `[ioc-config] bundles root key ${JSON.stringify(issue.key)} collides with an existing Awilix registration key (contract default, implementation, or collection). Choose a different bundles property name.`;
+    default: {
+      const _exhaustive: never = issue;
+      return String(_exhaustive);
+    }
+  }
+};
+
+export const formatBundlePlanIssues = (issues: readonly BundlePlanIssue[]): string =>
+  issues.map((i) => formatBundlePlanIssue(i)).join("\n");
+
+const runBundlePlan = (
   bundles: unknown,
   plans: readonly ResolvedContractRegistration[],
-): ResolvedBundleTree | undefined => {
-  if (bundles === undefined) {
-    return undefined;
-  }
-
+):
+  | { ok: true; tree: ResolvedBundleTree; arraysByPath: Map<string, RawBundleArray> }
+  | { ok: false; issues: BundlePlanIssue[] } => {
   if (!isRecord(bundles)) {
-    throw new Error("[ioc-config] bundles must be an object when set");
+    return { ok: false, issues: [{ kind: "bundles_not_object" }] };
   }
 
   const contractsByName = new Map<string, ResolvedContractRegistration>(
@@ -267,9 +388,20 @@ export const buildBundlePlan = (
   );
 
   const arraysByPath = new Map<string, RawBundleArray>();
-  collectBundleArrays(bundles, [], arraysByPath);
-  assertReferencesAndContractsExist(arraysByPath, contractsByName);
-  detectReferenceCycles(arraysByPath);
+  const shapeIssues = collectBundleArraysSoft(bundles, [], arraysByPath);
+  if (shapeIssues.length > 0) {
+    return { ok: false, issues: shapeIssues };
+  }
+
+  const refIssues = assertReferencesSoft(arraysByPath, contractsByName);
+  if (refIssues.length > 0) {
+    return { ok: false, issues: refIssues };
+  }
+
+  const cycleIssue = detectCyclesSoft(arraysByPath);
+  if (cycleIssue !== undefined) {
+    return { ok: false, issues: [cycleIssue] };
+  }
 
   const cache = new Map<string, ResolvedBundleLeaf[]>();
   const resolved = resolveBundleTree(
@@ -280,8 +412,97 @@ export const buildBundlePlan = (
     cache,
   );
   if (Array.isArray(resolved)) {
-    throw new Error("[ioc-config] bundles root must be an object");
+    return { ok: false, issues: [{ kind: "bundle_root_must_be_object" }] };
   }
-  assertBundleRootKeysDoNotCollide(resolved, collectReservedCradleKeys(plans));
-  return resolved;
+
+  const collisionIssues = assertBundleRootKeysSoft(
+    resolved,
+    collectReservedCradleKeys(plans),
+  );
+  if (collisionIssues.length > 0) {
+    return { ok: false, issues: collisionIssues };
+  }
+
+  return { ok: true, tree: resolved, arraysByPath };
+};
+
+export const buildBundleArraysInsight = (
+  arraysByPath: Map<string, RawBundleArray>,
+  plans: readonly ResolvedContractRegistration[],
+): IocBundleArrayInsight[] => {
+  const contractsByName = new Map<string, ResolvedContractRegistration>(
+    plans.map((plan) => [plan.contractName, plan]),
+  );
+  const cache = new Map<string, ResolvedBundleLeaf[]>();
+  const paths = Array.from(arraysByPath.keys()).sort((a, b) =>
+    a.localeCompare(b),
+  );
+  return paths.map((p) => ({
+    bundlePath: p,
+    declaredMembers: [...(arraysByPath.get(p) ?? [])].map((item) =>
+      typeof item === "string" ? item : { $bundleRef: item.$bundleRef },
+    ),
+    expandedMembers: resolveBundleArray(
+      p,
+      arraysByPath,
+      contractsByName,
+      cache,
+    ),
+  }));
+};
+
+export const buildBundlePlan = (
+  bundles: unknown,
+  plans: readonly ResolvedContractRegistration[],
+): BundlePlanResult | undefined => {
+  if (bundles === undefined) {
+    return undefined;
+  }
+
+  const result = runBundlePlan(bundles, plans);
+  if (!result.ok) {
+    throw new Error(formatBundlePlanIssues(result.issues));
+  }
+
+  const arraysInsight = buildBundleArraysInsight(result.arraysByPath, plans);
+  return { tree: result.tree, arraysInsight };
+};
+
+export type BundlePlanAnalysis =
+  | {
+      ok: true;
+      tree: ResolvedBundleTree | undefined;
+      arraysInsight: IocBundleArrayInsight[];
+    }
+  | {
+      ok: false;
+      tree: undefined;
+      arraysInsight: [];
+      issues: readonly BundlePlanIssue[];
+    };
+
+export const analyzeBundlePlan = (
+  bundles: unknown,
+  plans: readonly ResolvedContractRegistration[],
+): BundlePlanAnalysis => {
+  if (bundles === undefined) {
+    return { ok: true, tree: undefined, arraysInsight: [] };
+  }
+
+  const result = runBundlePlan(bundles, plans);
+  if (!result.ok) {
+    return {
+      ok: false,
+      tree: undefined,
+      arraysInsight: [],
+      issues: result.issues,
+    };
+  }
+
+  const arraysInsight = buildBundleArraysInsight(result.arraysByPath, plans);
+  return {
+    ok: true,
+    tree: result.tree,
+    arraysInsight,
+  };
 };

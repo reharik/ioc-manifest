@@ -1,5 +1,12 @@
 export {
+  analyzeBundlePlan,
+  buildBundleArraysInsight,
   buildBundlePlan,
+  formatBundlePlanIssue,
+  formatBundlePlanIssues,
+  type BundlePlanAnalysis,
+  type BundlePlanIssue,
+  type BundlePlanResult,
   type IocBundleLeaf,
   type IocBundleNode,
   type IocBundleReference,

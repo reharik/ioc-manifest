@@ -3,6 +3,9 @@ import path from "node:path";
 import type { DiscoveredFactory } from "./types.js";
 import type { ResolvedContractRegistration } from "./resolveRegistrationPlan.js";
 import type {
+  IocBundleArraysInsightManifest,
+  IocContainerContractsView,
+  IocContainerImplementationView,
   IocContractManifest,
   IocBundlesManifest,
   ModuleFactoryManifestMetadata,
@@ -111,17 +114,119 @@ const plansToIocContractManifest = (
         exportName: impl.exportName,
         registrationKey: impl.registrationKey,
         modulePath: impl.modulePath,
+        sourceFilePath: impl.modulePath,
         relImport: impl.relImport,
         contractName: plan.contractName,
         implementationName: impl.implementationName,
         lifetime: impl.lifetime,
         moduleIndex,
         ...(isResolvedDefault ? { default: true } : {}),
+        ...(impl.discoveredBy !== undefined
+          ? { discoveredBy: impl.discoveredBy }
+          : {}),
+        ...(impl.configOverridesApplied !== undefined &&
+        impl.configOverridesApplied.length > 0
+          ? { configOverridesApplied: impl.configOverridesApplied }
+          : {}),
+        ...(impl.dependencyContractNames !== undefined &&
+        impl.dependencyContractNames.length > 0
+          ? { dependencyContractNames: impl.dependencyContractNames }
+          : {}),
       };
     }
     out[plan.contractName] = inner;
   }
   return out;
+};
+
+const plansToLeanContainerContracts = (
+  plans: ResolvedContractRegistration[],
+): IocContainerContractsView => {
+  const sortedPlans = [...plans].sort((a, b) =>
+    a.contractName.localeCompare(b.contractName),
+  );
+  const out: IocContainerContractsView = {};
+  for (const plan of sortedPlans) {
+    const inner: Record<string, IocContainerImplementationView> = {};
+    const implNames = [...plan.implementations].sort((a, b) =>
+      a.implementationName.localeCompare(b.implementationName),
+    );
+    for (const impl of implNames) {
+      const isResolvedDefault =
+        impl.implementationName === plan.defaultImplementationName;
+      inner[impl.implementationName] = {
+        exportName: impl.exportName,
+        registrationKey: impl.registrationKey,
+        sourceFile: impl.modulePath,
+        lifetime: impl.lifetime,
+        ...(isResolvedDefault ? { default: true } : {}),
+        ...(impl.discoveredBy !== undefined
+          ? { discoveredBy: impl.discoveredBy }
+          : {}),
+        ...(impl.configOverridesApplied !== undefined &&
+        impl.configOverridesApplied.length > 0
+          ? { configOverridesApplied: impl.configOverridesApplied }
+          : {}),
+        ...(impl.dependencyContractNames !== undefined &&
+        impl.dependencyContractNames.length > 0
+          ? { dependencyContractNames: impl.dependencyContractNames }
+          : {}),
+      };
+    }
+    out[plan.contractName] = inner;
+  }
+  return out;
+};
+
+const serializeLeanImplementationBlock = (
+  row: IocContainerImplementationView,
+): string => {
+  const lines = [
+    `        exportName: ${JSON.stringify(row.exportName)},`,
+    `        registrationKey: ${JSON.stringify(row.registrationKey)},`,
+    `        sourceFile: ${JSON.stringify(row.sourceFile)},`,
+    `        lifetime: ${JSON.stringify(row.lifetime)},`,
+  ];
+  if (row.default !== undefined) {
+    lines.push(`        default: ${row.default},`);
+  }
+  if (row.discoveredBy !== undefined) {
+    lines.push(`        discoveredBy: ${JSON.stringify(row.discoveredBy)},`);
+  }
+  if (row.configOverridesApplied !== undefined) {
+    lines.push(
+      `        configOverridesApplied: ${JSON.stringify(row.configOverridesApplied)},`,
+    );
+  }
+  if (row.dependencyContractNames !== undefined) {
+    lines.push(
+      `        dependencyContractNames: ${JSON.stringify(row.dependencyContractNames)},`,
+    );
+  }
+  return lines.join("\n");
+};
+
+const serializeLeanContractsObject = (
+  lean: IocContainerContractsView,
+): string => {
+  const contractNames = Object.keys(lean).sort((a, b) => a.localeCompare(b));
+  const lines: string[] = ["  contracts: {"];
+  for (const contractName of contractNames) {
+    lines.push("");
+    lines.push(`    // ${contractName}`);
+    const impls = lean[contractName]!;
+    const implKeys = Object.keys(impls).sort((a, b) => a.localeCompare(b));
+    lines.push(`    ${JSON.stringify(contractName)}: {`);
+    for (const implKey of implKeys) {
+      const row = impls[implKey]!;
+      lines.push(`      ${JSON.stringify(implKey)}: {`);
+      lines.push(serializeLeanImplementationBlock(row));
+      lines.push(`      },`);
+    }
+    lines.push(`    },`);
+  }
+  lines.push("  },");
+  return lines.join("\n");
 };
 
 const serializeMetadataBlock = (
@@ -131,6 +236,7 @@ const serializeMetadataBlock = (
     `      exportName: ${JSON.stringify(meta.exportName)},`,
     `      registrationKey: ${JSON.stringify(meta.registrationKey)},`,
     `      modulePath: ${JSON.stringify(meta.modulePath)},`,
+    `      sourceFilePath: ${JSON.stringify(meta.sourceFilePath ?? meta.modulePath)},`,
     `      relImport: ${JSON.stringify(meta.relImport)},`,
     `      contractName: ${JSON.stringify(meta.contractName)},`,
     `      implementationName: ${JSON.stringify(meta.implementationName)},`,
@@ -143,21 +249,25 @@ const serializeMetadataBlock = (
   if (meta.default !== undefined) {
     lines.push(`      default: ${meta.default},`);
   }
+  if (meta.discoveredBy !== undefined) {
+    lines.push(`      discoveredBy: ${JSON.stringify(meta.discoveredBy)},`);
+  }
+  if (meta.configOverridesApplied !== undefined) {
+    lines.push(
+      `      configOverridesApplied: ${JSON.stringify(meta.configOverridesApplied)},`,
+    );
+  }
+  if (meta.dependencyContractNames !== undefined) {
+    lines.push(
+      `      dependencyContractNames: ${JSON.stringify(meta.dependencyContractNames)},`,
+    );
+  }
   return lines.join("\n");
 };
 
-const serializeIocContractManifestSource = (
+const serializeRegistrationManifestValue = (
   manifest: IocContractManifest,
-  bundlesManifest: IocBundlesManifest | undefined,
-  manifestImportFromPackage: string,
-  importLines: string[],
-  moduleArrayLines: string[],
 ): string => {
-  const header = `/* AUTO-GENERATED. DO NOT EDIT.
-Re-run \`npm run gen:manifest\` after adding/removing injectable factories.
-*/
-`;
-
   const contractNames = Object.keys(manifest).sort((a, b) =>
     a.localeCompare(b),
   );
@@ -177,31 +287,77 @@ Re-run \`npm run gen:manifest\` after adding/removing injectable factories.
   }
 
   contractLines.push("}");
+  return contractLines.join("\n");
+};
 
-  const bundlesSource =
-    bundlesManifest === undefined
-      ? "undefined"
-      : JSON.stringify(bundlesManifest, null, 2);
-  const manifestTypeImports =
-    bundlesManifest === undefined
-      ? "IocContractManifest"
-      : "IocBundlesManifest, IocContractManifest";
-  const bundlesExportLine =
-    bundlesManifest === undefined
-      ? "export const iocBundlesManifest = undefined;"
-      : `export const iocBundlesManifest: IocBundlesManifest = ${bundlesSource};`;
+const serializeMainIocManifestSource = (
+  lean: IocContainerContractsView,
+  bundlesManifest: IocBundlesManifest | undefined,
+  manifestImportFromPackage: string,
+  importLines: string[],
+  moduleArrayLines: string[],
+): string => {
+  const header = `/* AUTO-GENERATED. DO NOT EDIT.
+Primary container manifest (human-oriented). Registration bindings and bundle insight: ioc-manifest.support.ts
+Re-run \`npm run gen:manifest\` after adding/removing injectable factories.
+*/
+`;
 
-  return `${header}
-import type { ${manifestTypeImports} } from "${manifestImportFromPackage}";
+  const contractsBlock = serializeLeanContractsObject(lean);
+  const closing =
+    bundlesManifest === undefined
+      ? "}"
+      : `  bundles: ${JSON.stringify(bundlesManifest, null, 2)},\n}`;
+
+  return `${header}import type {
+  IocGeneratedContainerManifest,
+  IocModuleNamespace,
+} from "${manifestImportFromPackage}";
+
 ${importLines.join("\n")}
 
-export const iocModuleImports = [
+export const iocManifest = {
+  moduleImports: [
 ${moduleArrayLines.join("\n")}
-] as const;
+  ] as const satisfies readonly IocModuleNamespace[],
 
-export const iocManifestByContract: IocContractManifest =
-${contractLines.join("\n")};
-${bundlesExportLine}
+${contractsBlock}
+${closing} as const satisfies IocGeneratedContainerManifest;
+`;
+};
+
+const serializeSupportManifestSource = (
+  registrationManifest: IocContractManifest,
+  bundleArraysInsight: IocBundleArraysInsightManifest | undefined,
+  manifestImportFromPackage: string,
+): string => {
+  const header = `/* AUTO-GENERATED. DO NOT EDIT.
+Runtime registration bindings (moduleIndex, relImport) and bundle tooling insight.
+Used by registerIocFromManifest(...) and inspection helpers. See ioc-manifest.ts for the human-oriented view.
+Re-run \`npm run gen:manifest\` after changing factories or IoC config.
+*/
+`;
+
+  const registrationBody = serializeRegistrationManifestValue(registrationManifest);
+
+  const insightLine =
+    bundleArraysInsight === undefined
+      ? "export const iocBundleArraysInsight: IocBundleArraysInsightManifest | undefined = undefined;"
+      : `export const iocBundleArraysInsight: IocBundleArraysInsightManifest = ${JSON.stringify(
+          bundleArraysInsight,
+          null,
+          2,
+        )};`;
+
+  return `${header}import type {
+  IocBundleArraysInsightManifest,
+  IocContractManifest,
+} from "${manifestImportFromPackage}";
+
+export const iocRegistrationManifest: IocContractManifest =
+${registrationBody};
+
+${insightLine}
 `;
 };
 
@@ -331,6 +487,7 @@ export const writeManifest = async (
   acceptedFactories: DiscoveredFactory[],
   plans: ResolvedContractRegistration[],
   bundlesPlan: ResolvedBundleTree | undefined,
+  bundleArraysInsight: IocBundleArraysInsightManifest | undefined,
   manifestOutPath: string,
   manifestImportFromPackage: string,
 ): Promise<void> => {
@@ -338,10 +495,11 @@ export const writeManifest = async (
   const modules = uniqueModuleRows(sortedFactories);
   const moduleIndexByPath = buildModuleIndexByPath(modules);
   const aliasByPath = assignStableModuleAliases(modules);
-  const iocManifestByContract = plansToIocContractManifest(
+  const iocRegistrationManifest = plansToIocContractManifest(
     plans,
     moduleIndexByPath,
   );
+  const leanContracts = plansToLeanContainerContracts(plans);
   const iocBundlesManifest: IocBundlesManifest | undefined = bundlesPlan;
 
   const importLines = modules.map((moduleEntry) => {
@@ -364,15 +522,26 @@ export const writeManifest = async (
     return `  ${alias},`;
   });
 
-  const manifestSource = serializeIocContractManifestSource(
-    iocManifestByContract,
+  const mainSource = serializeMainIocManifestSource(
+    leanContracts,
     iocBundlesManifest,
     manifestImportFromPackage,
     importLines,
     moduleArrayLines,
   );
 
-  await replaceFileFromTemp(manifestOutPath, manifestSource);
+  const supportPath = path.join(
+    path.dirname(manifestOutPath),
+    "ioc-manifest.support.ts",
+  );
+  const supportSource = serializeSupportManifestSource(
+    iocRegistrationManifest,
+    bundleArraysInsight,
+    manifestImportFromPackage,
+  );
+
+  await replaceFileFromTemp(manifestOutPath, mainSource);
+  await replaceFileFromTemp(supportPath, supportSource);
 
   const typesPath = path.join(
     path.dirname(manifestOutPath),

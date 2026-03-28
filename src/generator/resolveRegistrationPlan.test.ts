@@ -317,7 +317,7 @@ describe("buildRegistrationPlan", () => {
       });
       assert.throws(
         () => buildRegistrationPlan(map, undefined),
-        /no default can be selected/,
+        /none is selected as the default/,
       );
     });
   });
