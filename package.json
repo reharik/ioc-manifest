@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "files": [
+    "bin",
     "dist"
   ],
   "main": "./dist/index.js",
@@ -15,7 +16,7 @@
     }
   },
   "bin": {
-    "ioc": "./dist/cli/ioc.js"
+    "ioc": "./bin/ioc.cjs"
   },
   "scripts": {
     "clean:dist": "rm -rf dist",
