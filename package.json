@@ -15,7 +15,7 @@
     }
   },
   "bin": {
-    "ioc": "node --import tsx ./dist/cli/ioc.js"
+    "ioc": "./dist/cli/ioc.js"
   },
   "scripts": {
     "clean:dist": "rm -rf dist",
