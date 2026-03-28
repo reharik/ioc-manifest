@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { createContainer } from "awilix";
 import type { IocContractManifest, IocModuleNamespace } from "../core/manifest.js";
 import { registerIocFromManifest } from "./bootstrap.js";
+import { isIocResolutionError } from "./iocResolutionError.js";
 
 type CounterService = { counter: number };
 type TestCradle = {
@@ -384,11 +385,15 @@ describe("registerIocFromManifest", () => {
       assert.throws(
         () => container.resolve("root"),
         (err: unknown) => {
-          assert.ok(err instanceof Error);
+          assert.ok(isIocResolutionError(err));
           assert.match(err.message, /Cannot build Root using implementation r/);
           assert.match(err.message, /Resolution chain:/);
           assert.match(err.message, /missingLeaf/);
           assert.match(err.message, /no registered implementation/);
+          assert.strictEqual(
+            (err.message.match(/Resolution chain:/g) ?? []).length,
+            1,
+          );
           return true;
         },
       );
@@ -439,12 +444,16 @@ describe("registerIocFromManifest", () => {
       assert.throws(
         () => container.resolve("root"),
         (err: unknown) => {
-          assert.ok(err instanceof Error);
+          assert.ok(isIocResolutionError(err));
           assert.match(err.message, /Root \(r\)/);
           assert.match(err.message, /LevelA \(a\)/);
           assert.match(err.message, /LevelB \(b\)/);
           assert.match(err.message, /missingLeaf/);
           assert.match(err.message, /no registered implementation/);
+          assert.strictEqual(
+            (err.message.match(/Resolution chain:/g) ?? []).length,
+            1,
+          );
           return true;
         },
       );
@@ -497,13 +506,25 @@ describe("registerIocFromManifest", () => {
       assert.throws(
         () => container.resolve("root"),
         (err: unknown) => {
-          assert.ok(err instanceof Error);
+          assert.ok(isIocResolutionError(err));
           assert.match(err.message, /Cannot build Root using implementation r/);
           assert.match(err.message, /Resolution chain:/);
           assert.match(err.message, /LevelA \(a\)/);
           assert.match(err.message, /LevelB \(b\)/);
           assert.match(err.message, /deep failure from level B/);
           assert.match(err.message, /factory threw while building/);
+          assert.strictEqual(
+            (err.message.match(/Resolution chain:/g) ?? []).length,
+            1,
+          );
+          assert.ok(
+            !err.message.includes("factory threw while building: [ioc]"),
+            "nested formatted IoC errors must not be embedded in the leaf line",
+          );
+          assert.ok(
+            !/Cannot build Root[\s\S]*Cannot build Root/.test(err.message),
+            "headline must not be duplicated",
+          );
           return true;
         },
       );

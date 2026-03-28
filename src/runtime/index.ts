@@ -1,5 +1,16 @@
 export { registerIocFromManifest } from "./bootstrap.js";
 export {
+  applyIocResolutionErrorMessage,
+  createIocResolutionError,
+  formatIocResolutionErrorMessage,
+  IocResolutionError,
+  type IocResolutionFailureType,
+  isIocResolutionError,
+  mergeAncestorStackIntoResolutionError,
+  mergeFrameSequences,
+  type ResolutionFrame,
+} from "./iocResolutionError.js";
+export {
   formatMissingContractImplementationMessage,
   formatMissingDefaultImplementationMessage,
   formatMissingDependencyMessage,

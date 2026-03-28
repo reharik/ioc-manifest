@@ -15,7 +15,7 @@ import {
   contractNameToCollectionRegistrationKey,
   contractNameToDefaultRegistrationKey,
 } from "../generator/naming.js";
-import { wrapIocResolutionFailure } from "./formatResolutionFailure.js";
+import { propagateIocResolutionFailure } from "./iocResolutionError.js";
 import {
   frameFromManifestMeta,
   popIocResolutionFrame,
@@ -84,7 +84,7 @@ const invokeResolvedFactory = <TCradle extends object>(
   try {
     return factory(cradle);
   } catch (cause: unknown) {
-    throw wrapIocResolutionFailure({
+    return propagateIocResolutionFailure({
       cause,
       keyIndex,
       stackSnapshot: snapshotIocResolutionStack(),
@@ -237,7 +237,7 @@ const registerImplementationCollections = <TCradle extends object>(
 
             return map;
           } catch (cause: unknown) {
-            throw wrapIocResolutionFailure({
+            return propagateIocResolutionFailure({
               cause,
               keyIndex,
               stackSnapshot: snapshotIocResolutionStack(),
@@ -290,7 +290,7 @@ const registerBundles = <TCradle extends object>(
           try {
             return resolveBundleNodeFromCradle(cradle, node);
           } catch (cause: unknown) {
-            throw wrapIocResolutionFailure({
+            return propagateIocResolutionFailure({
               cause,
               keyIndex,
               stackSnapshot: snapshotIocResolutionStack(),
