@@ -22,6 +22,7 @@
     "node_modules",
     "dist",
     "**/*.test.ts",
-    "**/*.integration.test.ts"
+    "**/*.integration.test.ts",
+    "src/bundles/test-fixtures/**"
   ]
 }

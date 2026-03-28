@@ -171,4 +171,23 @@ describe("buildBundlePlan", () => {
       );
     });
   });
+
+  describe("When a bundle array lists the same contract more than once", () => {
+    it("should dedupe by contract name while preserving first occurrence order", () => {
+      const config: IocBundlesConfig = {
+        services: {
+          read: ["ListAlbums", "MediaStorage", "ListAlbums"],
+        },
+      };
+      const resolved = buildBundlePlan(config, plans);
+      assert.ok(resolved);
+      const read = (resolved.tree.services as { read: unknown }).read as {
+        contractName: string;
+      }[];
+      assert.deepStrictEqual(
+        read.map((x) => x.contractName),
+        ["ListAlbums", "MediaStorage"],
+      );
+    });
+  });
 });

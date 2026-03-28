@@ -1,6 +1,12 @@
+import type * as ts from "typescript";
 import type { IocBundleArrayInsight } from "../core/manifest.js";
 import type { ResolvedContractRegistration } from "../generator/resolveRegistrationPlan.js";
+import {
+  bundleTreeContainsDiscover,
+  expandBundleDiscoveryInTree,
+} from "./expandBundleDiscovery.js";
 import { pickSimilarKeys } from "./bundleKeySuggestions.js";
+import type { IocBundleDiscoverMarker } from "./bundleDiscovery.types.js";
 
 const collectReservedCradleKeys = (
   plans: readonly ResolvedContractRegistration[],
@@ -26,8 +32,17 @@ export type IocBundleLeaf = string | IocBundleReference;
 export interface IocBundleTree {
   [key: string]: IocBundleNode;
 }
-export type IocBundleNode = IocBundleTree | readonly IocBundleLeaf[];
+export type IocBundleNode =
+  | IocBundleTree
+  | readonly IocBundleLeaf[]
+  | IocBundleDiscoverMarker;
 export type IocBundlesConfig = IocBundleTree;
+
+/** When set, `$discover` bundle leaves are expanded using assignability against the named base type. */
+export type BundleDiscoveryBuildContext = {
+  program: ts.Program;
+  generatedDir: string;
+};
 
 export type ResolvedBundleLeaf = {
   contractName: string;
@@ -60,7 +75,9 @@ export type BundlePlanIssue =
     }
   | { kind: "bundle_cycle"; cycle: string[] }
   | { kind: "bundle_root_must_be_object" }
-  | { kind: "bundle_root_key_collision"; key: string };
+  | { kind: "bundle_root_key_collision"; key: string }
+  | { kind: "bundle_discovery"; path: string; message: string }
+  | { kind: "bundle_discovery_missing_context" };
 
 export type BundlePlanResult = {
   tree: ResolvedBundleTree;
@@ -253,6 +270,16 @@ const resolveBundleArray = (
   }
 
   const resolved: ResolvedBundleLeaf[] = [];
+  const seenContractNames = new Set<string>();
+
+  const pushLeaf = (leaf: ResolvedBundleLeaf): void => {
+    if (seenContractNames.has(leaf.contractName)) {
+      return;
+    }
+    seenContractNames.add(leaf.contractName);
+    resolved.push(leaf);
+  };
+
   items.forEach((item) => {
     if (typeof item === "string") {
       const contract = contractsByName.get(item);
@@ -261,20 +288,21 @@ const resolveBundleArray = (
           `[ioc-config] internal error: contract ${JSON.stringify(item)} missing during bundle resolution`,
         );
       }
-      resolved.push({
+      pushLeaf({
         contractName: contract.contractName,
         registrationKey: contract.contractKey,
       });
       return;
     }
-    resolved.push(
-      ...resolveBundleArray(
-        item.$bundleRef,
-        arraysByPath,
-        contractsByName,
-        cache,
-      ),
+    const nested = resolveBundleArray(
+      item.$bundleRef,
+      arraysByPath,
+      contractsByName,
+      cache,
     );
+    for (const leaf of nested) {
+      pushLeaf(leaf);
+    }
   });
 
   cache.set(arrayPath, resolved);
@@ -363,6 +391,15 @@ export const formatBundlePlanIssue = (issue: BundlePlanIssue): string => {
       return "[ioc-config] bundles root must be an object";
     case "bundle_root_key_collision":
       return `[ioc-config] bundles root key ${JSON.stringify(issue.key)} collides with an existing Awilix registration key (contract default, implementation, or collection). Choose a different bundles property name.`;
+    case "bundle_discovery": {
+      const at =
+        issue.path.length > 0
+          ? `bundles.${issue.path}`
+          : "bundles (discovery)";
+      return `[ioc-config] ${at}: ${issue.message}`;
+    }
+    case "bundle_discovery_missing_context":
+      return "[ioc-config] bundles contain { $discover: ... } nodes but bundle resolution was run without a TypeScript program and generatedDir. Use the IoC manifest generator or pass BundleDiscoveryBuildContext into buildBundlePlan / analyzeBundlePlan.";
     default: {
       const _exhaustive: never = issue;
       return String(_exhaustive);
@@ -373,13 +410,57 @@ export const formatBundlePlanIssue = (issue: BundlePlanIssue): string => {
 export const formatBundlePlanIssues = (issues: readonly BundlePlanIssue[]): string =>
   issues.map((i) => formatBundlePlanIssue(i)).join("\n");
 
+const expandBundlesIfNeeded = (
+  bundles: unknown,
+  plans: readonly ResolvedContractRegistration[],
+  discovery: BundleDiscoveryBuildContext | undefined,
+):
+  | { ok: true; bundles: unknown }
+  | { ok: false; issues: BundlePlanIssue[] } => {
+  if (!bundleTreeContainsDiscover(bundles)) {
+    return { ok: true, bundles };
+  }
+  if (discovery === undefined) {
+    return { ok: false, issues: [{ kind: "bundle_discovery_missing_context" }] };
+  }
+  const checker = discovery.program.getTypeChecker();
+  const expanded = expandBundleDiscoveryInTree(
+    bundles,
+    checker,
+    discovery.program,
+    plans,
+    discovery.generatedDir,
+  );
+  if (!expanded.ok) {
+    return {
+      ok: false,
+      issues: expanded.issues.map((i) => ({
+        kind: "bundle_discovery" as const,
+        path: i.path,
+        message: i.message,
+      })),
+    };
+  }
+  return { ok: true, bundles: expanded.bundles };
+};
+
 const runBundlePlan = (
   bundles: unknown,
   plans: readonly ResolvedContractRegistration[],
+  discovery?: BundleDiscoveryBuildContext,
 ):
   | { ok: true; tree: ResolvedBundleTree; arraysByPath: Map<string, RawBundleArray> }
   | { ok: false; issues: BundlePlanIssue[] } => {
   if (!isRecord(bundles)) {
+    return { ok: false, issues: [{ kind: "bundles_not_object" }] };
+  }
+
+  const expandedRoot = expandBundlesIfNeeded(bundles, plans, discovery);
+  if (!expandedRoot.ok) {
+    return { ok: false, issues: expandedRoot.issues };
+  }
+  const effectiveBundles = expandedRoot.bundles;
+  if (!isRecord(effectiveBundles)) {
     return { ok: false, issues: [{ kind: "bundles_not_object" }] };
   }
 
@@ -388,7 +469,7 @@ const runBundlePlan = (
   );
 
   const arraysByPath = new Map<string, RawBundleArray>();
-  const shapeIssues = collectBundleArraysSoft(bundles, [], arraysByPath);
+  const shapeIssues = collectBundleArraysSoft(effectiveBundles, [], arraysByPath);
   if (shapeIssues.length > 0) {
     return { ok: false, issues: shapeIssues };
   }
@@ -405,7 +486,7 @@ const runBundlePlan = (
 
   const cache = new Map<string, ResolvedBundleLeaf[]>();
   const resolved = resolveBundleTree(
-    bundles,
+    effectiveBundles,
     [],
     arraysByPath,
     contractsByName,
@@ -454,12 +535,13 @@ export const buildBundleArraysInsight = (
 export const buildBundlePlan = (
   bundles: unknown,
   plans: readonly ResolvedContractRegistration[],
+  discovery?: BundleDiscoveryBuildContext,
 ): BundlePlanResult | undefined => {
   if (bundles === undefined) {
     return undefined;
   }
 
-  const result = runBundlePlan(bundles, plans);
+  const result = runBundlePlan(bundles, plans, discovery);
   if (!result.ok) {
     throw new Error(formatBundlePlanIssues(result.issues));
   }
@@ -484,12 +566,13 @@ export type BundlePlanAnalysis =
 export const analyzeBundlePlan = (
   bundles: unknown,
   plans: readonly ResolvedContractRegistration[],
+  discovery?: BundleDiscoveryBuildContext,
 ): BundlePlanAnalysis => {
   if (bundles === undefined) {
     return { ok: true, tree: undefined, arraysInsight: [] };
   }
 
-  const result = runBundlePlan(bundles, plans);
+  const result = runBundlePlan(bundles, plans, discovery);
   if (!result.ok) {
     return {
       ok: false,

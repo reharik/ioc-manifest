@@ -6,6 +6,9 @@ export {
   type IocOverride,
 } from "./config/iocConfig.js";
 export {
+  type IocBundleDiscoveryByBase,
+  type IocBundleDiscoverMarker,
+  type IocBundleDiscoverySpec,
   type IocBundleLeaf,
   type IocBundleNode,
   type IocBundleReference,
@@ -33,6 +36,7 @@ export {
   buildBundlePlan,
   formatBundlePlanIssue,
   formatBundlePlanIssues,
+  type BundleDiscoveryBuildContext,
   type BundlePlanAnalysis,
   type BundlePlanIssue,
   type BundlePlanResult,

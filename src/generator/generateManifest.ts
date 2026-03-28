@@ -98,7 +98,10 @@ export const generateManifest = async (
   );
 
   const plans = buildRegistrationPlan(contractMap, config);
-  const bundleResult = buildBundlePlan(config?.bundles, plans);
+  const bundleResult = buildBundlePlan(config?.bundles, plans, {
+    program,
+    generatedDir,
+  });
 
   await writeManifest(
     acceptedFactories,

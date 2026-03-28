@@ -1,6 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  isBundleDiscoverLeaf,
+  isValidDiscoverSpecValue,
+} from "../bundles/bundleDiscovery.types.js";
 import type { IocConfig, IocLifetime } from "./iocConfig.js";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -18,6 +22,14 @@ const isBundleReferenceShape = (value: unknown): value is { $bundleRef: string }
 };
 
 const validateBundlesShape = (value: unknown, pathLabel: string): void => {
+  if (isBundleDiscoverLeaf(value)) {
+    if (!isValidDiscoverSpecValue(value.$discover)) {
+      throw new Error(
+        `[ioc-config] ${pathLabel}.$discover must be a non-empty string or exactly { baseInterface: string }`,
+      );
+    }
+    return;
+  }
   if (Array.isArray(value)) {
     value.forEach((item, index) => {
       if (typeof item === "string" && item.length > 0) {
@@ -35,6 +47,12 @@ const validateBundlesShape = (value: unknown, pathLabel: string): void => {
   if (!isRecord(value)) {
     throw new Error(
       `[ioc-config] ${pathLabel} must be an object or an array of bundle items`,
+    );
+  }
+  const keys = Object.keys(value);
+  if (keys.includes("$discover") && keys.length > 1) {
+    throw new Error(
+      `[ioc-config] ${pathLabel} cannot mix "$discover" with other keys; use a dedicated leaf object { $discover: ... }`,
     );
   }
   for (const [key, child] of Object.entries(value)) {

@@ -1,9 +1,20 @@
+export type {
+  IocBundleDiscoveryByBase,
+  IocBundleDiscoverySpec,
+  IocBundleDiscoverMarker,
+} from "./bundleDiscovery.types.js";
+export {
+  bundleTreeContainsDiscover,
+  expandBundleDiscoveryInTree,
+  type BundleDiscoveryExpansionIssue,
+} from "./expandBundleDiscovery.js";
 export {
   analyzeBundlePlan,
   buildBundleArraysInsight,
   buildBundlePlan,
   formatBundlePlanIssue,
   formatBundlePlanIssues,
+  type BundleDiscoveryBuildContext,
   type BundlePlanAnalysis,
   type BundlePlanIssue,
   type BundlePlanResult,
