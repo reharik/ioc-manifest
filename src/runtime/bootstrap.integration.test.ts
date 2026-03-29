@@ -43,7 +43,7 @@ describe("registerIocFromManifest", () => {
   });
 
   describe("When resolving the collection key for a multi-implementation contract", () => {
-    it("should expose an object map keyed by implementation name", async () => {
+    it("should expose a ReadonlyArray of every concrete implementation", async () => {
       const container = createContainer<IocGeneratedCradle>();
       registerIocFromManifest(
         container,
@@ -51,15 +51,16 @@ describe("registerIocFromManifest", () => {
         iocManifest.moduleImports,
         iocManifest.groups,
       );
-      const collection = container.resolve("mediaStorages") as Record<
-        string,
-        MediaStorage
-      >;
-      assert.ok(collection && typeof collection === "object");
-      await collection.localMediaStorage.put("k");
-      await collection.s3MediaStorage.put("k");
-      assert.strictEqual(collection.localMediaStorage.label, "local");
-      assert.strictEqual(collection.s3MediaStorage.label, "s3");
+      const collection = container.resolve("mediaStorages") as readonly MediaStorage[];
+      assert.ok(Array.isArray(collection));
+      assert.strictEqual(collection.length, 3);
+      const byLabel = new Map(
+        collection.map((m) => [m.label, m] as const),
+      );
+      await byLabel.get("local")!.put("k");
+      await byLabel.get("s3")!.put("k");
+      assert.strictEqual(byLabel.get("local")!.label, "local");
+      assert.strictEqual(byLabel.get("s3")!.label, "s3");
     });
   });
 

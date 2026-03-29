@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
+import type { IocGroupsManifest } from "../core/manifest.js";
 import type { DiscoveredFactory } from "./types.js";
 import type { ResolvedContractRegistration } from "./resolveRegistrationPlan.js";
 import { writeManifest } from "./writeManifest.js";
@@ -169,6 +170,59 @@ describe("writeManifest", () => {
     });
   });
 
+  describe("When a contract has only one implementation", () => {
+    it("should emit the default contract key but no plural collection property", async () => {
+      const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ioc-write-manifest-"));
+      const generatedDir = path.join(tempRoot, "src", "generated");
+      await fs.mkdir(generatedDir, { recursive: true });
+      const manifestOutPath = path.join(generatedDir, "ioc-manifest.ts");
+
+      const acceptedFactories: DiscoveredFactory[] = [
+        mkFactory({
+          contractName: "OnlyOne",
+          implementationName: "only",
+          registrationKey: "onlyOne",
+          modulePath: "fixtures/o.ts",
+          relImport: "../fixtures/o.js",
+        }),
+      ];
+      const plans: ResolvedContractRegistration[] = [
+        mkPlan({
+          contractName: "OnlyOne",
+          contractTypeRelImport: "../fixtures/contracts.js",
+          contractKey: "onlyOne",
+          collectionKey: undefined,
+          defaultImplementationName: "only",
+          implementations: [
+            {
+              implementationName: "only",
+              exportName: "buildOnly",
+              modulePath: "fixtures/o.ts",
+              relImport: "../fixtures/o.js",
+              registrationKey: "onlyOne",
+              lifetime: "singleton",
+            },
+          ],
+        }),
+      ];
+
+      await writeManifest(
+        acceptedFactories,
+        plans,
+        undefined,
+        manifestOutPath,
+        "ioc-manifest",
+      );
+
+      const typesSource = await fs.readFile(
+        path.join(generatedDir, "ioc-registry.types.ts"),
+        "utf8",
+      );
+      assert.match(typesSource, /\bonlyOne:\s*OnlyOne\b/);
+      assert.ok(!typesSource.includes("onlyOnes:"));
+    });
+  });
+
   describe("When a contract has multiple implementations", () => {
     it("should emit only the contract default and collection keys on IocGeneratedTypes, not each registration key", async () => {
       const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ioc-write-manifest-"));
@@ -233,8 +287,87 @@ describe("writeManifest", () => {
         "utf8",
       );
       assert.match(typesSource, /\bwidget:\s*Widget\b/);
-      assert.match(typesSource, /\bwidgets:\s*Record</);
+      assert.match(typesSource, /\bwidgets:\s*ReadonlyArray<\s*Widget\s*>\s*;/);
+      assert.ok(!typesSource.includes("Record<"));
       assert.ok(!typesSource.includes("primaryWidget: Widget"));
+    });
+
+    it("should keep automatic plural collections as ReadonlyArray even when groups are configured", async () => {
+      const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ioc-write-manifest-"));
+      const generatedDir = path.join(tempRoot, "src", "generated");
+      await fs.mkdir(generatedDir, { recursive: true });
+      const manifestOutPath = path.join(generatedDir, "ioc-manifest.ts");
+
+      const acceptedFactories: DiscoveredFactory[] = [
+        mkFactory({
+          contractName: "Widget",
+          implementationName: "primaryWidget",
+          registrationKey: "primaryWidget",
+          modulePath: "fixtures/p.ts",
+          relImport: "../fixtures/p.js",
+        }),
+        mkFactory({
+          contractName: "Widget",
+          implementationName: "widget",
+          registrationKey: "widget",
+          modulePath: "fixtures/w.ts",
+          relImport: "../fixtures/w.js",
+        }),
+      ];
+      const plans: ResolvedContractRegistration[] = [
+        mkPlan({
+          contractName: "Widget",
+          contractTypeRelImport: "../fixtures/contracts.js",
+          contractKey: "widget",
+          collectionKey: "widgets",
+          defaultImplementationName: "widget",
+          implementations: [
+            {
+              implementationName: "primaryWidget",
+              exportName: "buildPrimary",
+              modulePath: "fixtures/p.ts",
+              relImport: "../fixtures/p.js",
+              registrationKey: "primaryWidget",
+              lifetime: "singleton",
+            },
+            {
+              implementationName: "widget",
+              exportName: "buildWidget",
+              modulePath: "fixtures/w.ts",
+              relImport: "../fixtures/w.js",
+              registrationKey: "widget",
+              lifetime: "singleton",
+            },
+          ],
+        }),
+      ];
+
+      const groups: IocGroupsManifest = {
+        widgetGroup: [
+          { contractName: "Widget", registrationKey: "primaryWidget" },
+          { contractName: "Widget", registrationKey: "widget" },
+        ],
+        widgetObjectGroup: {
+          widget: { contractName: "Widget", registrationKey: "widget" },
+        },
+      };
+
+      await writeManifest(
+        acceptedFactories,
+        plans,
+        groups,
+        manifestOutPath,
+        "ioc-manifest",
+      );
+
+      const typesSource = await fs.readFile(
+        path.join(generatedDir, "ioc-registry.types.ts"),
+        "utf8",
+      );
+      assert.match(typesSource, /\bwidgets:\s*ReadonlyArray<\s*Widget\s*>\s*;/);
+      assert.match(typesSource, /\bwidgetGroup:\s*ReadonlyArray</);
+      assert.match(typesSource, /\bwidgetObjectGroup:\s*\{/);
+      assert.match(typesSource, /\bwidget:\s*Widget\b/);
     });
   });
 });

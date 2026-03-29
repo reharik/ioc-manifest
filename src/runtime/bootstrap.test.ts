@@ -98,6 +98,60 @@ describe("registerIocFromManifest", () => {
     });
   });
 
+  describe("When automatic per-contract multi-implementation collection is registered", () => {
+    describe("When the contract has multiple implementations", () => {
+      it("should resolve the plural collection key to an array ordered by registrationKey with each implementation once", () => {
+        const manifest: IocContractManifest = {
+          Svc: {
+            zImpl: {
+              exportName: "buildZ",
+              registrationKey: "zReg",
+              modulePath: "svc.ts",
+              sourceFilePath: "svc.ts",
+              relImport: "../svc.js",
+              contractName: "Svc",
+              implementationName: "zImpl",
+              lifetime: "singleton",
+              moduleIndex: 0,
+              default: true,
+            },
+            aImpl: {
+              exportName: "buildA",
+              registrationKey: "aReg",
+              modulePath: "svc.ts",
+              sourceFilePath: "svc.ts",
+              relImport: "../svc.js",
+              contractName: "Svc",
+              implementationName: "aImpl",
+              lifetime: "singleton",
+              moduleIndex: 0,
+            },
+          },
+        };
+        const moduleImports: readonly IocModuleNamespace[] = [
+          {
+            buildZ: (): { tag: string } => ({ tag: "z" }),
+            buildA: (): { tag: string } => ({ tag: "a" }),
+          },
+        ];
+        const container = createContainer<{
+          zReg: { tag: string };
+          aReg: { tag: string };
+          svc: { tag: string };
+          svcs: { tag: string }[];
+        }>({ injectionMode: "PROXY" });
+        registerIocFromManifest(container, manifest, moduleImports);
+        const svcs = container.resolve("svcs") as { tag: string }[];
+        assert.ok(Array.isArray(svcs));
+        assert.strictEqual(svcs.length, 2);
+        assert.deepStrictEqual(
+          svcs.map((x) => x.tag),
+          ["a", "z"],
+        );
+      });
+    });
+  });
+
   describe("When collection lifetimes are computed from member lifetimes", () => {
     it("should make collection transient if any member is transient", () => {
       let created = 0;
@@ -137,10 +191,10 @@ describe("registerIocFromManifest", () => {
 
       const container = createContainer<TestCradle>({ injectionMode: "PROXY" });
       registerIocFromManifest(container, manifest, moduleImports);
-      const first = container.resolve("counterServices");
-      const second = container.resolve("counterServices");
+      const first = container.resolve("counterServices") as CounterService[];
+      const second = container.resolve("counterServices") as CounterService[];
       assert.notStrictEqual(first, second);
-      assert.notStrictEqual(first.fast.counter, second.fast.counter);
+      assert.notStrictEqual(first[0]!.counter, second[0]!.counter);
     });
 
     it("should make collection scoped when no members are transient and at least one is scoped", () => {

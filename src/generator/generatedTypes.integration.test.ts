@@ -20,6 +20,10 @@ describe("ioc-registry.types.ts (generated)", () => {
           'import type { MediaStorage } from "../examples/c-default-selection.js"',
         ),
       );
+      assert.match(
+        source,
+        /\bmediaStorages:\s*ReadonlyArray<\s*MediaStorage\s*>\s*;/,
+      );
     });
   });
 });

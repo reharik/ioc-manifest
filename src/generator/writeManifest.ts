@@ -438,14 +438,10 @@ const buildCradleTypeSource = (
   for (const plan of sortedPlans) {
     const typeName = plan.contractName;
     propertyLines.push(`  ${plan.contractKey}: ${typeName};`);
-    const sortedImpls = [...plan.implementations].sort((a, b) =>
-      a.registrationKey.localeCompare(b.registrationKey),
-    );
+    // Automatic per-contract collection (plural key): array, same element order as runtime.
     if (plan.collectionKey !== undefined) {
-      const keys = sortedImpls.map((i) => JSON.stringify(i.implementationName));
-      const union = keys.join(" | ");
       propertyLines.push(
-        `  ${plan.collectionKey}: Record<${union}, ${typeName}>;`,
+        `  ${plan.collectionKey}: ReadonlyArray<${typeName}>;`,
       );
     }
   }

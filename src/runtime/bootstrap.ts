@@ -221,13 +221,20 @@ const registerContractDefaultAliases = <TCradle extends object>(
   }
 };
 
+/**
+ * Registers the automatic per-contract multi-implementation slot: plural collection key →
+ * **array** of all concrete implementations (sorted by `registrationKey`), independent of
+ * configured `groups` manifest entries.
+ */
 const registerImplementationCollections = <TCradle extends object>(
   container: AwilixContainer<TCradle>,
   manifestByContract: IocContractManifest,
   keyIndex: RegistrationKeyIndex,
 ): void => {
   for (const [contractName, impls] of Object.entries(manifestByContract)) {
-    const implList = Object.values(impls);
+    const implList = [...Object.values(impls)].sort((a, b) =>
+      a.registrationKey.localeCompare(b.registrationKey),
+    );
     if (implList.length <= 1) {
       continue;
     }
@@ -244,14 +251,9 @@ const registerImplementationCollections = <TCradle extends object>(
             registrationKey: collectionKey,
           });
           try {
-            const map: Record<string, unknown> = {};
-
-            for (const meta of implList) {
-              map[meta.implementationName] =
-                cradle[meta.registrationKey as keyof TCradle];
-            }
-
-            return map;
+            return implList.map(
+              (meta) => cradle[meta.registrationKey as keyof TCradle],
+            );
           } catch (cause: unknown) {
             return propagateIocResolutionFailure({
               cause,

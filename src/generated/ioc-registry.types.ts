@@ -12,12 +12,9 @@ export interface IocGeneratedTypes {
   cacheClient: CacheClient;
   logger: Logger;
   mediaStorage: MediaStorage;
-  mediaStorages: Record<
-    "localMediaStorage" | "mediaStorage" | "s3MediaStorage",
-    MediaStorage
-  >;
+  mediaStorages: ReadonlyArray<MediaStorage>;
   widget: Widget;
-  widgets: Record<"primaryWidget" | "secondaryWidget", Widget>;
+  widgets: ReadonlyArray<Widget>;
   mediaStoragesGroup: ReadonlyArray<MediaStorage>;
 }
 
