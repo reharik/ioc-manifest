@@ -67,6 +67,9 @@ const sanitizeToIdentifierPart = (raw: string): string => {
   return s;
 };
 
+const tsIdentifierOrQuoted = (key: string): string =>
+  /^[a-zA-Z_$][\w$]*$/.test(key) ? key : JSON.stringify(key);
+
 /**
  * Stable, collision-safe namespace identifiers derived from module paths
  * (e.g. `examples/a-single-implementation.ts` → `ioc_examples_a_single_implementation`).
@@ -239,6 +242,95 @@ const serializeLeanContractsObject = (
   return lines.join("\n");
 };
 
+const serializeGroupNodeLiteral = (
+  node: IocGroupNodeManifest,
+  baseIndent: string,
+): string => {
+  const inner = `${baseIndent}  `;
+  if (Array.isArray(node)) {
+    if (node.length === 0) {
+      return "[]";
+    }
+    const lines: string[] = ["["];
+    for (const leaf of node) {
+      lines.push(`${inner}{`);
+      lines.push(`${inner}  contractName: ${JSON.stringify(leaf.contractName)},`);
+      lines.push(`${inner}  registrationKey: ${JSON.stringify(leaf.registrationKey)},`);
+      lines.push(`${inner}},`);
+    }
+    lines.push(`${baseIndent}]`);
+    return lines.join("\n");
+  }
+  const propKeys = Object.keys(node).sort((a, b) => a.localeCompare(b));
+  if (propKeys.length === 0) {
+    return "{}";
+  }
+  const lines: string[] = ["{"];
+  for (const pk of propKeys) {
+    const leaf = node[pk]!;
+    lines.push(`${inner}${tsIdentifierOrQuoted(pk)}: {`);
+    lines.push(`${inner}  contractName: ${JSON.stringify(leaf.contractName)},`);
+    lines.push(`${inner}  registrationKey: ${JSON.stringify(leaf.registrationKey)},`);
+    lines.push(`${inner}},`);
+  }
+  lines.push(`${baseIndent}}`);
+  return lines.join("\n");
+};
+
+const serializeGroupRootsForManifest = (
+  groupsManifest: IocGroupsManifest | undefined,
+): string => {
+  if (groupsManifest === undefined) {
+    return "";
+  }
+  const rootKeys = Object.keys(groupsManifest).sort((a, b) =>
+    a.localeCompare(b),
+  );
+  const blocks: string[] = [];
+  for (const key of rootKeys) {
+    const node = groupsManifest[key]!;
+    blocks.push("");
+    blocks.push(`  // ${key}`);
+    blocks.push(
+      `  ${tsIdentifierOrQuoted(key)}: ${serializeGroupNodeLiteral(node, "  ")},`,
+    );
+  }
+  return blocks.join("\n");
+};
+
+const buildIocManifestGroupRootsTypeSource = (
+  groupsManifest: IocGroupsManifest,
+): string => {
+  const rootKeys = Object.keys(groupsManifest).sort((a, b) =>
+    a.localeCompare(b),
+  );
+  const lines: string[] = ["type IocManifestGroupRoots = {"];
+  for (const key of rootKeys) {
+    const node = groupsManifest[key]!;
+    if (Array.isArray(node)) {
+      lines.push(`  readonly ${tsIdentifierOrQuoted(key)}: readonly [`);
+      for (const leaf of node) {
+        lines.push(
+          `    { readonly contractName: ${JSON.stringify(leaf.contractName)}; readonly registrationKey: ${JSON.stringify(leaf.registrationKey)} },`,
+        );
+      }
+      lines.push(`  ];`);
+    } else {
+      lines.push(`  readonly ${tsIdentifierOrQuoted(key)}: {`);
+      const propKeys = Object.keys(node).sort((a, b) => a.localeCompare(b));
+      for (const pk of propKeys) {
+        const leaf = node[pk]!;
+        lines.push(
+          `    readonly ${tsIdentifierOrQuoted(pk)}: { readonly contractName: ${JSON.stringify(leaf.contractName)}; readonly registrationKey: ${JSON.stringify(leaf.registrationKey)} };`,
+        );
+      }
+      lines.push(`  };`);
+    }
+  }
+  lines.push("};");
+  return lines.join("\n");
+};
+
 const serializeMetadataBlock = (
   meta: ModuleFactoryManifestMetadata,
 ): string => {
@@ -314,11 +406,15 @@ Re-run \`npm run gen:manifest\` after adding/removing injectable factories.
 `;
 
   const contractsBlock = serializeLeanContractsObject(lean);
-  const groupsLine =
-    groupsManifest === undefined
-      ? ""
-      : `  groups: ${JSON.stringify(groupsManifest, null, 2)},\n`;
-  const closing = groupsLine === "" ? "}" : `${groupsLine}}`;
+  const groupRootsBlock = serializeGroupRootsForManifest(groupsManifest);
+  const hasGroups =
+    groupsManifest !== undefined && Object.keys(groupsManifest).length > 0;
+  const groupRootsTypeBlock = hasGroups
+    ? `${buildIocManifestGroupRootsTypeSource(groupsManifest!)}\n\n`
+    : "";
+  const satisfiesType = hasGroups
+    ? "IocGeneratedContainerManifest<IocManifestGroupRoots>"
+    : "IocGeneratedContainerManifest";
 
   return `${header}import type {
   IocGeneratedContainerManifest,
@@ -327,13 +423,13 @@ Re-run \`npm run gen:manifest\` after adding/removing injectable factories.
 
 ${importLines.join("\n")}
 
-export const iocManifest = {
+${groupRootsTypeBlock}export const iocManifest = {
   moduleImports: [
 ${moduleArrayLines.join("\n")}
   ] as const satisfies readonly IocModuleNamespace[],
 
-${contractsBlock}
-${closing} as const satisfies IocGeneratedContainerManifest;
+${contractsBlock}${groupRootsBlock}
+} as const satisfies ${satisfiesType};
 `;
 };
 
@@ -446,9 +542,6 @@ const buildCradleTypeSource = (
     }
   }
 
-  const tsPropName = (key: string): string =>
-    /^[a-zA-Z_$][\w$]*$/.test(key) ? key : JSON.stringify(key);
-
   const appendGroupNodeType = (node: IocGroupNodeManifest, indent: string): string => {
     if (Array.isArray(node)) {
       const seen = new Set<string>();
@@ -467,7 +560,7 @@ const buildCradleTypeSource = (
     const sortedKeys = Object.keys(node).sort((a, b) => a.localeCompare(b));
     for (const key of sortedKeys) {
       const leaf = node[key]!;
-      lines.push(`${indent}  ${tsPropName(key)}: ${leaf.contractName};`);
+      lines.push(`${indent}  ${tsIdentifierOrQuoted(key)}: ${leaf.contractName};`);
     }
     lines.push(`${indent}}`);
     return lines.join("\n");
@@ -480,7 +573,7 @@ const buildCradleTypeSource = (
     for (const key of groupRootKeys) {
       const node = groupsManifest[key]!;
       propertyLines.push(
-        `  ${tsPropName(key)}: ${appendGroupNodeType(node, "")};`,
+        `  ${tsIdentifierOrQuoted(key)}: ${appendGroupNodeType(node, "")};`,
       );
     }
   }

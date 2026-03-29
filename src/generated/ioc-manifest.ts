@@ -13,6 +13,19 @@ import * as ioc_examples_c_default_selection from "../examples/c-default-selecti
 import * as ioc_examples_d_grouping from "../examples/d-grouping.js";
 import * as ioc_examples_f_dependency_injection from "../examples/f-dependency-injection.js";
 
+type IocManifestGroupRoots = {
+  readonly mediaStoragesGroup: readonly [
+    {
+      readonly contractName: "MediaStorage";
+      readonly registrationKey: "localMediaStorage";
+    },
+    {
+      readonly contractName: "MediaStorage";
+      readonly registrationKey: "s3MediaStorage";
+    },
+  ];
+};
+
 export const iocManifest = {
   moduleImports: [
     ioc_examples_a_single_implementation,
@@ -108,16 +121,15 @@ export const iocManifest = {
       },
     },
   },
-  groups: {
-    mediaStoragesGroup: [
-      {
-        contractName: "MediaStorage",
-        registrationKey: "localMediaStorage",
-      },
-      {
-        contractName: "MediaStorage",
-        registrationKey: "s3MediaStorage",
-      },
-    ],
-  },
-} as const satisfies IocGeneratedContainerManifest;
+  // mediaStoragesGroup
+  mediaStoragesGroup: [
+    {
+      contractName: "MediaStorage",
+      registrationKey: "localMediaStorage",
+    },
+    {
+      contractName: "MediaStorage",
+      registrationKey: "s3MediaStorage",
+    },
+  ],
+} as const satisfies IocGeneratedContainerManifest<IocManifestGroupRoots>;

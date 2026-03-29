@@ -224,7 +224,7 @@ const registerContractDefaultAliases = <TCradle extends object>(
 /**
  * Registers the automatic per-contract multi-implementation slot: plural collection key →
  * **array** of all concrete implementations (sorted by `registrationKey`), independent of
- * configured `groups` manifest entries.
+ * configured group roots in the human manifest (see `extractGroupRootsFromContainerManifest`).
  */
 const registerImplementationCollections = <TCradle extends object>(
   container: AwilixContainer<TCradle>,
@@ -329,7 +329,8 @@ const registerGroups = <TCradle extends object>(
  * 1. concrete implementation factories
  * 2. default contract aliases
  * 3. multi-implementation collections
- * 4. groups (base-type discovery)
+ * 4. group roots from `IocGroupsManifest` (base-type discovery; often from
+ *    `extractGroupRootsFromContainerManifest(iocManifest)`)
  */
 export const registerIocFromManifest = <TCradle extends object>(
   container: AwilixContainer<TCradle>,

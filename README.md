@@ -19,13 +19,13 @@ This registers:
 - implementation factories (single contract default slot and explicit named keys)
 - contract default aliases (when the “default slot key” differs from the selected default implementation key)
 - multi-implementation collections (plural slot returning an object map)
-- optional **groups**: named `collection` or `object` aggregations of implementations whose **declared contract type** is assignable to a configured `baseType` (see `groups` in `ioc.config.ts` and the generated `iocManifest.groups` field)
+- optional **group roots**: named `collection` or `object` aggregations of implementations whose **declared contract type** is assignable to a configured `baseType` (see `groups` in `ioc.config.ts`; generated manifests expose each group as a **top-level** property on `iocManifest`, and `extractGroupRootsFromContainerManifest(iocManifest)` produces the map passed as the fourth argument to `registerIocFromManifest`)
 
 ### Generation tool (dev-time only)
 
 The repository includes a generator that discovers factories using TypeScript type analysis and emits:
 
-- `ioc-manifest.ts` (runtime metadata: contracts, implementations, module import list, optional `groups`)
+- `ioc-manifest.ts` (runtime metadata: `moduleImports`, `contracts`, plus optional top-level group roots)
 - `ioc-manifest.support.ts` (full registration manifest with `moduleIndex` / `relImport` for the runtime)
 - `ioc-registry.types.ts` (typed cradle interface for your container)
 
@@ -69,7 +69,10 @@ npm i ioc-manifest
 
 ```ts
 import { createContainer } from "awilix";
-import { registerIocFromManifest } from "ioc-manifest";
+import {
+  extractGroupRootsFromContainerManifest,
+  registerIocFromManifest,
+} from "ioc-manifest";
 
 import { iocManifest } from "./generated/ioc-manifest.js";
 import { iocRegistrationManifest } from "./generated/ioc-manifest.support.js";
@@ -83,7 +86,7 @@ registerIocFromManifest(
   container,
   iocRegistrationManifest,
   iocManifest.moduleImports,
-  iocManifest.groups,
+  extractGroupRootsFromContainerManifest(iocManifest),
 );
 
 // Resolve by keys produced in generation:
@@ -178,7 +181,7 @@ The generator is designed to be stable across repeated runs:
 
 Your app should use (imports in runtime):
 
-- `ioc-manifest.ts`: `iocManifest` (includes `moduleImports`, `contracts`, optional `groups`)
+- `ioc-manifest.ts`: `iocManifest` (includes `moduleImports`, `contracts`, optional top-level group roots)
 - `ioc-manifest.support.ts`: `iocRegistrationManifest`
 - `ioc-registry.types.ts`: `IocGeneratedCradle`
 

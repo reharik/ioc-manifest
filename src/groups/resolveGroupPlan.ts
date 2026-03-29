@@ -7,9 +7,10 @@ import {
   type AssignableImplementationMember,
   type ContractDefaultGroupMember,
 } from "./baseTypeAssignability.js";
-import type {
-  IocGroupNodeManifest,
-  IocGroupsManifest,
+import {
+  IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS,
+  type IocGroupNodeManifest,
+  type IocGroupsManifest,
 } from "../core/manifest.js";
 import type { ResolvedContractRegistration } from "../generator/resolveRegistrationPlan.js";
 
@@ -53,6 +54,7 @@ export type GroupPlanIssue =
       contractKey: string;
     }
   | { kind: "group_root_key_collision"; key: string }
+  | { kind: "group_root_key_reserved_manifest"; key: string }
   | { kind: "group_discovery_missing_context" };
 
 export type GroupPlanResult = {
@@ -158,6 +160,8 @@ export const formatGroupPlanIssue = (issue: GroupPlanIssue): string => {
       return `[ioc-config] groups.${JSON.stringify(issue.groupName)}: duplicate contract key ${JSON.stringify(issue.contractKey)} in object group`;
     case "group_root_key_collision":
       return `[ioc-config] groups root key ${JSON.stringify(issue.key)} collides with an existing Awilix registration key`;
+    case "group_root_key_reserved_manifest":
+      return `[ioc-config] groups root key ${JSON.stringify(issue.key)} is reserved for the generated container manifest (use a different group name)`;
     case "group_discovery_missing_context":
       return "[ioc-config] groups require TypeScript program context. Use the IoC manifest generator or pass GroupDiscoveryBuildContext into buildGroupPlan.";
     default: {
@@ -192,6 +196,10 @@ const runGroupPlan = (
 
   const sortedGroupNames = Object.keys(groups).sort((a, b) => a.localeCompare(b));
   for (const groupName of sortedGroupNames) {
+    if (IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS.has(groupName)) {
+      issues.push({ kind: "group_root_key_reserved_manifest", key: groupName });
+      continue;
+    }
     if (reserved.has(groupName)) {
       issues.push({ kind: "group_root_key_collision", key: groupName });
       continue;

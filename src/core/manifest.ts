@@ -78,13 +78,51 @@ export type IocContainerContractsView = Record<
   Record<string, IocContainerImplementationView>
 >;
 
+/** Fixed top-level keys on the generated human manifest; group roots must not use these names. */
+export const IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS: ReadonlySet<string> =
+  new Set(["moduleImports", "contracts"]);
+
 /**
- * Primary generated container description: module imports, contracts, and optional groups.
+ * Core shape every generated container manifest includes. Configured group roots are emitted
+ * as additional top-level properties alongside these (see `IocGeneratedContainerManifest`).
  */
-export type IocGeneratedContainerManifest = {
+export type IocGeneratedContainerManifestCore = {
   readonly moduleImports: readonly IocModuleNamespace[];
   readonly contracts: IocContainerContractsView;
-  readonly groups?: IocGroupsManifest;
+};
+
+/**
+ * Primary generated container description: module imports, contracts, and configured group roots
+ * as top-level entries (same names as Awilix registrations for those groups).
+ *
+ * `TGroupRoots` is intentionally loose (`Record<string, unknown>`): the emitted
+ * `IocManifestGroupRoots` helper uses `readonly` tuple literals that are not always assignable to
+ * `IocGroupsManifest`’s mutable `Record`/`array` types, while still matching the runtime shape.
+ */
+export type IocGeneratedContainerManifest<
+  TGroupRoots extends Record<string, unknown> = Record<never, never>,
+> = IocGeneratedContainerManifestCore & Readonly<TGroupRoots>;
+
+/**
+ * Strips `moduleImports` and `contracts` from a generated container manifest, returning the
+ * `IocGroupsManifest` shape expected by `registerIocFromManifest` (fourth argument).
+ */
+export const extractGroupRootsFromContainerManifest = (
+  manifest: IocGeneratedContainerManifestCore & Record<string, unknown>,
+): IocGroupsManifest => {
+  const out: IocGroupsManifest = {};
+  for (const key of Object.keys(manifest)) {
+    if (IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS.has(key)) {
+      continue;
+    }
+    const value = manifest[key];
+    if (value === undefined) {
+      continue;
+    }
+    /* Generated manifests only place `IocGroupNodeManifest` values on non-fixed keys. */
+    out[key] = value as IocGroupNodeManifest;
+  }
+  return out;
 };
 
 /** One implementation slot in a generated group (collection item or object property value). */

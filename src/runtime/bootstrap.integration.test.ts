@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import { createContainer } from "awilix";
 import type { MediaStorage } from "../examples/b-multiple-implementations.js";
+import { extractGroupRootsFromContainerManifest } from "../core/manifest.js";
 import type { IocGeneratedCradle } from "../generated/ioc-registry.types.js";
 import { iocManifest } from "../generated/ioc-manifest.js";
 import { iocRegistrationManifest } from "../generated/ioc-manifest.support.js";
@@ -15,7 +16,7 @@ describe("registerIocFromManifest", () => {
         container,
         iocRegistrationManifest,
         iocManifest.moduleImports,
-        iocManifest.groups,
+        extractGroupRootsFromContainerManifest(iocManifest),
       );
       const media = container.resolve("mediaStorage") as MediaStorage;
       await media.put("k");
@@ -30,7 +31,7 @@ describe("registerIocFromManifest", () => {
         container,
         iocRegistrationManifest,
         iocManifest.moduleImports,
-        iocManifest.groups,
+        extractGroupRootsFromContainerManifest(iocManifest),
       );
       const local = container.resolve("localMediaStorage") as MediaStorage;
       await local.put("k");
@@ -49,7 +50,7 @@ describe("registerIocFromManifest", () => {
         container,
         iocRegistrationManifest,
         iocManifest.moduleImports,
-        iocManifest.groups,
+        extractGroupRootsFromContainerManifest(iocManifest),
       );
       const collection = container.resolve("mediaStorages") as readonly MediaStorage[];
       assert.ok(Array.isArray(collection));
@@ -71,7 +72,7 @@ describe("registerIocFromManifest", () => {
         container,
         iocRegistrationManifest,
         iocManifest.moduleImports,
-        iocManifest.groups,
+        extractGroupRootsFromContainerManifest(iocManifest),
       );
 
       const mediaGroup = container.resolve("mediaStoragesGroup") as MediaStorage[];

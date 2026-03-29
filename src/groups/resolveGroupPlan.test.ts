@@ -103,4 +103,15 @@ describe("formatGroupPlanIssue", () => {
       assert.ok(msg.includes("duplicate"));
     });
   });
+
+  describe("When issue is group_root_key_reserved_manifest", () => {
+    it("should mention the reserved key and generated manifest", () => {
+      const msg = formatGroupPlanIssue({
+        kind: "group_root_key_reserved_manifest",
+        key: "contracts",
+      });
+      assert.ok(msg.includes("contracts"));
+      assert.ok(msg.includes("reserved"));
+    });
+  });
 });

@@ -11,6 +11,7 @@ export type {
   IocContainerImplementationView,
   IocContractManifest,
   IocGeneratedContainerManifest,
+  IocGeneratedContainerManifestCore,
   IocGroupCollectionManifest,
   IocGroupLeafManifest,
   IocGroupNodeManifest,
@@ -21,4 +22,8 @@ export type {
   IocManifestEntry,
   IocModuleNamespace,
   ModuleFactoryManifestMetadata,
+} from "./manifest.js";
+export {
+  extractGroupRootsFromContainerManifest,
+  IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS,
 } from "./manifest.js";

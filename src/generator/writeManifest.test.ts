@@ -368,6 +368,18 @@ describe("writeManifest", () => {
       assert.match(typesSource, /\bwidgetGroup:\s*ReadonlyArray</);
       assert.match(typesSource, /\bwidgetObjectGroup:\s*\{/);
       assert.match(typesSource, /\bwidget:\s*Widget\b/);
+
+      const mainSource = await fs.readFile(manifestOutPath, "utf8");
+      assert.ok(
+        !/\bgroups\s*:/.test(mainSource),
+        "group roots must be top-level manifest properties, not nested under groups",
+      );
+      assert.match(mainSource, /\bwidgetGroup\s*:/);
+      assert.match(mainSource, /\bwidgetObjectGroup\s*:/);
+      assert.match(
+        mainSource,
+        /IocGeneratedContainerManifest<\s*IocManifestGroupRoots\s*>/,
+      );
     });
   });
 });
