@@ -25,6 +25,7 @@ describe("shouldIncludeImplInCollectionGroup", () => {
         contractName: "MediaStorage",
         contractTypeRelImport: "../x.js",
         contractKey: "mediaStorage",
+        accessKey: "mediaStorage",
         collectionKey: "mediaStorages",
         defaultImplementationName: "s3MediaStorage",
         implementations: [
@@ -54,6 +55,7 @@ describe("shouldIncludeImplInCollectionGroup", () => {
         contractName: "MediaStorage",
         contractTypeRelImport: "../x.js",
         contractKey: "mediaStorage",
+        accessKey: "mediaStorage",
         collectionKey: "mediaStorages",
         defaultImplementationName: "mediaStorage",
         implementations: [
@@ -74,6 +76,7 @@ describe("shouldIncludeImplInCollectionGroup", () => {
         contractName: "MediaStorage",
         contractTypeRelImport: "../x.js",
         contractKey: "mediaStorage",
+        accessKey: "mediaStorage",
         collectionKey: "mediaStorages",
         defaultImplementationName: "s3MediaStorage",
         implementations: [minimalImpl("localMediaStorage", "localMediaStorage")],

@@ -1,7 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { IocConfig, IocLifetime } from "./iocConfig.js";
+import {
+  IOC_CONTRACT_CONFIG_KEY,
+  parseContractLevelConfig,
+  type IocConfig,
+  type IocLifetime,
+} from "./iocConfig.js";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -115,6 +120,13 @@ const validateIocConfig = (raw: unknown, sourceLabel: string): IocConfig => {
           throw new Error(
             `[ioc-config] ${sourceLabel} registrations["${contract}"]["${implName}"] must be an object`,
           );
+        }
+        if (implName === IOC_CONTRACT_CONFIG_KEY) {
+          parseContractLevelConfig(
+            override,
+            `${sourceLabel} registrations["${contract}"]["${implName}"]`,
+          );
+          continue;
         }
         if (override.name !== undefined && typeof override.name !== "string") {
           throw new Error(

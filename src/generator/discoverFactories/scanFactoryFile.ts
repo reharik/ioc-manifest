@@ -1,5 +1,6 @@
 import path from "node:path";
 import ts from "typescript";
+import { getImplOverrideForImplementation } from "../../config/iocConfig.js";
 import {
   keyFromExportName,
   resolveRegistrationKeyForFactory,
@@ -466,8 +467,10 @@ export const scanFactoryFile = (
       continue;
     }
 
-    const configRegistrationName =
-      iocConfig?.registrations?.[contractName]?.[implementationName]?.name;
+    const configRegistrationName = getImplOverrideForImplementation(
+      iocConfig?.registrations?.[contractName],
+      implementationName,
+    )?.name;
     let registrationKey: string;
     try {
       registrationKey = resolveRegistrationKeyForFactory(

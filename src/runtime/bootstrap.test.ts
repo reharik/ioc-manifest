@@ -98,6 +98,42 @@ describe("registerIocFromManifest", () => {
     });
   });
 
+  describe("When manifest metadata sets accessKey for the contract default slot", () => {
+    it("should register an alias so resolving accessKey returns the selected default implementation", () => {
+      const manifest: IocContractManifest = {
+        Knex: {
+          sqlite: {
+            exportName: "buildSqlite",
+            registrationKey: "sqliteKnex",
+            modulePath: "knex.ts",
+            sourceFilePath: "knex.ts",
+            relImport: "../knex.js",
+            contractName: "Knex",
+            implementationName: "sqlite",
+            lifetime: "singleton",
+            moduleIndex: 0,
+            default: true,
+            accessKey: "database",
+          },
+        },
+      };
+      const moduleImports: readonly IocModuleNamespace[] = [
+        {
+          buildSqlite: (): { driver: string } => ({ driver: "sqlite" }),
+        },
+      ];
+      const container = createContainer<{
+        sqliteKnex: { driver: string };
+        database: { driver: string };
+      }>({ injectionMode: "PROXY" });
+      registerIocFromManifest(container, manifest, moduleImports);
+      const viaAccess = container.resolve("database") as { driver: string };
+      const viaReg = container.resolve("sqliteKnex") as { driver: string };
+      assert.strictEqual(viaAccess.driver, "sqlite");
+      assert.strictEqual(viaReg.driver, "sqlite");
+    });
+  });
+
   describe("When automatic per-contract multi-implementation collection is registered", () => {
     describe("When the contract has multiple implementations", () => {
       it("should resolve the plural collection key to an array ordered by registrationKey with each implementation once", () => {

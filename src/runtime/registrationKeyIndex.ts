@@ -9,21 +9,23 @@ export type RegistrationKeyIndex = {
     string,
     ModuleFactoryManifestMetadata
   >;
-  /** Contract name for each conventional default registration key (camelCase contract). */
-  readonly contractByDefaultRegistrationKey: ReadonlyMap<string, string>;
+  /** Contract name for each cradle default-slot key (convention or `$contract.accessKey`). */
+  readonly contractByAccessKey: ReadonlyMap<string, string>;
 };
 
 export const buildRegistrationKeyIndex = (
   manifestByContract: IocContractManifest,
 ): RegistrationKeyIndex => {
   const metaByRegistrationKey = new Map<string, ModuleFactoryManifestMetadata>();
-  const contractByDefaultRegistrationKey = new Map<string, string>();
+  const contractByAccessKey = new Map<string, string>();
 
   for (const contractName of Object.keys(manifestByContract)) {
-    contractByDefaultRegistrationKey.set(
-      contractNameToDefaultRegistrationKey(contractName),
-      contractName,
-    );
+    const impls = manifestByContract[contractName]!;
+    const list = Object.values(impls);
+    const explicit = list.find((m) => m.accessKey !== undefined)?.accessKey;
+    const slotKey =
+      explicit ?? contractNameToDefaultRegistrationKey(contractName);
+    contractByAccessKey.set(slotKey, contractName);
   }
 
   for (const impls of Object.values(manifestByContract)) {
@@ -32,5 +34,5 @@ export const buildRegistrationKeyIndex = (
     }
   }
 
-  return { metaByRegistrationKey, contractByDefaultRegistrationKey };
+  return { metaByRegistrationKey, contractByAccessKey };
 };

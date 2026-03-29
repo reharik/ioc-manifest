@@ -26,11 +26,14 @@ const mkPlan = (
     "contractName" | "contractTypeRelImport" | "defaultImplementationName" | "implementations"
   > &
     Partial<ResolvedContractRegistration>,
-): ResolvedContractRegistration => ({
-  contractKey: partial.contractKey ?? "svc",
-  collectionKey: partial.collectionKey,
-  ...partial,
-});
+): ResolvedContractRegistration => {
+  const contractKey = partial.contractKey ?? "svc";
+  return {
+    ...partial,
+    contractKey,
+    accessKey: partial.accessKey ?? contractKey,
+  };
+};
 
 describe("writeManifest", () => {
   describe("When writing generated outputs repeatedly", () => {
@@ -290,6 +293,58 @@ describe("writeManifest", () => {
       assert.match(typesSource, /\bwidgets:\s*ReadonlyArray<\s*Widget\s*>\s*;/);
       assert.ok(!typesSource.includes("Record<"));
       assert.ok(!typesSource.includes("primaryWidget: Widget"));
+    });
+
+    it("should emit accessKey as the singular cradle property when it differs from the convention key", async () => {
+      const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ioc-write-manifest-"));
+      const generatedDir = path.join(tempRoot, "src", "generated");
+      await fs.mkdir(generatedDir, { recursive: true });
+      const manifestOutPath = path.join(generatedDir, "ioc-manifest.ts");
+
+      const acceptedFactories: DiscoveredFactory[] = [
+        mkFactory({
+          contractName: "Knex",
+          implementationName: "database",
+          registrationKey: "database",
+          modulePath: "fixtures/k.ts",
+          relImport: "../fixtures/k.js",
+        }),
+      ];
+      const plans: ResolvedContractRegistration[] = [
+        mkPlan({
+          contractName: "Knex",
+          contractTypeRelImport: "../fixtures/contracts.js",
+          contractKey: "knex",
+          accessKey: "database",
+          collectionKey: undefined,
+          defaultImplementationName: "database",
+          implementations: [
+            {
+              implementationName: "database",
+              exportName: "buildDatabase",
+              modulePath: "fixtures/k.ts",
+              relImport: "../fixtures/k.js",
+              registrationKey: "database",
+              lifetime: "singleton",
+            },
+          ],
+        }),
+      ];
+
+      await writeManifest(
+        acceptedFactories,
+        plans,
+        undefined,
+        manifestOutPath,
+        "ioc-manifest",
+      );
+
+      const typesSource = await fs.readFile(
+        path.join(generatedDir, "ioc-registry.types.ts"),
+        "utf8",
+      );
+      assert.match(typesSource, /\bdatabase:\s*Knex\b/);
+      assert.ok(!/\bknex:\s*Knex\b/.test(typesSource));
     });
 
     it("should keep automatic plural collections as ReadonlyArray even when groups are configured", async () => {

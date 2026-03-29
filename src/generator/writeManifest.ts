@@ -123,6 +123,8 @@ const plansToIocContractManifest = (
       }
       const isResolvedDefault =
         impl.implementationName === plan.defaultImplementationName;
+      const accessKeyDiffersFromConvention =
+        plan.accessKey !== plan.contractKey;
       inner[impl.implementationName] = {
         exportName: impl.exportName,
         registrationKey: impl.registrationKey,
@@ -134,6 +136,7 @@ const plansToIocContractManifest = (
         lifetime: impl.lifetime,
         moduleIndex,
         ...(isResolvedDefault ? { default: true } : {}),
+        ...(accessKeyDiffersFromConvention ? { accessKey: plan.accessKey } : {}),
         ...(impl.discoveredBy !== undefined
           ? { discoveredBy: impl.discoveredBy }
           : {}),
@@ -364,6 +367,9 @@ const serializeMetadataBlock = (
       `      dependencyContractNames: ${JSON.stringify(meta.dependencyContractNames)},`,
     );
   }
+  if (meta.accessKey !== undefined) {
+    lines.push(`      accessKey: ${JSON.stringify(meta.accessKey)},`);
+  }
   return lines.join("\n");
 };
 
@@ -533,7 +539,7 @@ const buildCradleTypeSource = (
 
   for (const plan of sortedPlans) {
     const typeName = plan.contractName;
-    propertyLines.push(`  ${plan.contractKey}: ${typeName};`);
+    propertyLines.push(`  ${plan.accessKey}: ${typeName};`);
     // Automatic per-contract collection (plural key): array, same element order as runtime.
     if (plan.collectionKey !== undefined) {
       propertyLines.push(

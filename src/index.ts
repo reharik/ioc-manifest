@@ -1,9 +1,16 @@
 export * from "./core/index.js";
 export {
   defineIocConfig,
+  getContractLevelConfig,
+  getImplOverrideForImplementation,
+  IOC_CONTRACT_CONFIG_KEY,
+  isIocImplementationOverride,
+  parseContractLevelConfig,
   type IocConfig,
+  type IocContractMetadata,
   type IocLifetime,
   type IocOverride,
+  type IocRegistrationsPerContract,
 } from "./config/iocConfig.js";
 export {
   loadIocConfig,

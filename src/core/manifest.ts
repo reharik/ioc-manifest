@@ -11,7 +11,7 @@ export type IocManifest = IocManifestEntry[];
 /** Lifetime values stored in generated manifests (lowercase; maps to Awilix `Lifetime`). */
 export type IocImplementationLifetime = "singleton" | "scoped" | "transient";
 
-export type IocConfigOverrideField = "name" | "lifetime" | "default";
+export type IocConfigOverrideField = "name" | "lifetime" | "default" | "accessKey";
 
 /**
  * Contract-first manifest: each contract (interface/type name) maps to one or more
@@ -50,6 +50,11 @@ export type ModuleFactoryManifestMetadata = {
    * Contract types inferred as dependencies from the factory's first parameter (object properties).
    */
   dependencyContractNames?: readonly string[];
+  /**
+   * When set, Awilix default-slot / cradle key for this contract (singular). Omitted when equal to
+   * the convention key (camel-cased contract name).
+   */
+  accessKey?: string;
 };
 
 export type IocContractManifest = Record<

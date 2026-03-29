@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import type { IocConfig } from "../config/iocConfig.js";
+import { IOC_CONTRACT_CONFIG_KEY } from "../config/iocConfig.js";
 import type { DiscoveredFactory } from "./types.js";
 import {
   buildRegistrationPlan,
@@ -60,6 +61,7 @@ describe("buildRegistrationPlan", () => {
       assert.strictEqual(plan.defaultImplementationName, "albumService");
       assert.strictEqual(plan.collectionKey, undefined);
       assert.strictEqual(plan.contractKey, "albumService");
+      assert.strictEqual(plan.accessKey, "albumService");
     });
   });
 
@@ -562,6 +564,132 @@ describe("buildRegistrationPlan", () => {
       assert.strictEqual(impl.registrationKey, "blah");
       assert.ok(
         !plan.implementations.some((i) => i.registrationKey === "preferredCache"),
+      );
+    });
+  });
+
+  describe("When $contract.accessKey overrides the cradle default slot", () => {
+    it("should set accessKey while keeping contractKey as the convention key", () => {
+      const map = toContractMap({
+        Knex: [
+          factory({
+            contractName: "Knex",
+            implementationName: "database",
+            registrationKey: "database",
+            default: true,
+          }),
+        ],
+      });
+      const config: IocConfig = {
+        discovery: { rootDir: "src" },
+        registrations: {
+          Knex: {
+            [IOC_CONTRACT_CONFIG_KEY]: { accessKey: "database" },
+            database: { default: true },
+          },
+        },
+      };
+      const [plan] = buildRegistrationPlan(map, config);
+      assert.strictEqual(plan.contractKey, "knex");
+      assert.strictEqual(plan.accessKey, "database");
+      assert.strictEqual(plan.collectionKey, undefined);
+    });
+
+    it("should keep plural collection key contract-derived when multiple implementations exist", () => {
+      const map = toContractMap({
+        Knex: [
+          factory({
+            contractName: "Knex",
+            implementationName: "pg",
+            registrationKey: "pg",
+          }),
+          factory({
+            contractName: "Knex",
+            implementationName: "sqlite",
+            registrationKey: "sqlite",
+            default: true,
+          }),
+        ],
+      });
+      const config: IocConfig = {
+        discovery: { rootDir: "src" },
+        registrations: {
+          Knex: {
+            [IOC_CONTRACT_CONFIG_KEY]: { accessKey: "database" },
+            sqlite: { default: true },
+          },
+        },
+      };
+      const [plan] = buildRegistrationPlan(map, config);
+      assert.strictEqual(plan.contractKey, "knex");
+      assert.strictEqual(plan.accessKey, "database");
+      assert.strictEqual(plan.collectionKey, "knexes");
+    });
+  });
+
+  describe("When $contract.accessKey differs from the default registration key but an implementation already uses that access key", () => {
+    it("should throw", () => {
+      const map = toContractMap({
+        Knex: [
+          factory({
+            contractName: "Knex",
+            implementationName: "pg",
+            registrationKey: "database",
+          }),
+          factory({
+            contractName: "Knex",
+            implementationName: "sqlite",
+            registrationKey: "sqliteKnex",
+            default: true,
+          }),
+        ],
+      });
+      const config: IocConfig = {
+        discovery: { rootDir: "src" },
+        registrations: {
+          Knex: {
+            [IOC_CONTRACT_CONFIG_KEY]: { accessKey: "database" },
+            sqlite: { default: true },
+          },
+        },
+      };
+      assert.throws(
+        () => buildRegistrationPlan(map, config),
+        /\$contract is reserved for the default-slot alias/,
+      );
+    });
+  });
+
+  describe("When two contracts use the same $contract.accessKey", () => {
+    it("should throw", () => {
+      const map = toContractMap({
+        Foo: [
+          factory({
+            contractName: "Foo",
+            implementationName: "a",
+            registrationKey: "a",
+            default: true,
+          }),
+        ],
+        Bar: [
+          factory({
+            contractName: "Bar",
+            implementationName: "b",
+            registrationKey: "b",
+            default: true,
+          }),
+        ],
+      });
+      const config: IocConfig = {
+        discovery: { rootDir: "src" },
+        registrations: {
+          Foo: { [IOC_CONTRACT_CONFIG_KEY]: { accessKey: "shared" } },
+          Bar: { [IOC_CONTRACT_CONFIG_KEY]: { accessKey: "shared" } },
+        },
+      };
+      assert.throws(
+        () => buildRegistrationPlan(map, config),
+        /\$contract\.accessKey must be unique across contracts/,
       );
     });
   });

@@ -67,7 +67,7 @@ const collectReservedCradleKeys = (
 ): Set<string> => {
   const reserved = new Set<string>();
   for (const plan of plans) {
-    reserved.add(plan.contractKey);
+    reserved.add(plan.accessKey);
     if (plan.collectionKey !== undefined) {
       reserved.add(plan.collectionKey);
     }

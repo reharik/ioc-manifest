@@ -197,25 +197,36 @@ const registerImplementationFactories = <TCradle extends object>(
   }
 };
 
+const resolveManifestAccessKey = (
+  contractName: string,
+  implList: readonly ModuleFactoryManifestMetadata[],
+): string => {
+  const explicit = implList.find((m) => m.accessKey !== undefined)?.accessKey;
+  if (explicit !== undefined) {
+    return explicit;
+  }
+  return contractNameToDefaultRegistrationKey(contractName);
+};
+
 const registerContractDefaultAliases = <TCradle extends object>(
   container: AwilixContainer<TCradle>,
   manifestByContract: IocContractManifest,
 ): void => {
   for (const [contractName, impls] of Object.entries(manifestByContract)) {
-    const contractKey = contractNameToDefaultRegistrationKey(contractName);
     const implList = Object.values(impls);
+    const accessKey = resolveManifestAccessKey(contractName, implList);
     const defaultImpl = resolveDefaultImplementation(contractName, implList);
 
-    const hasImplementationAtContractKey = implList.some(
-      (meta) => meta.registrationKey === contractKey,
+    const hasImplementationAtAccessKey = implList.some(
+      (meta) => meta.registrationKey === accessKey,
     );
 
     if (
-      contractKey !== defaultImpl.registrationKey &&
-      !hasImplementationAtContractKey
+      accessKey !== defaultImpl.registrationKey &&
+      !hasImplementationAtAccessKey
     ) {
       registerPair<TCradle>(container, {
-        [contractKey]: aliasTo(defaultImpl.registrationKey),
+        [accessKey]: aliasTo(defaultImpl.registrationKey),
       });
     }
   }

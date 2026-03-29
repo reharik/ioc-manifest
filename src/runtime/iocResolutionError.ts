@@ -62,7 +62,7 @@ const frameFromRegistrationKey = (
       registrationKey: key,
     };
   }
-  const contract = keyIndex.contractByDefaultRegistrationKey.get(key);
+  const contract = keyIndex.contractByAccessKey.get(key);
   if (contract !== undefined) {
     return {
       contractName: contract,
@@ -111,7 +111,7 @@ const describeFrameLine = (
       const fileSuffix = src.length > 0 ? ` [${src}]` : "";
       return `${meta.contractName} (${meta.implementationName})${fileSuffix}`;
     }
-    const contract = keyIndex.contractByDefaultRegistrationKey.get(key);
+    const contract = keyIndex.contractByAccessKey.get(key);
     if (contract !== undefined) {
       return `${contract} (contract default slot ${JSON.stringify(key)})`;
     }
@@ -142,7 +142,7 @@ const formatHeadline = (
     if (meta !== undefined) {
       return `Cannot build ${meta.contractName} using implementation ${meta.implementationName}.`;
     }
-    const contract = keyIndex.contractByDefaultRegistrationKey.get(key);
+    const contract = keyIndex.contractByAccessKey.get(key);
     if (contract !== undefined) {
       return `Cannot resolve ${contract} (contract default slot ${JSON.stringify(key)}).`;
     }
