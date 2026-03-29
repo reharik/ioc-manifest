@@ -4,6 +4,7 @@ import type {
   IocOverride,
 } from "../config/iocConfig.js";
 import type { IocConfigOverrideField } from "../core/manifest.js";
+import { selectDefaultImplementationName } from "../core/defaultImplementationSelection.js";
 import type { DiscoveredFactory } from "./types.js";
 import {
   contractNameToCollectionRegistrationKey,
@@ -100,46 +101,26 @@ const listImplFactories = (factories: DiscoveredFactory[]): string =>
     )
     .join("; ");
 
-/**
- * Default implementation selection (strict, deterministic), after config overrides are merged:
- * 1. Exactly one merged factory with `default: true` (config or discovery)
- * 2. Exactly one implementation for the contract
- * 3. Otherwise throw (no arbitrary choice)
- *
- * Config `default: true` overrides a discovered default when both apply to the same implementation
- * (merged object). If config sets `default: true` on one implementation, that implementation wins.
- */
 const selectDefaultImplementationKey = (
   contractName: string,
   mergedByImplName: Map<string, DiscoveredFactory>,
 ): string => {
   const factories = Array.from(mergedByImplName.values());
   const withDefault = factories.filter((f) => f.default === true);
-
   if (withDefault.length > 1) {
     throw new Error(
       `[ioc] Contract ${JSON.stringify(contractName)} has multiple implementations marked default: true after applying ioc.config overrides: ${listImplFactories(withDefault)}. Mark exactly one with default: true in source or in registrations[${JSON.stringify(contractName)}][implementationName], or reduce to a single implementation.`,
     );
   }
 
-  if (withDefault.length === 1) {
-    return withDefault[0]!.implementationName;
-  }
-
-  if (mergedByImplName.size === 1) {
-    return Array.from(mergedByImplName.keys())[0]!;
-  }
-
-  const names = Array.from(mergedByImplName.keys()).sort((a, b) =>
-    a.localeCompare(b),
+  const rows = Array.from(mergedByImplName.entries()).map(
+    ([implementationName, f]) => ({
+      implementationName,
+      registrationKey: f.registrationKey,
+      ...(f.default === true ? { default: true as const } : {}),
+    }),
   );
-  const keys = factories
-    .map((f) => `${f.implementationName}→${JSON.stringify(f.registrationKey)}`)
-    .sort((a, b) => a.localeCompare(b))
-    .join(", ");
-  throw new Error(
-    `[ioc] Contract ${JSON.stringify(contractName)} has ${mergedByImplName.size} implementations (${names.map((n) => JSON.stringify(n)).join(", ")}) but none is selected as the default. Set registrations[${JSON.stringify(contractName)}][implementationName].default: true in ioc.config.ts for exactly one implementation, mark exactly one factory with resolver default: true, or reduce to a single implementation. Registration keys: ${keys}.`,
-  );
+  return selectDefaultImplementationName(contractName, rows);
 };
 
 const resolveLifetime = (factory: DiscoveredFactory): IocLifetime => {

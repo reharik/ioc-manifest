@@ -212,7 +212,7 @@ describe("buildRegistrationPlan", () => {
   });
 
   describe("When multiple implementations exist", () => {
-    it("should expose every implementation with its registration key and a collection entry", () => {
+    it("should include each implementation on the plan and set a plural collection key", () => {
       const map = toContractMap({
         MediaStorage: [
           factory({
@@ -319,6 +319,34 @@ describe("buildRegistrationPlan", () => {
         () => buildRegistrationPlan(map, undefined),
         /none is selected as the default/,
       );
+    });
+  });
+
+  describe("When multiple implementations exist with no explicit default and one registration key matches the contract key", () => {
+    it("should select that implementation as the default", () => {
+      const map = toContractMap({
+        Widget: [
+          factory({
+            contractName: "Widget",
+            implementationName: "primaryWidget",
+            registrationKey: "primaryWidget",
+          }),
+          factory({
+            contractName: "Widget",
+            implementationName: "secondaryWidget",
+            registrationKey: "secondaryWidget",
+          }),
+          factory({
+            contractName: "Widget",
+            implementationName: "widget",
+            registrationKey: "widget",
+          }),
+        ],
+      });
+      const [plan] = buildRegistrationPlan(map, undefined);
+      assert.strictEqual(plan.defaultImplementationName, "widget");
+      assert.strictEqual(plan.contractKey, "widget");
+      assert.strictEqual(plan.collectionKey, "widgets");
     });
   });
 

@@ -10,19 +10,13 @@ import type { AlbumService } from "../examples/f-dependency-injection.js";
 export interface IocGeneratedTypes {
   albumService: AlbumService;
   cacheClient: CacheClient;
-  memoryCache: CacheClient;
   logger: Logger;
-  consoleLogger: Logger;
   mediaStorage: MediaStorage;
-  localMediaStorage: MediaStorage;
-  s3MediaStorage: MediaStorage;
   mediaStorages: Record<
     "localMediaStorage" | "mediaStorage" | "s3MediaStorage",
     MediaStorage
   >;
   widget: Widget;
-  primaryWidget: Widget;
-  secondaryWidget: Widget;
   widgets: Record<"primaryWidget" | "secondaryWidget", Widget>;
   mediaStoragesGroup: ReadonlyArray<MediaStorage>;
 }

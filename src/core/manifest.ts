@@ -96,7 +96,7 @@ export type IocGroupLeafManifest = {
 /** Collection group: ordered list of implementations to resolve from the cradle. */
 export type IocGroupCollectionManifest = IocGroupLeafManifest[];
 
-/** Object group: property keys are implementation registration keys. */
+/** Object group: property keys are contract keys (default implementation resolved per leaf `registrationKey`). */
 export type IocGroupObjectManifest = Record<string, IocGroupLeafManifest>;
 
 export type IocGroupNodeManifest =

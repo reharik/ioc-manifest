@@ -87,7 +87,7 @@ describe("buildGroupPlan", () => {
   });
 
   describe("When an object group matches by base type", () => {
-    it("should emit an object keyed by registration key", () => {
+    it("should emit one property per assignable contract keyed by contract key", () => {
       const plans = runDiscoveryAndPlans();
       const ctx = discoveryCtx(makeProgram());
       const result = buildGroupPlan(
@@ -100,9 +100,18 @@ describe("buildGroupPlan", () => {
       assert.ok(result);
       const node = result!.manifest.readByKey;
       assert.ok(!Array.isArray(node));
-      const obj = node as Record<string, { registrationKey: string }>;
+      const obj = node as Record<string, { contractName: string; registrationKey: string }>;
+      assert.deepStrictEqual(Object.keys(obj).sort(), [
+        "albumService",
+        "mediaStorage",
+        "specialAlbumService",
+      ]);
+      assert.strictEqual(obj.albumService?.contractName, "AlbumService");
       assert.strictEqual(obj.albumService?.registrationKey, "albumService");
+      assert.strictEqual(obj.mediaStorage?.contractName, "MediaStorage");
       assert.strictEqual(obj.mediaStorage?.registrationKey, "mediaStorage");
+      assert.strictEqual(obj.specialAlbumService?.contractName, "SpecialAlbumService");
+      assert.strictEqual(obj.specialAlbumService?.registrationKey, "specialAlbumService");
     });
   });
 

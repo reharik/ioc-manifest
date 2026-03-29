@@ -26,19 +26,54 @@ describe("groupPlanToManifestNode", () => {
   });
 
   describe("When kind is object", () => {
-    it("should map members to an object keyed by registration key", () => {
+    it("should map members to an object keyed by contract key", () => {
       const plan: GroupPlan = {
         groupName: "g",
         kind: "object",
         baseType: "Base",
         members: [
-          { contractName: "A", registrationKey: "aImpl" },
-          { contractName: "B", registrationKey: "bImpl" },
+          {
+            contractKey: "albumReadService",
+            contractName: "AlbumReadService",
+            registrationKey: "albumReadService",
+          },
+          {
+            contractKey: "userReadService",
+            contractName: "UserReadService",
+            registrationKey: "userReadService",
+          },
         ],
       };
       assert.deepStrictEqual(groupPlanToManifestNode(plan), {
-        aImpl: { contractName: "A", registrationKey: "aImpl" },
-        bImpl: { contractName: "B", registrationKey: "bImpl" },
+        albumReadService: {
+          contractName: "AlbumReadService",
+          registrationKey: "albumReadService",
+        },
+        userReadService: {
+          contractName: "UserReadService",
+          registrationKey: "userReadService",
+        },
+      });
+    });
+
+    it("should use contract key as property name when default uses a different registration key", () => {
+      const plan: GroupPlan = {
+        groupName: "g",
+        kind: "object",
+        baseType: "Base",
+        members: [
+          {
+            contractKey: "albumReadService",
+            contractName: "AlbumReadService",
+            registrationKey: "primaryAlbumReadService",
+          },
+        ],
+      };
+      assert.deepStrictEqual(groupPlanToManifestNode(plan), {
+        albumReadService: {
+          contractName: "AlbumReadService",
+          registrationKey: "primaryAlbumReadService",
+        },
       });
     });
   });
@@ -57,12 +92,12 @@ describe("formatGroupPlanIssue", () => {
     });
   });
 
-  describe("When issue is group_duplicate_registration_key", () => {
-    it("should mention the duplicate key", () => {
+  describe("When issue is group_duplicate_contract_key", () => {
+    it("should mention the duplicate contract key", () => {
       const msg = formatGroupPlanIssue({
-        kind: "group_duplicate_registration_key",
+        kind: "group_duplicate_contract_key",
         groupName: "dup",
-        registrationKey: "same",
+        contractKey: "same",
       });
       assert.ok(msg.includes("same"));
       assert.ok(msg.includes("duplicate"));

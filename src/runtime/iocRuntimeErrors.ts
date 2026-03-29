@@ -13,7 +13,7 @@ export const formatMissingDefaultImplementationMessage = (
   const keys = ctx.registrationKeys.map((k) => JSON.stringify(k)).join(", ");
   return [
     `[ioc] Multiple implementations for contract ${JSON.stringify(ctx.contractName)} (${implList}) but no default is selected for the contract slot.`,
-    `Register exactly one implementation under the contract key, mark one row with default: true in the generated manifest (via resolver metadata or ioc.config registrations), or reduce to a single implementation.`,
+    `Mark exactly one implementation with default: true (resolver or ioc.config), register exactly one implementation under the camel-cased contract key, or reduce to a single implementation.`,
     `Implementation registration keys: ${keys}.`,
   ].join(" ");
 };

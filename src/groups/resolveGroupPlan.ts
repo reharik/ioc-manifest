@@ -1,9 +1,11 @@
 import type * as ts from "typescript";
 import {
+  collectContractDefaultMembersAssignableToBase,
   collectImplementationMembersAssignableToBase,
   resolveDeclaredBaseType,
   shouldIncludeImplInCollectionGroup,
   type AssignableImplementationMember,
+  type ContractDefaultGroupMember,
 } from "./baseTypeAssignability.js";
 import type {
   IocGroupNodeManifest,
@@ -37,7 +39,7 @@ export type GroupPlan =
       groupName: string;
       kind: "object";
       baseType: string;
-      members: readonly AssignableImplementationMember[];
+      members: readonly ContractDefaultGroupMember[];
     };
 
 export type GroupPlanIssue =
@@ -46,9 +48,9 @@ export type GroupPlanIssue =
   | { kind: "group_unknown_base_type"; groupName: string; message: string }
   | { kind: "group_no_matches"; groupName: string; baseType: string }
   | {
-      kind: "group_duplicate_registration_key";
+      kind: "group_duplicate_contract_key";
       groupName: string;
-      registrationKey: string;
+      contractKey: string;
     }
   | { kind: "group_root_key_collision"; key: string }
   | { kind: "group_discovery_missing_context" };
@@ -111,7 +113,7 @@ export const groupPlanToManifestNode = (plan: GroupPlan): IocGroupNodeManifest =
   }
   const out: Record<string, { contractName: string; registrationKey: string }> = {};
   for (const m of plan.members) {
-    out[m.registrationKey] = {
+    out[m.contractKey] = {
       contractName: m.contractName,
       registrationKey: m.registrationKey,
     };
@@ -119,23 +121,25 @@ export const groupPlanToManifestNode = (plan: GroupPlan): IocGroupNodeManifest =
   return out;
 };
 
-const buildObjectMembersOrIssue = (
+const buildObjectGroupMembersOrIssue = (
   groupName: string,
-  members: readonly AssignableImplementationMember[],
-): { ok: true; members: AssignableImplementationMember[] } | { ok: false; issue: GroupPlanIssue } => {
+  members: readonly ContractDefaultGroupMember[],
+):
+  | { ok: true; members: ContractDefaultGroupMember[] }
+  | { ok: false; issue: GroupPlanIssue } => {
   const seen = new Set<string>();
   for (const m of members) {
-    if (seen.has(m.registrationKey)) {
+    if (seen.has(m.contractKey)) {
       return {
         ok: false,
         issue: {
-          kind: "group_duplicate_registration_key",
+          kind: "group_duplicate_contract_key",
           groupName,
-          registrationKey: m.registrationKey,
+          contractKey: m.contractKey,
         },
       };
     }
-    seen.add(m.registrationKey);
+    seen.add(m.contractKey);
   }
   return { ok: true, members: [...members] };
 };
@@ -150,8 +154,8 @@ export const formatGroupPlanIssue = (issue: GroupPlanIssue): string => {
       return `[ioc-config] groups.${JSON.stringify(issue.groupName)}: ${issue.message}`;
     case "group_no_matches":
       return `[ioc-config] groups.${JSON.stringify(issue.groupName)}: no implementations found for base type ${JSON.stringify(issue.baseType)}`;
-    case "group_duplicate_registration_key":
-      return `[ioc-config] groups.${JSON.stringify(issue.groupName)}: duplicate registration key ${JSON.stringify(issue.registrationKey)} in object group (two assignable implementations share the same key)`;
+    case "group_duplicate_contract_key":
+      return `[ioc-config] groups.${JSON.stringify(issue.groupName)}: duplicate contract key ${JSON.stringify(issue.contractKey)} in object group`;
     case "group_root_key_collision":
       return `[ioc-config] groups root key ${JSON.stringify(issue.key)} collides with an existing Awilix registration key`;
     case "group_discovery_missing_context":
@@ -214,26 +218,25 @@ const runGroupPlan = (
       continue;
     }
 
-    const members = collectImplementationMembersAssignableToBase(
-      checker,
-      discovery.program,
-      discovery.generatedDir,
-      plans,
-      base.type,
-      entry.kind === "collection" ? shouldIncludeImplInCollectionGroup : undefined,
-    );
-
-    if (members.length === 0) {
-      issues.push({
-        kind: "group_no_matches",
-        groupName,
-        baseType: entry.baseType,
-      });
-      continue;
-    }
-
     if (entry.kind === "object") {
-      const built = buildObjectMembersOrIssue(groupName, members);
+      const objectMembers = collectContractDefaultMembersAssignableToBase(
+        checker,
+        discovery.program,
+        discovery.generatedDir,
+        plans,
+        base.type,
+      );
+
+      if (objectMembers.length === 0) {
+        issues.push({
+          kind: "group_no_matches",
+          groupName,
+          baseType: entry.baseType,
+        });
+        continue;
+      }
+
+      const built = buildObjectGroupMembersOrIssue(groupName, objectMembers);
       if (!built.ok) {
         issues.push(built.issue);
         continue;
@@ -246,6 +249,24 @@ const runGroupPlan = (
         members: built.members,
       });
     } else {
+      const members = collectImplementationMembersAssignableToBase(
+        checker,
+        discovery.program,
+        discovery.generatedDir,
+        plans,
+        base.type,
+        shouldIncludeImplInCollectionGroup,
+      );
+
+      if (members.length === 0) {
+        issues.push({
+          kind: "group_no_matches",
+          groupName,
+          baseType: entry.baseType,
+        });
+        continue;
+      }
+
       reserved.add(groupName);
       groupPlans.push({
         groupName,

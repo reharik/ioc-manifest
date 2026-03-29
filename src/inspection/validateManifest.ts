@@ -1,3 +1,4 @@
+import { selectDefaultImplementationName } from "../core/defaultImplementationSelection.js";
 import type {
   IocContainerContractsView,
   IocContainerImplementationView,
@@ -42,18 +43,30 @@ export const validateManifest = (
     }
 
     const defaults = list.filter((m) => m.default === true);
-    if (list.length > 1 && defaults.length === 0) {
-      issues.push({
-        code: "multiple_implementations_no_default",
-        contractName,
-        message: `Contract ${JSON.stringify(contractName)} has ${list.length} implementations (${list.map((m) => JSON.stringify(m.implementationName)).join(", ")}) but none is marked default: true.`,
-      });
-    }
     if (defaults.length > 1) {
       issues.push({
         code: "multiple_defaults",
         contractName,
         message: `Contract ${JSON.stringify(contractName)} has more than one implementation marked default: true.`,
+      });
+      continue;
+    }
+
+    try {
+      selectDefaultImplementationName(
+        contractName,
+        list.map((m) => ({
+          implementationName: m.implementationName,
+          registrationKey: m.registrationKey,
+          ...(m.default === true ? { default: true as const } : {}),
+        })),
+      );
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      issues.push({
+        code: "multiple_implementations_no_default",
+        contractName,
+        message,
       });
     }
   }
@@ -83,18 +96,33 @@ export const validateContainerContractsView = (
 
     const implKeys = Object.keys(impls).sort((a, b) => a.localeCompare(b));
     const defaults = implKeys.filter((k) => impls[k]!.default === true);
-    if (implKeys.length > 1 && defaults.length === 0) {
-      issues.push({
-        code: "multiple_implementations_no_default",
-        contractName,
-        message: `Contract ${JSON.stringify(contractName)} has ${implKeys.length} implementations (${implKeys.map((k) => JSON.stringify(k)).join(", ")}) but none is marked default: true.`,
-      });
-    }
     if (defaults.length > 1) {
       issues.push({
         code: "multiple_defaults",
         contractName,
         message: `Contract ${JSON.stringify(contractName)} has more than one implementation marked default: true.`,
+      });
+      continue;
+    }
+
+    try {
+      selectDefaultImplementationName(
+        contractName,
+        implKeys.map((k) => {
+          const row = impls[k]!;
+          return {
+            implementationName: k,
+            registrationKey: row.registrationKey,
+            ...(row.default === true ? { default: true as const } : {}),
+          };
+        }),
+      );
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      issues.push({
+        code: "multiple_implementations_no_default",
+        contractName,
+        message,
       });
     }
   }

@@ -23,6 +23,7 @@ import {
   pushIocResolutionFrame,
   snapshotIocResolutionStack,
 } from "./iocResolutionStack.js";
+import { selectDefaultImplementationName } from "../core/defaultImplementationSelection.js";
 import {
   formatMissingDefaultImplementationMessage,
   formatMissingFactoryExportMessage,
@@ -119,26 +120,40 @@ const resolveDefaultImplementation = (
   contractName: string,
   implList: readonly ModuleFactoryManifestMetadata[],
 ): ModuleFactoryManifestMetadata => {
-  const defaultImpl =
-    implList.find((m) => m.default === true) ??
-    (implList.length === 1 ? implList[0] : undefined);
-
-  if (!defaultImpl) {
-    if (implList.length === 0) {
-      throw new Error(
-        `[ioc] No implementation registered for contract ${JSON.stringify(contractName)} (no factories in the manifest for this contract). Add a discoverable factory and re-run manifest generation.`,
-      );
-    }
+  if (implList.length === 0) {
     throw new Error(
-      formatMissingDefaultImplementationMessage({
-        contractName,
-        implementationNames: implList.map((m) => m.implementationName),
-        registrationKeys: implList.map((m) => m.registrationKey),
-      }),
+      `[ioc] No implementation registered for contract ${JSON.stringify(contractName)} (no factories in the manifest for this contract). Add a discoverable factory and re-run manifest generation.`,
     );
   }
 
-  return defaultImpl;
+  const rows = implList.map((m) => ({
+    implementationName: m.implementationName,
+    registrationKey: m.registrationKey,
+    ...(m.default === true ? { default: true as const } : {}),
+  }));
+
+  try {
+    const name = selectDefaultImplementationName(contractName, rows);
+    const defaultImpl = implList.find((m) => m.implementationName === name);
+    if (defaultImpl === undefined) {
+      throw new Error(
+        `[ioc] internal error: selected default ${JSON.stringify(name)} missing from manifest for ${JSON.stringify(contractName)}`,
+      );
+    }
+    return defaultImpl;
+  } catch (cause: unknown) {
+    if (implList.length > 1) {
+      throw new Error(
+        formatMissingDefaultImplementationMessage({
+          contractName,
+          implementationNames: implList.map((m) => m.implementationName),
+          registrationKeys: implList.map((m) => m.registrationKey),
+        }),
+        { cause },
+      );
+    }
+    throw cause;
+  }
 };
 
 const registerImplementationFactories = <TCradle extends object>(

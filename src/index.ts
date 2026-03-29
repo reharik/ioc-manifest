@@ -37,7 +37,10 @@ export {
   type IocGroupKind,
   type IocGroupsConfig,
 } from "./groups/resolveGroupPlan.js";
-export type { AssignableImplementationMember } from "./groups/baseTypeAssignability.js";
+export type {
+  AssignableImplementationMember,
+  ContractDefaultGroupMember,
+} from "./groups/baseTypeAssignability.js";
 export { shouldIncludeImplInCollectionGroup } from "./groups/baseTypeAssignability.js";
 export {
   buildDiscoveryReport,

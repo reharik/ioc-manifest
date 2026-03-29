@@ -279,6 +279,61 @@ describe("registerIocFromManifest", () => {
     });
   });
 
+  describe("When the manifest has multiple implementations and one uses the contract key with no default flag", () => {
+    it("should register the contract slot to that implementation", () => {
+      const manifest: IocContractManifest = {
+        Widget: {
+          primaryWidget: {
+            exportName: "buildPrimary",
+            registrationKey: "primaryWidget",
+            modulePath: "primary.ts",
+            sourceFilePath: "primary.ts",
+            relImport: "../primary.js",
+            contractName: "Widget",
+            implementationName: "primaryWidget",
+            lifetime: "singleton",
+            moduleIndex: 0,
+          },
+          secondaryWidget: {
+            exportName: "buildSecondary",
+            registrationKey: "secondaryWidget",
+            modulePath: "secondary.ts",
+            sourceFilePath: "secondary.ts",
+            relImport: "../secondary.js",
+            contractName: "Widget",
+            implementationName: "secondaryWidget",
+            lifetime: "singleton",
+            moduleIndex: 0,
+          },
+          widget: {
+            exportName: "buildWidget",
+            registrationKey: "widget",
+            modulePath: "widget.ts",
+            sourceFilePath: "widget.ts",
+            relImport: "../widget.js",
+            contractName: "Widget",
+            implementationName: "widget",
+            lifetime: "singleton",
+            moduleIndex: 0,
+          },
+        },
+      };
+      const moduleImports: readonly IocModuleNamespace[] = [
+        {
+          buildPrimary: (): { kind: string } => ({ kind: "primary" }),
+          buildSecondary: (): { kind: string } => ({ kind: "secondary" }),
+          buildWidget: (): { kind: string } => ({ kind: "conventional" }),
+        },
+      ];
+      const container = createContainer<{ widget: { kind: string } }>({
+        injectionMode: "PROXY",
+      });
+      registerIocFromManifest(container, manifest, moduleImports);
+      const resolved = container.resolve("widget");
+      assert.strictEqual(resolved.kind, "conventional");
+    });
+  });
+
   describe("When the manifest has multiple implementations but no default binding", () => {
     it("should throw an error that names implementations and registration keys", () => {
       const manifest: IocContractManifest = {
@@ -589,8 +644,8 @@ describe("registerIocFromManifest", () => {
       });
     });
 
-    describe("When the group is an object keyed by registration key", () => {
-      it("should resolve each property from the matching cradle registration", () => {
+    describe("When the group is an object keyed by contract key", () => {
+      it("should resolve each property from leaf registrationKey on the cradle", () => {
       const manifest: IocContractManifest = {
         A: {
           a: {
@@ -623,8 +678,8 @@ describe("registerIocFromManifest", () => {
       };
       const groups: IocGroupsManifest = {
         byKey: {
-          implA: { contractName: "A", registrationKey: "implA" },
-          implB: { contractName: "B", registrationKey: "implB" },
+          a: { contractName: "A", registrationKey: "implA" },
+          b: { contractName: "B", registrationKey: "implB" },
         },
       };
       const moduleImports: readonly IocModuleNamespace[] = [
@@ -634,12 +689,12 @@ describe("registerIocFromManifest", () => {
       const container = createContainer<{
         implA: { tag: string };
         implB: { tag: string };
-        byKey: { implA: { tag: string }; implB: { tag: string } };
+        byKey: { a: { tag: string }; b: { tag: string } };
       }>({ injectionMode: "PROXY" });
       registerIocFromManifest(container, manifest, moduleImports, groups);
       const byKey = container.resolve("byKey");
-      assert.strictEqual(byKey.implA.tag, "a");
-      assert.strictEqual(byKey.implB.tag, "b");
+      assert.strictEqual(byKey.a.tag, "a");
+      assert.strictEqual(byKey.b.tag, "b");
       });
     });
   });

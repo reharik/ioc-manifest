@@ -54,6 +54,42 @@ describe("Inspection reports", () => {
     });
   });
 
+  describe("When the manifest has multiple implementations and one matches the contract registration key", () => {
+    it("should not report a missing-default issue", () => {
+      const manifest: IocContractManifest = {
+        Widget: {
+          primaryWidget: {
+            exportName: "buildPrimary",
+            registrationKey: "primaryWidget",
+            modulePath: "p.ts",
+            sourceFilePath: "p.ts",
+            relImport: "../p.js",
+            contractName: "Widget",
+            implementationName: "primaryWidget",
+            lifetime: "singleton",
+            moduleIndex: 0,
+          },
+          widget: {
+            exportName: "buildWidget",
+            registrationKey: "widget",
+            modulePath: "w.ts",
+            sourceFilePath: "w.ts",
+            relImport: "../w.js",
+            contractName: "Widget",
+            implementationName: "widget",
+            lifetime: "singleton",
+            moduleIndex: 1,
+          },
+        },
+      };
+      const report = buildInspectionReport(manifest);
+      assert.strictEqual(report.manifestIssues.length, 0);
+      const w = report.contracts.find((c) => c.contractName === "Widget");
+      assert.ok(w);
+      assert.strictEqual(w.defaultImplementationName, "widget");
+    });
+  });
+
   describe("When the manifest has multiple implementations without a default", () => {
     it("should surface a manifest validation issue", () => {
       const manifest: IocContractManifest = {

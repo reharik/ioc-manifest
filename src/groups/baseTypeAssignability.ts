@@ -15,6 +15,13 @@ export type AssignableImplementationMember = {
   registrationKey: string;
 };
 
+/** One contract row for `kind: "object"` groups; manifest object keys are `contractKey`. */
+export type ContractDefaultGroupMember = {
+  contractKey: string;
+  contractName: string;
+  registrationKey: string;
+};
+
 const getTopLevelTypeDeclaration = (
   sourceFile: ts.SourceFile,
   typeName: string,
@@ -163,5 +170,49 @@ export const collectImplementationMembersAssignableToBase = (
     }
   }
   members.sort((a, b) => a.registrationKey.localeCompare(b.registrationKey));
+  return members;
+};
+
+/**
+ * For each contract whose declared type is assignable to `baseType`, one member using the
+ * contract's default implementation registration key. Manifest keys are the contract key
+ * (camel-cased contract name), not implementation registration keys.
+ */
+export const collectContractDefaultMembersAssignableToBase = (
+  checker: ts.TypeChecker,
+  program: ts.Program,
+  generatedDir: string,
+  plans: readonly ResolvedContractRegistration[],
+  baseType: ts.Type,
+): ContractDefaultGroupMember[] => {
+  const members: ContractDefaultGroupMember[] = [];
+  for (const plan of plans) {
+    const contractType = getContractDeclaredType(
+      checker,
+      program,
+      generatedDir,
+      plan,
+    );
+    if (contractType === undefined) {
+      continue;
+    }
+    if (!checker.isTypeAssignableTo(contractType, baseType)) {
+      continue;
+    }
+    const defaultImpl = plan.implementations.find(
+      (impl) => impl.implementationName === plan.defaultImplementationName,
+    );
+    if (defaultImpl === undefined) {
+      throw new Error(
+        `[ioc-config] Contract ${JSON.stringify(plan.contractName)} has defaultImplementationName ${JSON.stringify(plan.defaultImplementationName)} but no matching implementation row (internal registration plan inconsistency).`,
+      );
+    }
+    members.push({
+      contractKey: plan.contractKey,
+      contractName: plan.contractName,
+      registrationKey: defaultImpl.registrationKey,
+    });
+  }
+  members.sort((a, b) => a.contractKey.localeCompare(b.contractKey));
   return members;
 };

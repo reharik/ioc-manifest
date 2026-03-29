@@ -168,4 +168,73 @@ describe("writeManifest", () => {
       );
     });
   });
+
+  describe("When a contract has multiple implementations", () => {
+    it("should emit only the contract default and collection keys on IocGeneratedTypes, not each registration key", async () => {
+      const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ioc-write-manifest-"));
+      const generatedDir = path.join(tempRoot, "src", "generated");
+      await fs.mkdir(generatedDir, { recursive: true });
+      const manifestOutPath = path.join(generatedDir, "ioc-manifest.ts");
+
+      const acceptedFactories: DiscoveredFactory[] = [
+        mkFactory({
+          contractName: "Widget",
+          implementationName: "primaryWidget",
+          registrationKey: "primaryWidget",
+          modulePath: "fixtures/p.ts",
+          relImport: "../fixtures/p.js",
+        }),
+        mkFactory({
+          contractName: "Widget",
+          implementationName: "widget",
+          registrationKey: "widget",
+          modulePath: "fixtures/w.ts",
+          relImport: "../fixtures/w.js",
+        }),
+      ];
+      const plans: ResolvedContractRegistration[] = [
+        mkPlan({
+          contractName: "Widget",
+          contractTypeRelImport: "../fixtures/contracts.js",
+          contractKey: "widget",
+          collectionKey: "widgets",
+          defaultImplementationName: "widget",
+          implementations: [
+            {
+              implementationName: "primaryWidget",
+              exportName: "buildPrimary",
+              modulePath: "fixtures/p.ts",
+              relImport: "../fixtures/p.js",
+              registrationKey: "primaryWidget",
+              lifetime: "singleton",
+            },
+            {
+              implementationName: "widget",
+              exportName: "buildWidget",
+              modulePath: "fixtures/w.ts",
+              relImport: "../fixtures/w.js",
+              registrationKey: "widget",
+              lifetime: "singleton",
+            },
+          ],
+        }),
+      ];
+
+      await writeManifest(
+        acceptedFactories,
+        plans,
+        undefined,
+        manifestOutPath,
+        "ioc-manifest",
+      );
+
+      const typesSource = await fs.readFile(
+        path.join(generatedDir, "ioc-registry.types.ts"),
+        "utf8",
+      );
+      assert.match(typesSource, /\bwidget:\s*Widget\b/);
+      assert.match(typesSource, /\bwidgets:\s*Record</);
+      assert.ok(!typesSource.includes("primaryWidget: Widget"));
+    });
+  });
 });

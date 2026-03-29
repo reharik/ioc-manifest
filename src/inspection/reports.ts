@@ -1,3 +1,4 @@
+import { selectDefaultImplementationName } from "../core/defaultImplementationSelection.js";
 import type {
   IocContainerContractsView,
   IocContainerImplementationView,
@@ -58,35 +59,60 @@ export type InspectionReport = {
 };
 
 const pickDefaultRegistration = (
+  contractName: string,
   impls: Record<string, ModuleFactoryManifestMetadata>,
 ): { name: string; meta: ModuleFactoryManifestMetadata } | undefined => {
   const list = Object.values(impls);
-  const marked = list.filter((m) => m.default === true);
-  if (marked.length === 1) {
-    const meta = marked[0]!;
-    return { name: meta.implementationName, meta };
+  if (list.length === 0) {
+    return undefined;
   }
-  if (list.length === 1) {
-    const meta = list[0]!;
+  try {
+    const name = selectDefaultImplementationName(
+      contractName,
+      list.map((m) => ({
+        implementationName: m.implementationName,
+        registrationKey: m.registrationKey,
+        ...(m.default === true ? { default: true as const } : {}),
+      })),
+    );
+    const meta = list.find((m) => m.implementationName === name);
+    if (meta === undefined) {
+      return undefined;
+    }
     return { name: meta.implementationName, meta };
+  } catch {
+    return undefined;
   }
-  return undefined;
 };
 
 const pickDefaultLean = (
+  contractName: string,
   impls: Record<string, IocContainerImplementationView>,
 ): { name: string; meta: IocContainerImplementationView } | undefined => {
   const implKeys = Object.keys(impls).sort((a, b) => a.localeCompare(b));
-  if (implKeys.length === 1) {
-    const k = implKeys[0]!;
-    return { name: k, meta: impls[k]! };
+  if (implKeys.length === 0) {
+    return undefined;
   }
-  const withDefault = implKeys.filter((k) => impls[k]!.default === true);
-  if (withDefault.length === 1) {
-    const k = withDefault[0]!;
-    return { name: k, meta: impls[k]! };
+  try {
+    const name = selectDefaultImplementationName(
+      contractName,
+      implKeys.map((k) => {
+        const row = impls[k]!;
+        return {
+          implementationName: k,
+          registrationKey: row.registrationKey,
+          ...(row.default === true ? { default: true as const } : {}),
+        };
+      }),
+    );
+    const meta = impls[name];
+    if (meta === undefined) {
+      return undefined;
+    }
+    return { name, meta };
+  } catch {
+    return undefined;
   }
-  return undefined;
 };
 
 export const buildInspectionReport = (
@@ -110,7 +136,7 @@ export const buildInspectionReport = (
       const implKeys = Object.keys(impls).sort((a, b) => a.localeCompare(b));
       if (isRegistrationManifest(contracts)) {
         const full = impls as Record<string, ModuleFactoryManifestMetadata>;
-        const selected = pickDefaultRegistration(full);
+        const selected = pickDefaultRegistration(contractName, full);
         return {
           contractName,
           defaultImplementationName: selected?.name,
@@ -123,13 +149,13 @@ export const buildInspectionReport = (
               lifecycle: m.lifetime,
               sourceFilePath: m.sourceFilePath ?? m.modulePath,
               exportName: m.exportName,
-              isDefault: m.default === true || implKeys.length === 1,
+              isDefault: selected?.name === m.implementationName,
             };
           }),
         };
       }
       const lean = impls as Record<string, IocContainerImplementationView>;
-      const selected = pickDefaultLean(lean);
+      const selected = pickDefaultLean(contractName, lean);
       return {
         contractName,
         defaultImplementationName: selected?.name,
@@ -142,7 +168,7 @@ export const buildInspectionReport = (
             lifecycle: m.lifetime,
             sourceFilePath: m.sourceFile,
             exportName: m.exportName,
-            isDefault: m.default === true || implKeys.length === 1,
+            isDefault: selected?.name === k,
           };
         }),
       };
