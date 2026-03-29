@@ -23,7 +23,7 @@
     "dist",
     "**/*.test.ts",
     "**/*.integration.test.ts",
-    "src/bundles/test-fixtures/**",
+    "src/groups/test-fixtures/**",
     "src/generator/test-fixtures/**"
   ]
 }

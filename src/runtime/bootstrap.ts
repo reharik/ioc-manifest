@@ -6,8 +6,9 @@ import {
   type NameAndRegistrationPair,
 } from "awilix";
 import type {
-  IocBundlesManifest,
   IocContractManifest,
+  IocGroupNodeManifest,
+  IocGroupsManifest,
   IocModuleNamespace,
   ModuleFactoryManifestMetadata,
 } from "../core/manifest.js";
@@ -252,43 +253,43 @@ const registerImplementationCollections = <TCradle extends object>(
   }
 };
 
-const resolveBundleNodeFromCradle = <TCradle extends object>(
+const resolveGroupNodeFromCradle = <TCradle extends object>(
   cradle: TCradle,
-  node: IocBundlesManifest[string],
+  node: IocGroupNodeManifest,
 ): unknown => {
   if (Array.isArray(node)) {
     return node.map((leaf) => cradle[leaf.registrationKey as keyof TCradle]);
   }
   const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(node)) {
-    out[key] = resolveBundleNodeFromCradle(cradle, value);
+  for (const [propKey, leaf] of Object.entries(node)) {
+    out[propKey] = cradle[leaf.registrationKey as keyof TCradle];
   }
   return out;
 };
 
-const registerBundles = <TCradle extends object>(
+const registerGroups = <TCradle extends object>(
   container: AwilixContainer<TCradle>,
-  bundlesManifest: IocBundlesManifest | undefined,
+  groupsManifest: IocGroupsManifest | undefined,
   keyIndex: RegistrationKeyIndex,
 ): void => {
-  if (bundlesManifest === undefined) {
+  if (groupsManifest === undefined) {
     return;
   }
-  const rootKeys = Object.keys(bundlesManifest).sort((a, b) =>
+  const rootKeys = Object.keys(groupsManifest).sort((a, b) =>
     a.localeCompare(b),
   );
   for (const key of rootKeys) {
-    const node = bundlesManifest[key]!;
+    const node = groupsManifest[key]!;
     registerPair<TCradle>(container, {
       [key]: asFunction(
         (cradle: TCradle) => {
           pushIocResolutionFrame({
             contractName: key,
-            implementationName: "(bundle)",
+            implementationName: "(group)",
             registrationKey: key,
           });
           try {
-            return resolveBundleNodeFromCradle(cradle, node);
+            return resolveGroupNodeFromCradle(cradle, node);
           } catch (cause: unknown) {
             return propagateIocResolutionFailure({
               cause,
@@ -311,12 +312,13 @@ const registerBundles = <TCradle extends object>(
  * 1. concrete implementation factories
  * 2. default contract aliases
  * 3. multi-implementation collections
+ * 4. groups (base-type discovery)
  */
 export const registerIocFromManifest = <TCradle extends object>(
   container: AwilixContainer<TCradle>,
   manifestByContract: IocContractManifest,
   moduleImports: readonly IocModuleNamespace[],
-  bundlesManifest?: IocBundlesManifest,
+  groupsManifest?: IocGroupsManifest,
 ): void => {
   const keyIndex = buildRegistrationKeyIndex(manifestByContract);
   registerImplementationFactories(
@@ -331,5 +333,5 @@ export const registerIocFromManifest = <TCradle extends object>(
     manifestByContract,
     keyIndex,
   );
-  registerBundles(container, bundlesManifest, keyIndex);
+  registerGroups(container, groupsManifest, keyIndex);
 };

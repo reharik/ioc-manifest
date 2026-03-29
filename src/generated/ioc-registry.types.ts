@@ -24,13 +24,7 @@ export interface IocGeneratedTypes {
   primaryWidget: Widget;
   secondaryWidget: Widget;
   widgets: Record<"primaryWidget" | "secondaryWidget", Widget>;
-  services: {
-    album: ReadonlyArray<AlbumService>;
-    media: {
-      read: ReadonlyArray<MediaStorage>;
-    };
-    read: ReadonlyArray<AlbumService | MediaStorage>;
-  };
+  mediaStoragesGroup: ReadonlyArray<MediaStorage>;
 }
 
 export type IocGeneratedCradle = IocGeneratedTypes;

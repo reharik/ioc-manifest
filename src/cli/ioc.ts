@@ -6,7 +6,6 @@ import {
   tryLoadIocConfig,
 } from "../config/loadIocConfig.js";
 import type {
-  IocBundleArraysInsightManifest,
   IocContractManifest,
   IocGeneratedContainerManifest,
 } from "../core/manifest.js";
@@ -15,17 +14,15 @@ import {
   resolveManifestOptions,
 } from "../generator/manifestOptions.js";
 import {
-  buildBundleReport,
   buildDiscoveryReport,
   buildInspectionReport,
-  formatBundleReport,
   formatDiscoveryReport,
   formatInspectionReport,
 } from "../inspection/index.js";
 import { runDiscoveryAnalysis } from "../inspection/runDiscoveryAnalysis.js";
 
 type ParsedCli = {
-  command: "inspect" | "bundles";
+  command: "inspect";
   iocConfigPath?: string;
   discovery: boolean;
 };
@@ -33,14 +30,12 @@ type ParsedCli = {
 const parseArgs = (argv: string[]): ParsedCli => {
   const args = argv.slice(2);
   if (args.length === 0) {
-    throw new Error(
-      "Usage: ioc <inspect|bundles> [--discovery] [--config <path>]",
-    );
+    throw new Error("Usage: ioc inspect [--discovery] [--config <path>]");
   }
   const command = args[0];
-  if (command !== "inspect" && command !== "bundles") {
+  if (command !== "inspect") {
     throw new Error(
-      `Unknown command ${JSON.stringify(command)}. Use inspect or bundles.`,
+      `Unknown command ${JSON.stringify(command)}. Use inspect.`,
     );
   }
   let iocConfigPath: string | undefined;
@@ -60,9 +55,6 @@ const parseArgs = (argv: string[]): ParsedCli => {
       throw new Error(`Unknown flag ${JSON.stringify(a)}`);
     }
   }
-  if (command !== "inspect" && discovery) {
-    throw new Error("Flag --discovery is only valid for `ioc inspect`.");
-  }
   return { command, iocConfigPath, discovery };
 };
 
@@ -72,7 +64,6 @@ type GeneratedMainManifestModule = {
 
 type GeneratedSupportManifestModule = {
   iocRegistrationManifest: IocContractManifest;
-  iocBundleArraysInsight?: IocBundleArraysInsightManifest;
 };
 
 const loadGeneratedManifestModules = async (
@@ -102,24 +93,18 @@ const main = async (): Promise<void> => {
     cli.iocConfigPath,
   );
 
-  if (cli.command === "inspect") {
-    if (cli.discovery) {
-      const analysis = await runDiscoveryAnalysis({
-        iocConfigPath: cli.iocConfigPath,
-      });
-      const report = buildDiscoveryReport(analysis);
-      console.log(formatDiscoveryReport(report));
-      return;
-    }
-    const report = buildInspectionReport(mainMod.iocManifest.contracts, {
-      registrationManifest: support.iocRegistrationManifest,
+  if (cli.discovery) {
+    const analysis = await runDiscoveryAnalysis({
+      iocConfigPath: cli.iocConfigPath,
     });
-    console.log(formatInspectionReport(report));
+    const report = buildDiscoveryReport(analysis);
+    console.log(formatDiscoveryReport(report));
     return;
   }
-
-  const report = buildBundleReport(support.iocBundleArraysInsight ?? undefined);
-  console.log(formatBundleReport(report));
+  const report = buildInspectionReport(mainMod.iocManifest.contracts, {
+    registrationManifest: support.iocRegistrationManifest,
+  });
+  console.log(formatInspectionReport(report));
 };
 
 main().catch((error: unknown) => {

@@ -8,17 +8,13 @@ import {
 import type { DiscoveredFactory } from "./types.js";
 import type { ResolvedContractRegistration } from "./resolveRegistrationPlan.js";
 import type {
-  IocBundleArraysInsightManifest,
   IocContainerContractsView,
   IocContainerImplementationView,
   IocContractManifest,
-  IocBundlesManifest,
+  IocGroupNodeManifest,
+  IocGroupsManifest,
   ModuleFactoryManifestMetadata,
 } from "../core/manifest.js";
-import type {
-  ResolvedBundleNode,
-  ResolvedBundleTree,
-} from "../bundles/resolveBundlePlan.js";
 
 export type IocRegistryTypesBuildContext = {
   program: ts.Program;
@@ -306,22 +302,23 @@ const serializeRegistrationManifestValue = (
 
 const serializeMainIocManifestSource = (
   lean: IocContainerContractsView,
-  bundlesManifest: IocBundlesManifest | undefined,
+  groupsManifest: IocGroupsManifest | undefined,
   manifestImportFromPackage: string,
   importLines: string[],
   moduleArrayLines: string[],
 ): string => {
   const header = `/* AUTO-GENERATED. DO NOT EDIT.
-Primary container manifest (human-oriented). Registration bindings and bundle insight: ioc-manifest.support.ts
+Primary container manifest (human-oriented). Registration bindings: ioc-manifest.support.ts
 Re-run \`npm run gen:manifest\` after adding/removing injectable factories.
 */
 `;
 
   const contractsBlock = serializeLeanContractsObject(lean);
-  const closing =
-    bundlesManifest === undefined
-      ? "}"
-      : `  bundles: ${JSON.stringify(bundlesManifest, null, 2)},\n}`;
+  const groupsLine =
+    groupsManifest === undefined
+      ? ""
+      : `  groups: ${JSON.stringify(groupsManifest, null, 2)},\n`;
+  const closing = groupsLine === "" ? "}" : `${groupsLine}}`;
 
   return `${header}import type {
   IocGeneratedContainerManifest,
@@ -342,11 +339,10 @@ ${closing} as const satisfies IocGeneratedContainerManifest;
 
 const serializeSupportManifestSource = (
   registrationManifest: IocContractManifest,
-  bundleArraysInsight: IocBundleArraysInsightManifest | undefined,
   manifestImportFromPackage: string,
 ): string => {
   const header = `/* AUTO-GENERATED. DO NOT EDIT.
-Runtime registration bindings (moduleIndex, relImport) and bundle tooling insight.
+Runtime registration bindings (moduleIndex, relImport).
 Used by registerIocFromManifest(...) and inspection helpers. See ioc-manifest.ts for the human-oriented view.
 Re-run \`npm run gen:manifest\` after changing factories or IoC config.
 */
@@ -354,30 +350,16 @@ Re-run \`npm run gen:manifest\` after changing factories or IoC config.
 
   const registrationBody = serializeRegistrationManifestValue(registrationManifest);
 
-  const insightLine =
-    bundleArraysInsight === undefined
-      ? "export const iocBundleArraysInsight: IocBundleArraysInsightManifest | undefined = undefined;"
-      : `export const iocBundleArraysInsight: IocBundleArraysInsightManifest = ${JSON.stringify(
-          bundleArraysInsight,
-          null,
-          2,
-        )};`;
-
-  return `${header}import type {
-  IocBundleArraysInsightManifest,
-  IocContractManifest,
-} from "${manifestImportFromPackage}";
+  return `${header}import type { IocContractManifest } from "${manifestImportFromPackage}";
 
 export const iocRegistrationManifest: IocContractManifest =
 ${registrationBody};
-
-${insightLine}
 `;
 };
 
 const buildCradleTypeSource = (
   plans: ResolvedContractRegistration[],
-  bundlesPlan: ResolvedBundleTree | undefined,
+  groupsManifest: IocGroupsManifest | undefined,
   registryTypesBuildContext?: IocRegistryTypesBuildContext,
 ): string => {
   const importLines: string[] = [];
@@ -480,10 +462,7 @@ const buildCradleTypeSource = (
   const tsPropName = (key: string): string =>
     /^[a-zA-Z_$][\w$]*$/.test(key) ? key : JSON.stringify(key);
 
-  const appendBundleNodeType = (
-    node: ResolvedBundleNode,
-    indent: string,
-  ): string => {
+  const appendGroupNodeType = (node: IocGroupNodeManifest, indent: string): string => {
     if (Array.isArray(node)) {
       const seen = new Set<string>();
       const order: string[] = [];
@@ -498,23 +477,23 @@ const buildCradleTypeSource = (
     }
 
     const lines: string[] = [`${indent}{`];
-    Object.entries(node).forEach(([key, value]) => {
-      lines.push(
-        `${indent}  ${tsPropName(key)}: ${appendBundleNodeType(value, `${indent}  `)};`,
-      );
-    });
+    const sortedKeys = Object.keys(node).sort((a, b) => a.localeCompare(b));
+    for (const key of sortedKeys) {
+      const leaf = node[key]!;
+      lines.push(`${indent}  ${tsPropName(key)}: ${leaf.contractName};`);
+    }
     lines.push(`${indent}}`);
     return lines.join("\n");
   };
 
-  if (bundlesPlan !== undefined) {
-    const bundleRootKeys = Object.keys(bundlesPlan).sort((a, b) =>
+  if (groupsManifest !== undefined) {
+    const groupRootKeys = Object.keys(groupsManifest).sort((a, b) =>
       a.localeCompare(b),
     );
-    for (const key of bundleRootKeys) {
-      const node = bundlesPlan[key]!;
+    for (const key of groupRootKeys) {
+      const node = groupsManifest[key]!;
       propertyLines.push(
-        `  ${tsPropName(key)}: ${appendBundleNodeType(node, "")};`,
+        `  ${tsPropName(key)}: ${appendGroupNodeType(node, "")};`,
       );
     }
   }
@@ -553,8 +532,7 @@ const replaceFileFromTemp = async (
 export const writeManifest = async (
   acceptedFactories: DiscoveredFactory[],
   plans: ResolvedContractRegistration[],
-  bundlesPlan: ResolvedBundleTree | undefined,
-  bundleArraysInsight: IocBundleArraysInsightManifest | undefined,
+  groupsManifest: IocGroupsManifest | undefined,
   manifestOutPath: string,
   manifestImportFromPackage: string,
   options?: WriteManifestOptions,
@@ -568,7 +546,7 @@ export const writeManifest = async (
     moduleIndexByPath,
   );
   const leanContracts = plansToLeanContainerContracts(plans);
-  const iocBundlesManifest: IocBundlesManifest | undefined = bundlesPlan;
+  const iocGroupsManifest: IocGroupsManifest | undefined = groupsManifest;
 
   const importLines = modules.map((moduleEntry) => {
     const alias = aliasByPath.get(moduleEntry.modulePath);
@@ -592,7 +570,7 @@ export const writeManifest = async (
 
   const mainSource = serializeMainIocManifestSource(
     leanContracts,
-    iocBundlesManifest,
+    iocGroupsManifest,
     manifestImportFromPackage,
     importLines,
     moduleArrayLines,
@@ -604,7 +582,6 @@ export const writeManifest = async (
   );
   const supportSource = serializeSupportManifestSource(
     iocRegistrationManifest,
-    bundleArraysInsight,
     manifestImportFromPackage,
   );
 
@@ -617,7 +594,7 @@ export const writeManifest = async (
   );
   const typesSource = buildCradleTypeSource(
     plans,
-    bundlesPlan,
+    iocGroupsManifest,
     options?.registryTypesBuildContext,
   );
   await replaceFileFromTemp(typesPath, typesSource);

@@ -1,10 +1,6 @@
 export {
-  buildBundleReport,
   buildDiscoveryReport,
   buildInspectionReport,
-  bundleIssuesFromAnalysis,
-  type BundleReport,
-  type BundleReportRow,
   type DiscoveryExportReportRow,
   type DiscoveryReport,
   type DiscoveryReportInput,
@@ -17,12 +13,10 @@ export {
   type DiscoveryAnalysisResult,
 } from "./runDiscoveryAnalysis.js";
 export {
-  formatBundleReport,
   formatDiscoveryReport,
   formatInspectionReport,
 } from "./formatReports.js";
 export {
-  validateBundleInsight,
   validateContainerContractsView,
   validateManifest,
   type ManifestValidationIssue,

@@ -369,7 +369,7 @@ export const applyIocResolutionErrorMessage = (
 };
 
 /**
- * Single entry from factory/collection/bundle boundaries: structured propagation, no nested string wrapping.
+ * Single entry from factory/collection/group boundaries: structured propagation, no nested string wrapping.
  */
 export const propagateIocResolutionFailure = (params: {
   cause: unknown;

@@ -1,5 +1,5 @@
 /* AUTO-GENERATED. DO NOT EDIT.
-Primary container manifest (human-oriented). Registration bindings and bundle insight: ioc-manifest.support.ts
+Primary container manifest (human-oriented). Registration bindings: ioc-manifest.support.ts
 Re-run `npm run gen:manifest` after adding/removing injectable factories.
 */
 import type {
@@ -108,32 +108,16 @@ export const iocManifest = {
       },
     },
   },
-  bundles: {
-    services: {
-      album: [
-        {
-          contractName: "AlbumService",
-          registrationKey: "albumService",
-        },
-      ],
-      media: {
-        read: [
-          {
-            contractName: "MediaStorage",
-            registrationKey: "mediaStorage",
-          },
-        ],
+  groups: {
+    mediaStoragesGroup: [
+      {
+        contractName: "MediaStorage",
+        registrationKey: "localMediaStorage",
       },
-      read: [
-        {
-          contractName: "AlbumService",
-          registrationKey: "albumService",
-        },
-        {
-          contractName: "MediaStorage",
-          registrationKey: "mediaStorage",
-        },
-      ],
-    },
+      {
+        contractName: "MediaStorage",
+        registrationKey: "s3MediaStorage",
+      },
+    ],
   },
 } as const satisfies IocGeneratedContainerManifest;

@@ -1,7 +1,4 @@
-import type { BundlePlanAnalysis, BundlePlanIssue } from "../bundles/resolveBundlePlan.js";
-import { formatBundlePlanIssue } from "../bundles/resolveBundlePlan.js";
 import type {
-  IocBundleArraysInsightManifest,
   IocContainerContractsView,
   IocContainerImplementationView,
   IocContractManifest,
@@ -13,7 +10,6 @@ import type {
 } from "../generator/discoverFactories/discoveryOutcomeTypes.js";
 import type { ManifestValidationIssue } from "./validateManifest.js";
 import {
-  validateBundleInsight,
   validateContainerContractsView,
   validateManifest,
 } from "./validateManifest.js";
@@ -229,56 +225,3 @@ export const buildDiscoveryReport = (
     }));
   return { files };
 };
-
-export type BundleReportRow = {
-  bundlePath: string;
-  declaredMembers: readonly unknown[];
-  expandedMembers: readonly { contractName: string; registrationKey: string }[];
-  validationMessages: readonly string[];
-};
-
-export type BundleReport = {
-  bundles: readonly BundleReportRow[];
-  issues: readonly ManifestValidationIssue[];
-};
-
-export const buildBundleReport = (
-  insight: IocBundleArraysInsightManifest | undefined,
-  bundleAnalysis?: BundlePlanAnalysis,
-): BundleReport => {
-  const insightIssues = validateBundleInsight(insight);
-  const analysisMessages: string[] = [];
-  if (bundleAnalysis !== undefined && bundleAnalysis.ok === false) {
-    for (const issue of bundleAnalysis.issues) {
-      analysisMessages.push(formatBundlePlanIssue(issue));
-    }
-  }
-
-  const bundles: BundleReportRow[] =
-    insight === undefined
-      ? []
-      : [...insight]
-          .sort((a, b) => a.bundlePath.localeCompare(b.bundlePath))
-          .map((row) => ({
-            bundlePath: row.bundlePath,
-            declaredMembers: row.declaredMembers,
-            expandedMembers: row.expandedMembers,
-            validationMessages: [],
-          }));
-
-  const syntheticIssues: ManifestValidationIssue[] = analysisMessages.map(
-    (message, i) => ({
-      code: `bundle_analysis_${i}`,
-      message,
-    }),
-  );
-
-  return {
-    bundles,
-    issues: [...insightIssues, ...syntheticIssues],
-  };
-};
-
-export const bundleIssuesFromAnalysis = (
-  issues: readonly BundlePlanIssue[],
-): string[] => issues.map((i) => formatBundlePlanIssue(i));

@@ -1,12 +1,9 @@
 /* AUTO-GENERATED. DO NOT EDIT.
-Runtime registration bindings (moduleIndex, relImport) and bundle tooling insight.
+Runtime registration bindings (moduleIndex, relImport).
 Used by registerIocFromManifest(...) and inspection helpers. See ioc-manifest.ts for the human-oriented view.
 Re-run `npm run gen:manifest` after changing factories or IoC config.
 */
-import type {
-  IocBundleArraysInsightManifest,
-  IocContractManifest,
-} from "ioc-manifest";
+import type { IocContractManifest } from "ioc-manifest";
 
 export const iocRegistrationManifest: IocContractManifest = {
   AlbumService: {
@@ -125,47 +122,3 @@ export const iocRegistrationManifest: IocContractManifest = {
     },
   },
 };
-
-export const iocBundleArraysInsight: IocBundleArraysInsightManifest = [
-  {
-    bundlePath: "services.album",
-    declaredMembers: ["AlbumService"],
-    expandedMembers: [
-      {
-        contractName: "AlbumService",
-        registrationKey: "albumService",
-      },
-    ],
-  },
-  {
-    bundlePath: "services.media.read",
-    declaredMembers: ["MediaStorage"],
-    expandedMembers: [
-      {
-        contractName: "MediaStorage",
-        registrationKey: "mediaStorage",
-      },
-    ],
-  },
-  {
-    bundlePath: "services.read",
-    declaredMembers: [
-      {
-        $bundleRef: "services.album",
-      },
-      {
-        $bundleRef: "services.media.read",
-      },
-    ],
-    expandedMembers: [
-      {
-        contractName: "AlbumService",
-        registrationKey: "albumService",
-      },
-      {
-        contractName: "MediaStorage",
-        registrationKey: "mediaStorage",
-      },
-    ],
-  },
-];

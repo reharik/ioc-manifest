@@ -6,15 +6,6 @@ export {
   type IocOverride,
 } from "./config/iocConfig.js";
 export {
-  type IocBundleDiscoveryByBase,
-  type IocBundleDiscoverMarker,
-  type IocBundleDiscoverySpec,
-  type IocBundleLeaf,
-  type IocBundleNode,
-  type IocBundleReference,
-  type IocBundlesConfig,
-} from "./bundles/index.js";
-export {
   loadIocConfig,
   resolveIocConfigPath,
   tryLoadIocConfig,
@@ -32,27 +23,30 @@ export {
 } from "./generator/manifestOptions.js";
 export type { ManifestRuntimePaths } from "./generator/manifestPaths.js";
 export {
-  analyzeBundlePlan,
-  buildBundlePlan,
-  formatBundlePlanIssue,
-  formatBundlePlanIssues,
-  type BundleDiscoveryBuildContext,
-  type BundlePlanAnalysis,
-  type BundlePlanIssue,
-  type BundlePlanResult,
-} from "./bundles/resolveBundlePlan.js";
+  analyzeGroupPlan,
+  buildGroupPlan,
+  formatGroupPlanIssue,
+  formatGroupPlanIssues,
+  groupPlanToManifestNode,
+  type GroupDiscoveryBuildContext,
+  type GroupPlan,
+  type GroupPlanAnalysis,
+  type GroupPlanIssue,
+  type GroupPlanResult,
+  type IocGroupDefinition,
+  type IocGroupKind,
+  type IocGroupsConfig,
+} from "./groups/resolveGroupPlan.js";
+export type { AssignableImplementationMember } from "./groups/baseTypeAssignability.js";
+export { shouldIncludeImplInCollectionGroup } from "./groups/baseTypeAssignability.js";
 export {
-  buildBundleReport,
   buildDiscoveryReport,
   buildInspectionReport,
-  bundleIssuesFromAnalysis,
-  formatBundleReport,
   formatDiscoveryReport,
   formatInspectionReport,
   runDiscoveryAnalysis,
   validateContainerContractsView,
   validateManifest,
-  type BundleReport,
   type DiscoveryAnalysisResult,
   type DiscoveryReport,
   type DiscoveryReportInput,

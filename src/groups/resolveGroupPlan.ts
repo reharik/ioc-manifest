@@ -1,0 +1,322 @@
+import type * as ts from "typescript";
+import {
+  collectImplementationMembersAssignableToBase,
+  resolveDeclaredBaseType,
+  shouldIncludeImplInCollectionGroup,
+  type AssignableImplementationMember,
+} from "./baseTypeAssignability.js";
+import type {
+  IocGroupNodeManifest,
+  IocGroupsManifest,
+} from "../core/manifest.js";
+import type { ResolvedContractRegistration } from "../generator/resolveRegistrationPlan.js";
+
+/** TypeScript program + generated dir path contract types resolve against. */
+export type GroupDiscoveryBuildContext = {
+  program: ts.Program;
+  generatedDir: string;
+};
+
+export type IocGroupKind = "collection" | "object";
+
+export type IocGroupDefinition = {
+  kind: IocGroupKind;
+  baseType: string;
+};
+
+export type IocGroupsConfig = Record<string, IocGroupDefinition>;
+
+export type GroupPlan =
+  | {
+      groupName: string;
+      kind: "collection";
+      baseType: string;
+      members: readonly AssignableImplementationMember[];
+    }
+  | {
+      groupName: string;
+      kind: "object";
+      baseType: string;
+      members: readonly AssignableImplementationMember[];
+    };
+
+export type GroupPlanIssue =
+  | { kind: "groups_not_object" }
+  | { kind: "group_invalid_entry"; groupName: string }
+  | { kind: "group_unknown_base_type"; groupName: string; message: string }
+  | { kind: "group_no_matches"; groupName: string; baseType: string }
+  | {
+      kind: "group_duplicate_registration_key";
+      groupName: string;
+      registrationKey: string;
+    }
+  | { kind: "group_root_key_collision"; key: string }
+  | { kind: "group_discovery_missing_context" };
+
+export type GroupPlanResult = {
+  plans: readonly GroupPlan[];
+  manifest: IocGroupsManifest;
+};
+
+const collectReservedCradleKeys = (
+  plans: readonly ResolvedContractRegistration[],
+): Set<string> => {
+  const reserved = new Set<string>();
+  for (const plan of plans) {
+    reserved.add(plan.contractKey);
+    if (plan.collectionKey !== undefined) {
+      reserved.add(plan.collectionKey);
+    }
+    for (const impl of plan.implementations) {
+      reserved.add(impl.registrationKey);
+    }
+  }
+  return reserved;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isValidGroupKind = (value: unknown): value is IocGroupKind =>
+  value === "collection" || value === "object";
+
+const validateGroupDefinition = (
+  groupName: string,
+  raw: unknown,
+): GroupPlanIssue | undefined => {
+  if (!isRecord(raw)) {
+    return { kind: "group_invalid_entry", groupName };
+  }
+  const kind = raw.kind;
+  const baseType = raw.baseType;
+  if (!isValidGroupKind(kind)) {
+    return { kind: "group_invalid_entry", groupName };
+  }
+  if (typeof baseType !== "string" || baseType.length === 0) {
+    return { kind: "group_invalid_entry", groupName };
+  }
+  const extra = Object.keys(raw).filter((k) => k !== "kind" && k !== "baseType");
+  if (extra.length > 0) {
+    return { kind: "group_invalid_entry", groupName };
+  }
+  return undefined;
+};
+
+export const groupPlanToManifestNode = (plan: GroupPlan): IocGroupNodeManifest => {
+  if (plan.kind === "collection") {
+    return plan.members.map((m) => ({
+      contractName: m.contractName,
+      registrationKey: m.registrationKey,
+    }));
+  }
+  const out: Record<string, { contractName: string; registrationKey: string }> = {};
+  for (const m of plan.members) {
+    out[m.registrationKey] = {
+      contractName: m.contractName,
+      registrationKey: m.registrationKey,
+    };
+  }
+  return out;
+};
+
+const buildObjectMembersOrIssue = (
+  groupName: string,
+  members: readonly AssignableImplementationMember[],
+): { ok: true; members: AssignableImplementationMember[] } | { ok: false; issue: GroupPlanIssue } => {
+  const seen = new Set<string>();
+  for (const m of members) {
+    if (seen.has(m.registrationKey)) {
+      return {
+        ok: false,
+        issue: {
+          kind: "group_duplicate_registration_key",
+          groupName,
+          registrationKey: m.registrationKey,
+        },
+      };
+    }
+    seen.add(m.registrationKey);
+  }
+  return { ok: true, members: [...members] };
+};
+
+export const formatGroupPlanIssue = (issue: GroupPlanIssue): string => {
+  switch (issue.kind) {
+    case "groups_not_object":
+      return "[ioc-config] groups must be an object when set";
+    case "group_invalid_entry":
+      return `[ioc-config] groups.${JSON.stringify(issue.groupName)} must be { kind: "collection" | "object", baseType: string }`;
+    case "group_unknown_base_type":
+      return `[ioc-config] groups.${JSON.stringify(issue.groupName)}: ${issue.message}`;
+    case "group_no_matches":
+      return `[ioc-config] groups.${JSON.stringify(issue.groupName)}: no implementations found for base type ${JSON.stringify(issue.baseType)}`;
+    case "group_duplicate_registration_key":
+      return `[ioc-config] groups.${JSON.stringify(issue.groupName)}: duplicate registration key ${JSON.stringify(issue.registrationKey)} in object group (two assignable implementations share the same key)`;
+    case "group_root_key_collision":
+      return `[ioc-config] groups root key ${JSON.stringify(issue.key)} collides with an existing Awilix registration key`;
+    case "group_discovery_missing_context":
+      return "[ioc-config] groups require TypeScript program context. Use the IoC manifest generator or pass GroupDiscoveryBuildContext into buildGroupPlan.";
+    default: {
+      const _exhaustive: never = issue;
+      return String(_exhaustive);
+    }
+  }
+};
+
+export const formatGroupPlanIssues = (issues: readonly GroupPlanIssue[]): string =>
+  issues.map((i) => formatGroupPlanIssue(i)).join("\n");
+
+const runGroupPlan = (
+  groups: unknown,
+  plans: readonly ResolvedContractRegistration[],
+  discovery: GroupDiscoveryBuildContext | undefined,
+):
+  | { ok: true; plans: GroupPlan[]; manifest: IocGroupsManifest }
+  | { ok: false; issues: GroupPlanIssue[] } => {
+  if (!isRecord(groups)) {
+    return { ok: false, issues: [{ kind: "groups_not_object" }] };
+  }
+  if (discovery === undefined) {
+    return { ok: false, issues: [{ kind: "group_discovery_missing_context" }] };
+  }
+
+  const checker = discovery.program.getTypeChecker();
+  const reserved = collectReservedCradleKeys(plans);
+
+  const groupPlans: GroupPlan[] = [];
+  const issues: GroupPlanIssue[] = [];
+
+  const sortedGroupNames = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+  for (const groupName of sortedGroupNames) {
+    if (reserved.has(groupName)) {
+      issues.push({ kind: "group_root_key_collision", key: groupName });
+      continue;
+    }
+
+    const defIssue = validateGroupDefinition(groupName, groups[groupName]);
+    if (defIssue !== undefined) {
+      issues.push(defIssue);
+      continue;
+    }
+
+    const entry = groups[groupName] as IocGroupDefinition;
+    const base = resolveDeclaredBaseType(
+      discovery.program,
+      checker,
+      entry.baseType,
+    );
+    if (!base.ok) {
+      issues.push({
+        kind: "group_unknown_base_type",
+        groupName,
+        message: base.message,
+      });
+      continue;
+    }
+
+    const members = collectImplementationMembersAssignableToBase(
+      checker,
+      discovery.program,
+      discovery.generatedDir,
+      plans,
+      base.type,
+      entry.kind === "collection" ? shouldIncludeImplInCollectionGroup : undefined,
+    );
+
+    if (members.length === 0) {
+      issues.push({
+        kind: "group_no_matches",
+        groupName,
+        baseType: entry.baseType,
+      });
+      continue;
+    }
+
+    if (entry.kind === "object") {
+      const built = buildObjectMembersOrIssue(groupName, members);
+      if (!built.ok) {
+        issues.push(built.issue);
+        continue;
+      }
+      reserved.add(groupName);
+      groupPlans.push({
+        groupName,
+        kind: "object",
+        baseType: entry.baseType,
+        members: built.members,
+      });
+    } else {
+      reserved.add(groupName);
+      groupPlans.push({
+        groupName,
+        kind: "collection",
+        baseType: entry.baseType,
+        members,
+      });
+    }
+  }
+
+  if (issues.length > 0) {
+    return { ok: false, issues };
+  }
+
+  const manifest: IocGroupsManifest = {};
+  for (const p of groupPlans) {
+    manifest[p.groupName] = groupPlanToManifestNode(p);
+  }
+  return { ok: true, plans: groupPlans, manifest };
+};
+
+export const buildGroupPlan = (
+  groups: unknown,
+  plans: readonly ResolvedContractRegistration[],
+  discovery: GroupDiscoveryBuildContext | undefined,
+): GroupPlanResult | undefined => {
+  if (groups === undefined) {
+    return undefined;
+  }
+  const result = runGroupPlan(groups, plans, discovery);
+  if (!result.ok) {
+    throw new Error(formatGroupPlanIssues(result.issues));
+  }
+  return { plans: result.plans, manifest: result.manifest };
+};
+
+export type GroupPlanAnalysis =
+  | {
+      ok: true;
+      plans: readonly GroupPlan[];
+      manifest: IocGroupsManifest | undefined;
+      issues: readonly [];
+    }
+  | {
+      ok: false;
+      plans: readonly [];
+      manifest: undefined;
+      issues: readonly GroupPlanIssue[];
+    };
+
+export const analyzeGroupPlan = (
+  groups: unknown,
+  plans: readonly ResolvedContractRegistration[],
+  discovery: GroupDiscoveryBuildContext | undefined,
+): GroupPlanAnalysis => {
+  if (groups === undefined) {
+    return { ok: true, plans: [], manifest: undefined, issues: [] };
+  }
+  const result = runGroupPlan(groups, plans, discovery);
+  if (!result.ok) {
+    return {
+      ok: false,
+      plans: [],
+      manifest: undefined,
+      issues: result.issues,
+    };
+  }
+  return {
+    ok: true,
+    plans: result.plans,
+    manifest: result.manifest,
+    issues: [],
+  };
+};

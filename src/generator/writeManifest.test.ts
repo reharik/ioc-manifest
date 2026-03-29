@@ -72,7 +72,6 @@ describe("writeManifest", () => {
         acceptedFactories,
         plans,
         undefined,
-        undefined,
         manifestOutPath,
         "ioc-manifest",
       );
@@ -85,7 +84,6 @@ describe("writeManifest", () => {
       await writeManifest(
         acceptedFactories,
         plans,
-        undefined,
         undefined,
         manifestOutPath,
         "ioc-manifest",
@@ -145,7 +143,6 @@ describe("writeManifest", () => {
       await writeManifest(
         acceptedFactories,
         plans,
-        undefined,
         undefined,
         manifestOutPath,
         "ioc-manifest",

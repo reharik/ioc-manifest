@@ -6,18 +6,16 @@ export {
 
 export { injectable } from "./injectable.js";
 export type {
-  IocBundleArrayInsight,
-  IocBundleArraysInsightManifest,
-  IocBundleDeclaredMemberManifest,
-  IocBundleLeafManifest,
-  IocBundleNodeManifest,
-  IocBundleReferenceManifest,
-  IocBundlesManifest,
   IocConfigOverrideField,
   IocContainerContractsView,
   IocContainerImplementationView,
   IocContractManifest,
   IocGeneratedContainerManifest,
+  IocGroupCollectionManifest,
+  IocGroupLeafManifest,
+  IocGroupNodeManifest,
+  IocGroupObjectManifest,
+  IocGroupsManifest,
   IocImplementationLifetime,
   IocManifest,
   IocManifestEntry,

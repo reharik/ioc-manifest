@@ -1,20 +1,5 @@
-import type { BundleReport, DiscoveryReport, InspectionReport } from "./reports.js";
+import type { DiscoveryReport, InspectionReport } from "./reports.js";
 import type { ManifestValidationIssue } from "./validateManifest.js";
-
-const formatDeclaredMember = (m: unknown): string => {
-  if (typeof m === "string") {
-    return JSON.stringify(m);
-  }
-  if (
-    typeof m === "object" &&
-    m !== null &&
-    "$bundleRef" in m &&
-    typeof (m as { $bundleRef: unknown }).$bundleRef === "string"
-  ) {
-    return `{ $bundleRef: ${JSON.stringify((m as { $bundleRef: string }).$bundleRef)} }`;
-  }
-  return JSON.stringify(m);
-};
 
 const formatManifestIssues = (issues: readonly ManifestValidationIssue[]): string => {
   if (issues.length === 0) {
@@ -80,36 +65,5 @@ export const formatDiscoveryReport = (report: DiscoveryReport): string => {
     }
     lines.push("");
   }
-  return lines.join("\n").trimEnd();
-};
-
-export const formatBundleReport = (report: BundleReport): string => {
-  const lines: string[] = [];
-  if (report.issues.length > 0) {
-    lines.push("Issues:");
-    for (const i of report.issues) {
-      lines.push(`  - [${i.code}] ${i.message}`);
-    }
-    lines.push("");
-  }
-
-  if (report.bundles.length === 0) {
-    lines.push("(No bundle arrays in manifest insight.)");
-    return lines.join("\n").trimEnd();
-  }
-
-  for (const b of report.bundles) {
-    lines.push(b.bundlePath);
-    lines.push("  declared:");
-    for (const m of b.declaredMembers) {
-      lines.push(`    - ${formatDeclaredMember(m)}`);
-    }
-    lines.push("  expanded:");
-    for (const e of b.expandedMembers) {
-      lines.push(`    - ${e.contractName}`);
-    }
-    lines.push("");
-  }
-
   return lines.join("\n").trimEnd();
 };

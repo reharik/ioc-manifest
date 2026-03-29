@@ -1,7 +1,11 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { createContainer } from "awilix";
-import type { IocContractManifest, IocModuleNamespace } from "../core/manifest.js";
+import type {
+  IocContractManifest,
+  IocGroupsManifest,
+  IocModuleNamespace,
+} from "../core/manifest.js";
 import { registerIocFromManifest } from "./bootstrap.js";
 import { isIocResolutionError } from "./iocResolutionError.js";
 
@@ -528,6 +532,115 @@ describe("registerIocFromManifest", () => {
           return true;
         },
       );
+    });
+  });
+
+  describe("When a groups manifest is provided", () => {
+    describe("When the group is a collection", () => {
+      it("should resolve implementations in manifest order", () => {
+      const manifest: IocContractManifest = {
+        A: {
+          a: {
+            exportName: "buildA",
+            registrationKey: "implA",
+            modulePath: "a.ts",
+            sourceFilePath: "a.ts",
+            relImport: "../a.js",
+            contractName: "A",
+            implementationName: "a",
+            lifetime: "singleton",
+            moduleIndex: 0,
+            default: true,
+          },
+        },
+        B: {
+          b: {
+            exportName: "buildB",
+            registrationKey: "implB",
+            modulePath: "b.ts",
+            sourceFilePath: "b.ts",
+            relImport: "../b.js",
+            contractName: "B",
+            implementationName: "b",
+            lifetime: "singleton",
+            moduleIndex: 1,
+            default: true,
+          },
+        },
+      };
+      const groups: IocGroupsManifest = {
+        pair: [
+          { contractName: "A", registrationKey: "implA" },
+          { contractName: "B", registrationKey: "implB" },
+        ],
+      };
+      const moduleImports: readonly IocModuleNamespace[] = [
+        { buildA: (): { tag: string } => ({ tag: "a" }) },
+        { buildB: (): { tag: string } => ({ tag: "b" }) },
+      ];
+      const container = createContainer<{
+        implA: { tag: string };
+        implB: { tag: string };
+        pair: { tag: string }[];
+      }>({ injectionMode: "PROXY" });
+      registerIocFromManifest(container, manifest, moduleImports, groups);
+      const pair = container.resolve("pair");
+      assert.deepStrictEqual(pair.map((x) => x.tag), ["a", "b"]);
+      });
+    });
+
+    describe("When the group is an object keyed by registration key", () => {
+      it("should resolve each property from the matching cradle registration", () => {
+      const manifest: IocContractManifest = {
+        A: {
+          a: {
+            exportName: "buildA",
+            registrationKey: "implA",
+            modulePath: "a.ts",
+            sourceFilePath: "a.ts",
+            relImport: "../a.js",
+            contractName: "A",
+            implementationName: "a",
+            lifetime: "singleton",
+            moduleIndex: 0,
+            default: true,
+          },
+        },
+        B: {
+          b: {
+            exportName: "buildB",
+            registrationKey: "implB",
+            modulePath: "b.ts",
+            sourceFilePath: "b.ts",
+            relImport: "../b.js",
+            contractName: "B",
+            implementationName: "b",
+            lifetime: "singleton",
+            moduleIndex: 1,
+            default: true,
+          },
+        },
+      };
+      const groups: IocGroupsManifest = {
+        byKey: {
+          implA: { contractName: "A", registrationKey: "implA" },
+          implB: { contractName: "B", registrationKey: "implB" },
+        },
+      };
+      const moduleImports: readonly IocModuleNamespace[] = [
+        { buildA: (): { tag: string } => ({ tag: "a" }) },
+        { buildB: (): { tag: string } => ({ tag: "b" }) },
+      ];
+      const container = createContainer<{
+        implA: { tag: string };
+        implB: { tag: string };
+        byKey: { implA: { tag: string }; implB: { tag: string } };
+      }>({ injectionMode: "PROXY" });
+      registerIocFromManifest(container, manifest, moduleImports, groups);
+      const byKey = container.resolve("byKey");
+      assert.strictEqual(byKey.implA.tag, "a");
+      assert.strictEqual(byKey.implB.tag, "b");
+      });
     });
   });
 });

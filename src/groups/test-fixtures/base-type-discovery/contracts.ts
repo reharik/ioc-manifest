@@ -1,4 +1,4 @@
-/** Base type used only as a discovery filter in bundle tests. */
+/** Base type used only as a discovery filter in group tests. */
 export interface ReadService {
   readonly kind: "read";
 }

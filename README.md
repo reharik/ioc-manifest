@@ -12,19 +12,21 @@ This package is designed around a simple workflow:
 
 ### Runtime API (used by applications)
 
-- `registerIocFromManifest(container, manifestByContract, moduleImports)`
+- `registerIocFromManifest(container, manifestByContract, moduleImports, groupsManifest?)`
 
 This registers:
 
 - implementation factories (single contract default slot and explicit named keys)
 - contract default aliases (when the “default slot key” differs from the selected default implementation key)
 - multi-implementation collections (plural slot returning an object map)
+- optional **groups**: named `collection` or `object` aggregations of implementations whose **declared contract type** is assignable to a configured `baseType` (see `groups` in `ioc.config.ts` and the generated `iocManifest.groups` field)
 
 ### Generation tool (dev-time only)
 
 The repository includes a generator that discovers factories using TypeScript type analysis and emits:
 
-- `ioc-manifest.ts` (runtime metadata mapping contracts -> implementations + module import list)
+- `ioc-manifest.ts` (runtime metadata: contracts, implementations, module import list, optional `groups`)
+- `ioc-manifest.support.ts` (full registration manifest with `moduleIndex` / `relImport` for the runtime)
 - `ioc-registry.types.ts` (typed cradle interface for your container)
 
 Generated files are written via atomic temp-file replacement (no pre-delete of existing generated outputs).
@@ -44,6 +46,7 @@ Related exports for customizing paths and merging with `ioc.config.ts`:
 
 - `resolveManifestOptions`, `mergeManifestOptionsWithIocConfig`, `DEFAULT_MANIFEST_OPTIONS`
 - Types: `ManifestOptions`, `ManifestRuntimePaths`
+- Group planning: `buildGroupPlan`, `analyzeGroupPlan`, `formatGroupPlanIssue`, etc.
 
 The generator depends on `typescript`, `fast-glob`, and `prettier` at install time (they are listed as `dependencies` of `ioc-manifest`).
 
@@ -68,22 +71,47 @@ npm i ioc-manifest
 import { createContainer } from "awilix";
 import { registerIocFromManifest } from "ioc-manifest";
 
-import {
-  iocManifestByContract,
-  iocModuleImports,
-} from "./generated/ioc-manifest.js";
+import { iocManifest } from "./generated/ioc-manifest.js";
+import { iocRegistrationManifest } from "./generated/ioc-manifest.support.js";
 import type { IocGeneratedCradle } from "./generated/ioc-registry.types.js";
 
 const container = createContainer<IocGeneratedCradle>({
   injectionMode: "PROXY",
 });
 
-registerIocFromManifest(container, iocManifestByContract, iocModuleImports);
+registerIocFromManifest(
+  container,
+  iocRegistrationManifest,
+  iocManifest.moduleImports,
+  iocManifest.groups,
+);
 
 // Resolve by keys produced in generation:
 const mediaStorage = container.resolve("mediaStorage");
 const mediaStorages = container.resolve("mediaStorages");
 ```
+
+### Configuring groups (`ioc.config.ts`)
+
+Groups select implementations by TypeScript assignability of each **contract’s declared type** to a named `baseType` (interface or type alias in your program):
+
+```ts
+groups: {
+  mediaBackends: {
+    kind: "collection",
+    baseType: "MediaStorage",
+  },
+  mediaByKey: {
+    kind: "object",
+    baseType: "MediaStorage",
+  },
+},
+```
+
+- `collection`: registered value is a `ReadonlyArray` of resolved implementations (manifest order).
+- `object`: registered value is a plain object whose keys are implementation **registration keys**.
+
+Unknown `baseType`, zero matches, or duplicate registration keys in an `object` group are reported at generation time.
 
 ## Runtime semantics (important)
 
@@ -130,6 +158,7 @@ The generator expects:
   - lifetime
   - which implementation is the contract default
   - the Awilix registration key used for an implementation
+  - **`groups`**: `kind` + `baseType` for generated aggregate registrations
 
 ### Config loading notes
 
@@ -149,11 +178,16 @@ The generator is designed to be stable across repeated runs:
 
 Your app should use (imports in runtime):
 
-- `ioc-manifest.ts`:
-  - `iocManifestByContract`
-  - `iocModuleImports`
-- `ioc-registry.types.ts`:
-  - `IocGeneratedCradle`
+- `ioc-manifest.ts`: `iocManifest` (includes `moduleImports`, `contracts`, optional `groups`)
+- `ioc-manifest.support.ts`: `iocRegistrationManifest`
+- `ioc-registry.types.ts`: `IocGeneratedCradle`
+
+## CLI (this package)
+
+```bash
+ioc inspect [--config <path>]
+ioc inspect --discovery [--config <path>]
+```
 
 ## Generator scripts (in this repository)
 

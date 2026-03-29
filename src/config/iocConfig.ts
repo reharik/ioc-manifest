@@ -1,4 +1,4 @@
-import type { IocBundlesConfig } from "../bundles/resolveBundlePlan.js";
+import type { IocGroupsConfig } from "../groups/resolveGroupPlan.js";
 
 export type IocLifetime = "singleton" | "scoped" | "transient";
 
@@ -24,7 +24,11 @@ export type IocConfig = {
     generatedDir?: string;
   };
   registrations?: Record<string, Record<string, IocOverride>>;
-  bundles?: IocBundlesConfig;
+  /**
+   * Group registrations by assignability to a named `baseType` (interface or type alias in the program).
+   * See {@link IocGroupsConfig}.
+   */
+  groups?: IocGroupsConfig;
 };
 
 export const defineIocConfig = (config: IocConfig): IocConfig => config;

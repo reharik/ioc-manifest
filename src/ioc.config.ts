@@ -25,16 +25,11 @@ export default defineIocConfig({
       consoleLogger: { default: true },
     },
   },
-  bundles: {
-    services: {
-      album: ["AlbumService"],
-      media: {
-        read: ["MediaStorage"],
-      },
-      read: [
-        { $bundleRef: "services.album" },
-        { $bundleRef: "services.media.read" },
-      ],
+  groups: {
+    /** All implementations whose contract is assignable to MediaStorage. */
+    mediaStoragesGroup: {
+      kind: "collection",
+      baseType: "MediaStorage",
     },
   },
 });

@@ -1,5 +1,4 @@
 import type {
-  IocBundleArraysInsightManifest,
   IocContainerContractsView,
   IocContainerImplementationView,
   IocContractManifest,
@@ -100,23 +99,5 @@ export const validateContainerContractsView = (
     }
   }
 
-  return issues;
-};
-
-export const validateBundleInsight = (
-  insight: IocBundleArraysInsightManifest | undefined,
-): ManifestValidationIssue[] => {
-  if (insight === undefined || insight.length === 0) {
-    return [];
-  }
-  const issues: ManifestValidationIssue[] = [];
-  for (const row of insight) {
-    if (row.declaredMembers.length === 0) {
-      issues.push({
-        code: "bundle_array_empty",
-        message: `Bundle array ${JSON.stringify(row.bundlePath)} declares no members.`,
-      });
-    }
-  }
   return issues;
 };

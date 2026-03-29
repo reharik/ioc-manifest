@@ -20,7 +20,7 @@ import {
 import { buildRegistrationPlan } from "./resolveRegistrationPlan.js";
 import { writeManifest } from "./writeManifest.js";
 import type { ManifestRuntimePaths } from "./manifestPaths.js";
-import { buildBundlePlan } from "../bundles/resolveBundlePlan.js";
+import { buildGroupPlan } from "../groups/resolveGroupPlan.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../../package.json") as { name?: unknown };
@@ -98,7 +98,7 @@ export const generateManifest = async (
   );
 
   const plans = buildRegistrationPlan(contractMap, config);
-  const bundleResult = buildBundlePlan(config?.bundles, plans, {
+  const groupResult = buildGroupPlan(config?.groups, plans, {
     program,
     generatedDir,
   });
@@ -106,8 +106,7 @@ export const generateManifest = async (
   await writeManifest(
     acceptedFactories,
     plans,
-    bundleResult?.tree,
-    bundleResult?.arraysInsight,
+    groupResult?.manifest,
     manifestOutPath,
     packageName,
     {

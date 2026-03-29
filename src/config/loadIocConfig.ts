@@ -1,62 +1,43 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import {
-  isBundleDiscoverLeaf,
-  isValidDiscoverSpecValue,
-} from "../bundles/bundleDiscovery.types.js";
 import type { IocConfig, IocLifetime } from "./iocConfig.js";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const isBundleReferenceShape = (value: unknown): value is { $bundleRef: string } => {
-  if (!isRecord(value)) {
-    return false;
-  }
-  const keys = Object.keys(value);
-  if (keys.length !== 1 || keys[0] !== "$bundleRef") {
-    return false;
-  }
-  return typeof value.$bundleRef === "string" && value.$bundleRef.length > 0;
-};
+const GROUP_KINDS = new Set(["collection", "object"]);
 
-const validateBundlesShape = (value: unknown, pathLabel: string): void => {
-  if (isBundleDiscoverLeaf(value)) {
-    if (!isValidDiscoverSpecValue(value.$discover)) {
+const validateGroupsShape = (value: unknown, pathLabel: string): void => {
+  if (!isRecord(value)) {
+    throw new Error(`[ioc-config] ${pathLabel} must be an object`);
+  }
+  for (const [name, entry] of Object.entries(value)) {
+    if (!isRecord(entry)) {
       throw new Error(
-        `[ioc-config] ${pathLabel}.$discover must be a non-empty string or exactly { baseInterface: string }`,
+        `[ioc-config] ${pathLabel}.${JSON.stringify(name)} must be an object`,
       );
     }
-    return;
-  }
-  if (Array.isArray(value)) {
-    value.forEach((item, index) => {
-      if (typeof item === "string" && item.length > 0) {
-        return;
-      }
-      if (isBundleReferenceShape(item)) {
-        return;
-      }
+    const kind = entry.kind;
+    if (typeof kind !== "string" || !GROUP_KINDS.has(kind)) {
       throw new Error(
-        `[ioc-config] ${pathLabel}[${index}] must be a non-empty string or { $bundleRef: string }`,
+        `[ioc-config] ${pathLabel}.${JSON.stringify(name)}.kind must be "collection" or "object"`,
       );
-    });
-    return;
-  }
-  if (!isRecord(value)) {
-    throw new Error(
-      `[ioc-config] ${pathLabel} must be an object or an array of bundle items`,
-    );
-  }
-  const keys = Object.keys(value);
-  if (keys.includes("$discover") && keys.length > 1) {
-    throw new Error(
-      `[ioc-config] ${pathLabel} cannot mix "$discover" with other keys; use a dedicated leaf object { $discover: ... }`,
-    );
-  }
-  for (const [key, child] of Object.entries(value)) {
-    validateBundlesShape(child, `${pathLabel}.${key}`);
+    }
+    const baseType = entry.baseType;
+    if (typeof baseType !== "string" || baseType.length === 0) {
+      throw new Error(
+        `[ioc-config] ${pathLabel}.${JSON.stringify(name)}.baseType must be a non-empty string`,
+      );
+    }
+    const allowed = new Set(["kind", "baseType"]);
+    for (const k of Object.keys(entry)) {
+      if (!allowed.has(k)) {
+        throw new Error(
+          `[ioc-config] ${pathLabel}.${JSON.stringify(name)} has unknown property ${JSON.stringify(k)} (only kind and baseType are allowed)`,
+        );
+      }
+    }
   }
 };
 
@@ -157,12 +138,9 @@ const validateIocConfig = (raw: unknown, sourceLabel: string): IocConfig => {
     }
   }
 
-  const bundles = raw.bundles;
-  if (bundles !== undefined) {
-    if (!isRecord(bundles)) {
-      throw new Error(`[ioc-config] ${sourceLabel} bundles must be an object`);
-    }
-    validateBundlesShape(bundles, `${sourceLabel} bundles`);
+  const groups = raw.groups;
+  if (groups !== undefined) {
+    validateGroupsShape(groups, `${sourceLabel} groups`);
   }
 
   return raw as IocConfig;

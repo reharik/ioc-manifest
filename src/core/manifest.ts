@@ -79,44 +79,28 @@ export type IocContainerContractsView = Record<
 >;
 
 /**
- * Primary generated container description: one object for imports, contracts, and runtime bundles.
+ * Primary generated container description: module imports, contracts, and optional groups.
  */
 export type IocGeneratedContainerManifest = {
   readonly moduleImports: readonly IocModuleNamespace[];
   readonly contracts: IocContainerContractsView;
-  readonly bundles?: IocBundlesManifest;
+  readonly groups?: IocGroupsManifest;
 };
 
-export type IocBundleLeafManifest = {
+/** One implementation slot in a generated group (collection item or object property value). */
+export type IocGroupLeafManifest = {
   contractName: string;
   registrationKey: string;
 };
 
-export interface IocBundleObjectManifest {
-  [key: string]: IocBundleNodeManifest;
-}
+/** Collection group: ordered list of implementations to resolve from the cradle. */
+export type IocGroupCollectionManifest = IocGroupLeafManifest[];
 
-export type IocBundleNodeManifest =
-  | IocBundleLeafManifest[]
-  | IocBundleObjectManifest;
+/** Object group: property keys are implementation registration keys. */
+export type IocGroupObjectManifest = Record<string, IocGroupLeafManifest>;
 
-export type IocBundlesManifest = Record<string, IocBundleNodeManifest>;
+export type IocGroupNodeManifest =
+  | IocGroupCollectionManifest
+  | IocGroupObjectManifest;
 
-/** Declared bundle entry as authored in config (contract name or nested bundle ref). */
-export type IocBundleReferenceManifest = {
-  $bundleRef: string;
-};
-
-export type IocBundleDeclaredMemberManifest = string | IocBundleReferenceManifest;
-
-/**
- * Facts about one bundle array node: raw declared entries vs resolved contract registrations.
- */
-export type IocBundleArrayInsight = {
-  /** Dot-separated path of array bundle nodes, e.g. `services.read`. */
-  bundlePath: string;
-  declaredMembers: readonly IocBundleDeclaredMemberManifest[];
-  expandedMembers: readonly IocBundleLeafManifest[];
-};
-
-export type IocBundleArraysInsightManifest = readonly IocBundleArrayInsight[];
+export type IocGroupsManifest = Record<string, IocGroupNodeManifest>;

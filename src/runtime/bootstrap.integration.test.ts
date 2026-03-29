@@ -2,7 +2,6 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import { createContainer } from "awilix";
 import type { MediaStorage } from "../examples/b-multiple-implementations.js";
-import type { AlbumService } from "../examples/f-dependency-injection.js";
 import type { IocGeneratedCradle } from "../generated/ioc-registry.types.js";
 import { iocManifest } from "../generated/ioc-manifest.js";
 import { iocRegistrationManifest } from "../generated/ioc-manifest.support.js";
@@ -16,7 +15,7 @@ describe("registerIocFromManifest", () => {
         container,
         iocRegistrationManifest,
         iocManifest.moduleImports,
-        iocManifest.bundles,
+        iocManifest.groups,
       );
       const media = container.resolve("mediaStorage") as MediaStorage;
       await media.put("k");
@@ -31,12 +30,14 @@ describe("registerIocFromManifest", () => {
         container,
         iocRegistrationManifest,
         iocManifest.moduleImports,
-        iocManifest.bundles,
+        iocManifest.groups,
       );
       const local = container.resolve("localMediaStorage") as MediaStorage;
       await local.put("k");
       assert.strictEqual(local.label, "local");
-      const albumService = container.resolve("albumService") as AlbumService;
+      const albumService = container.resolve("albumService") as {
+        describe: () => string;
+      };
       assert.match(albumService.describe(), /albums backed by direct-contract/i);
     });
   });
@@ -48,7 +49,7 @@ describe("registerIocFromManifest", () => {
         container,
         iocRegistrationManifest,
         iocManifest.moduleImports,
-        iocManifest.bundles,
+        iocManifest.groups,
       );
       const collection = container.resolve("mediaStorages") as Record<
         string,
@@ -62,28 +63,25 @@ describe("registerIocFromManifest", () => {
     });
   });
 
-  describe("When resolving generated bundles", () => {
-    it("should register bundle roots on the cradle and resolve leaves to contract defaults", () => {
+  describe("When resolving generated groups", () => {
+    it("should register group roots and resolve collection members from the cradle", () => {
       const container = createContainer<IocGeneratedCradle>();
       registerIocFromManifest(
         container,
         iocRegistrationManifest,
         iocManifest.moduleImports,
-        iocManifest.bundles,
+        iocManifest.groups,
       );
 
-      const services = container.resolve("services") as {
-        album: AlbumService[];
-        media: { read: MediaStorage[] };
-        read: Array<AlbumService | MediaStorage>;
-      };
-
-      assert.strictEqual(typeof services, "object");
-      assert.strictEqual(services.album.length, 1);
-      assert.strictEqual(services.album[0]?.describe().includes("albums"), true);
-      assert.strictEqual(services.media.read.length, 1);
-      assert.strictEqual(services.media.read[0]?.label, "direct-contract");
-      assert.strictEqual(services.read.length, 2);
+      const mediaGroup = container.resolve("mediaStoragesGroup") as MediaStorage[];
+      assert.ok(Array.isArray(mediaGroup));
+      assert.strictEqual(mediaGroup.length, 2);
+      const labels = mediaGroup.map((m) => m.label).sort();
+      assert.deepStrictEqual(labels, ["local", "s3"]);
+      assert.ok(
+        new Set(mediaGroup.map((m) => m.label)).size === mediaGroup.length,
+        "collection group should not duplicate implementations",
+      );
     });
   });
 });
