@@ -25,6 +25,7 @@ export {
 export {
   loadIocConfig,
   resolveIocConfigPath,
+  resolveProjectRootFromIocConfigPath,
   tryLoadIocConfig,
 } from "./config/loadIocConfig.js";
 
@@ -69,9 +70,11 @@ export {
   buildInspectionReport,
   formatDiscoveryReport,
   formatInspectionReport,
+  resolveDiscoveryManifestContext,
   runDiscoveryAnalysis,
   validateManifest,
   type DiscoveryAnalysisResult,
+  type DiscoveryManifestResolution,
   type DiscoveryReport,
   type DiscoveryReportInput,
   type InspectionReport,

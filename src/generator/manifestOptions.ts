@@ -4,8 +4,8 @@ import type { ManifestRuntimePaths } from "./manifestPaths.js";
 
 /**
  * Default layout relative to a project root: `<root>/src`, generated under `<root>/src/generated/`.
- * Used by the CLI and generator with `projectRoot = process.cwd()` so consumers resolve manifests in
- * their app, not inside `node_modules/ioc-manifest`.
+ * Callers set `projectRoot` from cwd, explicit paths, or after locating `ioc.config.ts` (including
+ * monorepo layouts via `resolveProjectRootFromIocConfigPath` in `loadIocConfig`).
  */
 export const defaultManifestPathsFromProjectRoot = (
   projectRoot: string,

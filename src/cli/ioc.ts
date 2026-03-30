@@ -5,12 +5,14 @@
  * - `ioc inspect` — human-readable contract / implementation summary + manifest validation.
  * - `ioc inspect --discovery` — re-runs source discovery (no manifest read) for drift analysis.
  *
- * Resolves config the same way as generation (`tryLoadIocConfig`, optional `--config`).
+ * Resolves config like generation (`tryLoadIocConfig`, optional `--config`), walking up from cwd
+ * (or `--project`) to find `ioc.config.ts` in a monorepo.
  */
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   resolveIocConfigPath,
+  resolveProjectRootFromIocConfigPath,
   tryLoadIocConfig,
 } from "../config/loadIocConfig.js";
 import type { IocGeneratedContainerManifest } from "../core/manifest.js";
@@ -24,24 +26,31 @@ import {
   formatDiscoveryReport,
   formatInspectionReport,
 } from "../inspection/index.js";
-import { runDiscoveryAnalysis } from "../inspection/runDiscoveryAnalysis.js";
+import {
+  resolveDiscoveryManifestContext,
+  runDiscoveryAnalysis,
+} from "../inspection/runDiscoveryAnalysis.js";
 
 type ParsedCli = {
   command: "inspect";
   iocConfigPath?: string;
+  projectDir?: string;
   discovery: boolean;
 };
 
 const parseArgs = (argv: string[]): ParsedCli => {
   const args = argv.slice(2);
   if (args.length === 0) {
-    throw new Error("Usage: ioc inspect [--discovery] [--config <path>]");
+    throw new Error(
+      "Usage: ioc inspect [--discovery] [--config <path>] [--project <path>]",
+    );
   }
   const command = args[0];
   if (command !== "inspect") {
     throw new Error(`Unknown command ${JSON.stringify(command)}. Use inspect.`);
   }
   let iocConfigPath: string | undefined;
+  let projectDir: string | undefined;
   let discovery = false;
   for (let i = 1; i < args.length; i += 1) {
     const a = args[i];
@@ -54,26 +63,44 @@ const parseArgs = (argv: string[]): ParsedCli => {
       i += 1;
       continue;
     }
+    if (a === "--project" && args[i + 1]) {
+      projectDir = args[i + 1];
+      i += 1;
+      continue;
+    }
     if (a.startsWith("-")) {
       throw new Error(`Unknown flag ${JSON.stringify(a)}`);
     }
   }
-  return { command, iocConfigPath, discovery };
+  return { command, iocConfigPath, projectDir, discovery };
 };
 
 type GeneratedMainManifestModule = {
   iocManifest: IocGeneratedContainerManifest;
 };
 
+const logInspectContext = (cfgPath: string, resolvedRootDir: string): void => {
+  console.error(`[ioc inspect] resolved config: ${cfgPath}`);
+  console.error(`[ioc inspect] resolved discovery rootDir: ${resolvedRootDir}`);
+};
+
 const loadGeneratedManifestModule = async (
   iocConfigPath?: string,
+  searchStartDir?: string,
 ): Promise<GeneratedMainManifestModule> => {
-  const base = resolveManifestOptions();
-  const cfgPath = resolveIocConfigPath(base.paths.projectRoot, iocConfigPath);
+  const searchStart = path.resolve(searchStartDir ?? process.cwd());
+  const cfgPath = resolveIocConfigPath(searchStart, iocConfigPath);
   const config = await tryLoadIocConfig(cfgPath);
+  const projectRoot = config
+    ? resolveProjectRootFromIocConfigPath(cfgPath)
+    : searchStart;
+  const base = resolveManifestOptions({
+    paths: { projectRoot },
+  });
   const options = config
     ? mergeManifestOptionsWithIocConfig(base, config)
     : base;
+  logInspectContext(cfgPath, options.paths.srcDir);
   const manifestPath = path.resolve(options.paths.manifestOutPath);
   const main = (await import(pathToFileURL(manifestPath).href)) as
     GeneratedMainManifestModule;
@@ -82,16 +109,28 @@ const loadGeneratedManifestModule = async (
 
 const main = async (): Promise<void> => {
   const cli = parseArgs(process.argv);
-  const mainMod = await loadGeneratedManifestModule(cli.iocConfigPath);
+  const searchStart = path.resolve(cli.projectDir ?? process.cwd());
 
   if (cli.discovery) {
-    const analysis = await runDiscoveryAnalysis({
+    const resolved = await resolveDiscoveryManifestContext({
       iocConfigPath: cli.iocConfigPath,
+      searchStartDir: searchStart,
+    });
+    logInspectContext(resolved.cfgPath, resolved.options.paths.srcDir);
+
+    const analysis = await runDiscoveryAnalysis({
+      reuseResolution: resolved,
     });
     const report = buildDiscoveryReport(analysis);
     console.log(formatDiscoveryReport(report));
     return;
   }
+
+  const mainMod = await loadGeneratedManifestModule(
+    cli.iocConfigPath,
+    searchStart,
+  );
+
   const report = buildInspectionReport(mainMod.iocManifest.contracts);
   console.log(formatInspectionReport(report));
 };

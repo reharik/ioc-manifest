@@ -10,6 +10,7 @@ import path from "node:path";
 import {
   tryLoadIocConfig,
   resolveIocConfigPath,
+  resolveProjectRootFromIocConfigPath,
 } from "../config/loadIocConfig.js";
 import { discoverFactories } from "./discoverFactories/discoverFactories.js";
 import {
@@ -72,12 +73,21 @@ export const generateManifest = async (
     iocConfigPath?: string;
   },
 ): Promise<void> => {
-  const base = resolveManifestOptions(overrides);
-  const configPath = resolveIocConfigPath(
-    base.paths.projectRoot,
-    overrides?.iocConfigPath,
+  const searchStart = path.resolve(
+    overrides?.paths?.projectRoot ?? process.cwd(),
   );
+  const configPath = resolveIocConfigPath(searchStart, overrides?.iocConfigPath);
   const config = await tryLoadIocConfig(configPath);
+  const resolvedProjectRoot = config
+    ? resolveProjectRootFromIocConfigPath(configPath)
+    : searchStart;
+  const base = resolveManifestOptions({
+    ...overrides,
+    paths: {
+      ...overrides?.paths,
+      projectRoot: resolvedProjectRoot,
+    },
+  });
   const options = config
     ? mergeManifestOptionsWithIocConfig(base, config)
     : base;

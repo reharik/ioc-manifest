@@ -3,9 +3,11 @@
  * Fail-fast validation with `[ioc-config]` errors. The loaded module’s default export (or
  * `iocConfig` / `config`) supplies the raw shape validated into {@link IocConfig}.
  */
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import fg from "fast-glob";
 import {
   IOC_CONTRACT_CONFIG_KEY,
   parseContractLevelConfig,
@@ -210,24 +212,91 @@ export const loadIocConfig = async (
   return validateIocConfig(raw, absoluteConfigPath);
 };
 
+const CONFIG_RELATIVE_SEARCH_PATHS = ["src/ioc.config.ts", "ioc.config.ts"] as const;
+
+/**
+ * IoC package root inferred from where `ioc.config` lives: if the config file is under a `src`
+ * directory, the package root is the parent of that `src` (so `discovery.rootDir` stays relative
+ * to the package, not `process.cwd()`). Otherwise the package root is the config file directory.
+ */
+export const resolveProjectRootFromIocConfigPath = (
+  absoluteConfigPath: string,
+): string => {
+  const configDir = path.dirname(absoluteConfigPath);
+  return path.basename(configDir) === "src"
+    ? path.dirname(configDir)
+    : configDir;
+};
+
+/**
+ * Resolves the absolute path to `ioc.config.ts`.
+ *
+ * - When `explicitPath` or `IOC_CONFIG` is set, resolves relative to `searchStartDir` if not absolute.
+ * - Otherwise walks upward from `searchStartDir` for `src/ioc.config.ts` / `ioc.config.ts`.
+ * - If none is found upward, searches downward for the shallowest nested `src/ioc.config.ts`
+ *   (glob, excluding `node_modules` and similar). If several are found, throws with a prompt to use
+ *   `--project` / `--config`.
+ * - If still none, returns `searchStartDir/src/ioc.config.ts` (legacy default) for missing-file handling.
+ */
 export const resolveIocConfigPath = (
-  projectRoot: string,
+  searchStartDir: string,
   explicitPath?: string,
 ): string => {
+  const start = path.resolve(searchStartDir);
+
   if (explicitPath !== undefined && explicitPath.length > 0) {
     return path.isAbsolute(explicitPath)
       ? explicitPath
-      : path.resolve(projectRoot, explicitPath);
+      : path.resolve(start, explicitPath);
   }
 
   const fromEnv = process.env.IOC_CONFIG;
   if (typeof fromEnv === "string" && fromEnv.length > 0) {
     return path.isAbsolute(fromEnv)
       ? fromEnv
-      : path.resolve(projectRoot, fromEnv);
+      : path.resolve(start, fromEnv);
   }
 
-  return path.join(projectRoot, "src", "ioc.config.ts");
+  let dir = start;
+  const root = path.parse(dir).root;
+  while (true) {
+    for (const rel of CONFIG_RELATIVE_SEARCH_PATHS) {
+      const candidate = path.join(dir, rel);
+      if (existsSync(candidate)) {
+        return candidate;
+      }
+    }
+    if (dir === root) {
+      break;
+    }
+    dir = path.dirname(dir);
+  }
+
+  const downward = fg.sync("**/src/ioc.config.ts", {
+    cwd: start,
+    absolute: true,
+    onlyFiles: true,
+    unique: true,
+    deep: 15,
+    ignore: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/.git/**",
+    ],
+  });
+  const byPathDepth = (a: string, b: string): number =>
+    a.split(path.sep).length - b.split(path.sep).length;
+  const ranked = [...new Set(downward)].sort(byPathDepth);
+  if (ranked.length === 1) {
+    return ranked[0];
+  }
+  if (ranked.length > 1) {
+    throw new Error(
+      `[ioc-config] Multiple src/ioc.config.ts files found under ${start}. Pass --project <path> to the package directory or use --config.`,
+    );
+  }
+
+  return path.join(start, "src", "ioc.config.ts");
 };
 
 /**

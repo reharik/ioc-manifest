@@ -12,8 +12,10 @@ export {
 } from "./reports.js";
 
 export {
+  resolveDiscoveryManifestContext,
   runDiscoveryAnalysis,
   type DiscoveryAnalysisResult,
+  type DiscoveryManifestResolution,
 } from "./runDiscoveryAnalysis.js";
 
 export {
