@@ -1,3 +1,8 @@
+/**
+ * @fileoverview Turns discovered factories + `ioc.config` into a stable registration plan:
+ * merge overrides, validate global Awilix key collisions and access/collection slots, resolve
+ * default implementation per contract, attach lifetimes and metadata for codegen.
+ */
 import {
   getContractLevelConfig,
   getImplOverrideForImplementation,
@@ -460,6 +465,10 @@ const validateIocConfigSemantics = (
   return mergedByContract;
 };
 
+/**
+ * Produces sorted `ResolvedContractRegistration[]` used by manifest serialization and group planning.
+ * Throws on any config/discovery inconsistency (unknown contracts, duplicate defaults, key collisions).
+ */
 export const buildRegistrationPlan = (
   contractMap: Map<string, Map<string, DiscoveredFactory>>,
   config?: IocConfig,

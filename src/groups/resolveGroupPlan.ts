@@ -1,3 +1,8 @@
+/**
+ * @fileoverview Builds `IocGroupsManifest` from config `groups` plus assignability against a
+ * named base type. `buildGroupPlan` throws on issues; `analyzeGroupPlan` returns structured errors
+ * for tooling that must not abort the process.
+ */
 import type * as ts from "typescript";
 import {
   collectContractDefaultMembersAssignableToBase,
@@ -336,6 +341,10 @@ const runGroupPlan = (
   return { ok: true, plans: groupPlans, manifest };
 };
 
+/**
+ * Validates group definitions and emits the manifest subtree for generated `ioc-manifest.ts`.
+ * Requires `discovery` (TypeScript program + `generatedDir`) whenever `groups` is set.
+ */
 export const buildGroupPlan = (
   groups: unknown,
   plans: readonly ResolvedContractRegistration[],
@@ -367,6 +376,7 @@ export type GroupPlanAnalysis =
       issues: readonly GroupPlanIssue[];
     };
 
+/** Non-throwing variant of `buildGroupPlan` for inspectors and CI that collect all issues. */
 export const analyzeGroupPlan = (
   groups: unknown,
   plans: readonly ResolvedContractRegistration[],

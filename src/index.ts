@@ -1,3 +1,13 @@
+/**
+ * Public API for **ioc-manifest**: contract-first factory discovery, generated Awilix manifests,
+ * runtime registration, grouped injections, and inspection helpers.
+ *
+ * Typical flow: define IoC config (`defineIocConfig` / `ioc.config.ts`), run
+ * `generateManifest()` (or the `gen:manifest` script), import the emitted manifest module,
+ * then call `registerIocFromManifest` from the runtime entry. When the generated manifest
+ * includes group roots, pass `extractGroupRootsFromContainerManifest(iocManifest)` as the
+ * fourth argument.
+ */
 export * from "./core/index.js";
 
 export {
@@ -22,7 +32,6 @@ export {
 
 export * from "./runtime/index.js";
 
-/** Manifest generation (call from your app or a build script). */
 export { generateManifest } from "./generator/generateManifest.js";
 export type { ManifestOptions } from "./generator/manifestOptions.js";
 export {
@@ -34,7 +43,6 @@ export {
 
 export type { ManifestRuntimePaths } from "./generator/manifestPaths.js";
 
-/** Groups (keep — user-facing feature) */
 export {
   analyzeGroupPlan,
   buildGroupPlan,
@@ -58,7 +66,6 @@ export type {
 
 export { shouldIncludeImplInCollectionGroup } from "./groups/baseTypeAssignability.js";
 
-/** Inspection / reporting (canonical manifest only) */
 export {
   buildDiscoveryReport,
   buildInspectionReport,

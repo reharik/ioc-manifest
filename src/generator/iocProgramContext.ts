@@ -1,9 +1,14 @@
+/**
+ * @fileoverview TypeScript program bootstrap for discovery: resolve `tsconfig.json`, collect root
+ * files via fast-glob from `srcDir`, and surface compiler diagnostics that affect factory typing.
+ */
 import path from "node:path";
 import ts from "typescript";
 import fg from "fast-glob";
 
 const normalizePath = (p: string): string => path.normalize(p);
 
+/** Absolute paths sorted lexically; `cwd` is `srcDir`, patterns come from merged manifest options. */
 export const getDiscoveryTargetFiles = async (
   srcDir: string,
   includePatterns: string[],
@@ -17,6 +22,10 @@ export const getDiscoveryTargetFiles = async (
     })
   ).sort((a, b) => a.localeCompare(b));
 
+/**
+ * Loads the workspace `tsconfig.json` and creates a program over `rootNames` only (typically
+ * discovery targets). Compiler options (paths, module resolution) match your project build.
+ */
 export const createIocProgramForDiscovery = (
   projectRoot: string,
   rootNames: string[],

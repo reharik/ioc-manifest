@@ -1,3 +1,6 @@
+/**
+ * Inspection entry: validate manifests, run discovery analysis, format printable reports.
+ */
 export {
   buildDiscoveryReport,
   buildInspectionReport,

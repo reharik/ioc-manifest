@@ -1,3 +1,8 @@
+/**
+ * @fileoverview Orchestrates manifest generation: load config, discover factories via TypeScript,
+ * build registration + group plans, emit `ioc-manifest.ts` and `ioc-registry.types.ts`, then
+ * format with Prettier when available.
+ */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -55,6 +60,12 @@ const formatGeneratedFileWithPrettier = (
   }
 };
 
+/**
+ * Full generation pipeline for a consuming project. Idempotent writes use atomic rename.
+ *
+ * @param overrides - Optional paths, glob patterns, factory prefix, or explicit `iocConfigPath`.
+ *                    When `ioc.config.ts` is absent, defaults from {@link resolveManifestOptions} apply.
+ */
 export const generateManifest = async (
   overrides?: Partial<Omit<ManifestOptions, "paths">> & {
     paths?: Partial<ManifestRuntimePaths>;

@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Fast lookups from Awilix keys back to manifest metadata and contract default slots.
+ * Built once per `registerIocFromManifest` call to enrich resolution errors.
+ */
 import type {
   IocContractManifest,
   ModuleFactoryManifestMetadata,

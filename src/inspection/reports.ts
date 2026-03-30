@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Builds structured reports for inspection: manifest contracts → human-oriented rows,
+ * plus discovery-oriented summaries from analyzer inputs.
+ */
 import { selectDefaultImplementationName } from "../core/defaultImplementationSelection.js";
 import type {
   IocContractManifest,

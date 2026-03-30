@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Static checks on an in-memory `IocContractManifest` (no filesystem). Complements
+ * runtime registration: catches ambiguous defaults before `container.resolve`.
+ */
 import { selectDefaultImplementationName } from "../core/defaultImplementationSelection.js";
 import type {
   IocContractManifest,

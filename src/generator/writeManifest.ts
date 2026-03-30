@@ -1,3 +1,8 @@
+/**
+ * @fileoverview Serializes manifest data to `ioc-manifest.ts` (runtime imports + metadata) and
+ * `ioc-registry.types.ts` (cradle typing). Keeps output deterministic: sorted keys, stable module aliases,
+ * temp-then-rename for safe concurrent runs.
+ */
 import fs from "node:fs/promises";
 import path from "node:path";
 import ts from "typescript";
@@ -554,6 +559,10 @@ const replaceFileFromTemp = async (
   }
 };
 
+/**
+ * Writes the two generated artifacts next to each other. `manifestImportFromPackage` is the
+ * package name (or path) used in the `import type` for `IocGeneratedContainerManifest`.
+ */
 export const writeManifest = async (
   acceptedFactories: DiscoveredFactory[],
   plans: ResolvedContractRegistration[],

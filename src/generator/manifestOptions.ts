@@ -66,6 +66,10 @@ export const resolveManifestOptions = (
   },
 });
 
+/**
+ * Applies `ioc.config` `discovery` overrides. Always injects an exclude glob for the configured
+ * output directory so the generator does not scan its own emitted `.ts` files (prevents feedback loops).
+ */
 export const mergeManifestOptionsWithIocConfig = (
   base: ManifestOptions,
   config: IocConfig,

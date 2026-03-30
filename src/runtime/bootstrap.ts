@@ -1,3 +1,8 @@
+/**
+ * @fileoverview Awilix wiring for generated manifests: register implementation factories, wire
+ * default-slot aliases, plural collection keys, and transient group roots. Resolution errors are
+ * normalized to {@link IocResolutionError} with manifest-aware stack traces.
+ */
 import {
   aliasTo,
   asFunction,
@@ -335,7 +340,7 @@ const registerGroups = <TCradle extends object>(
 };
 
 /**
- * Registers discovered injectable factories from a generated manifest into an Awilix container.
+ * Registers factories from a generated manifest into an Awilix container.
  * Call order:
  * 1. concrete implementation factories
  * 2. default contract aliases

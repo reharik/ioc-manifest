@@ -3,7 +3,7 @@ import type { IocConfig, IocLifetime } from "../config/iocConfig.js";
 import type { FactoryDiscoveryPaths } from "./manifestPaths.js";
 
 /**
- * One injectable factory discovered in a source file.
+ * One discovered factory export in a source file.
  * `contractTypeRelImport` is the module that declares the contract type symbol
  * (from the TypeScript checker), used for generated type-only imports — independent of default selection.
  */

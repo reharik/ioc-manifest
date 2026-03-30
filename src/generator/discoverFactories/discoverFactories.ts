@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Aggregates per-file factory scans into a contract → implementation map and
+ * optionally enriches factories with inferred dependency contract names from the first parameter.
+ */
 import path from "node:path";
 import ts from "typescript";
 import type { IocConfig } from "../../config/iocConfig.js";

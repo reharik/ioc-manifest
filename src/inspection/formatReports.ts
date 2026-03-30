@@ -1,3 +1,6 @@
+/**
+ * @fileoverview Plain-text rendering of inspection/discovery reports for terminal output (`ioc` CLI).
+ */
 import type { DiscoveryReport, InspectionReport } from "./reports.js";
 import type { ManifestValidationIssue } from "./validateManifest.js";
 

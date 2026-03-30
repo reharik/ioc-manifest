@@ -24,6 +24,10 @@
     "**/*.test.ts",
     "**/*.integration.test.ts",
     "src/groups/test-fixtures/**",
-    "src/generator/test-fixtures/**"
+    "src/generator/test-fixtures/**",
+    "src/examples/**",
+    "src/generated/**",
+    "src/ioc.config.ts",
+    "src/generator/gen-manifest.ts"
   ]
 }

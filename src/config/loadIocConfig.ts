@@ -1,3 +1,8 @@
+/**
+ * @fileoverview Loads and validates `ioc.config.ts` (or `--config` / `IOC_CONFIG` overrides).
+ * Fail-fast validation with `[ioc-config]` errors. The loaded module’s default export (or
+ * `iocConfig` / `config`) supplies the raw shape validated into {@link IocConfig}.
+ */
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -225,6 +230,10 @@ export const resolveIocConfigPath = (
   return path.join(projectRoot, "src", "ioc.config.ts");
 };
 
+/**
+ * Returns `undefined` if the file is missing — used when generation should fall back to CLI defaults.
+ * If the file exists, loads it and validates (same as {@link loadIocConfig}).
+ */
 export const tryLoadIocConfig = async (
   absoluteConfigPath: string,
 ): Promise<IocConfig | undefined> => {

@@ -1,3 +1,7 @@
+/**
+ * Thin CLI wrapper for `npm run gen:manifest` — forwards optional `--config` / `-c` to
+ * {@link generateManifest}.
+ */
 import { generateManifest } from "./generateManifest.js";
 
 type CliArgs = {

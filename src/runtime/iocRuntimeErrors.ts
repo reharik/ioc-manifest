@@ -1,3 +1,8 @@
+/**
+ * @fileoverview User-facing error message builders for predictable runtime failures (missing
+ * exports, misaligned manifest imports, ambiguous defaults). Prefer these over ad hoc strings
+ * so the CLI and library stay consistent.
+ */
 export type MissingDefaultContext = {
   contractName: string;
   implementationNames: string[];

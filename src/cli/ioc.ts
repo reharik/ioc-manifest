@@ -1,14 +1,19 @@
 #!/usr/bin/env node
+/**
+ * @fileoverview `ioc` CLI: inspects a **generated** manifest on disk (`iocManifest` export).
+ *
+ * - `ioc inspect` — human-readable contract / implementation summary + manifest validation.
+ * - `ioc inspect --discovery` — re-runs source discovery (no manifest read) for drift analysis.
+ *
+ * Resolves config the same way as generation (`tryLoadIocConfig`, optional `--config`).
+ */
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   resolveIocConfigPath,
   tryLoadIocConfig,
 } from "../config/loadIocConfig.js";
-import type {
-  IocContractManifest,
-  IocGeneratedContainerManifest,
-} from "../core/manifest.js";
+import type { IocGeneratedContainerManifest } from "../core/manifest.js";
 import {
   mergeManifestOptionsWithIocConfig,
   resolveManifestOptions,
@@ -60,16 +65,9 @@ type GeneratedMainManifestModule = {
   iocManifest: IocGeneratedContainerManifest;
 };
 
-type GeneratedSupportManifestModule = {
-  iocRegistrationManifest: IocContractManifest;
-};
-
-const loadGeneratedManifestModules = async (
+const loadGeneratedManifestModule = async (
   iocConfigPath?: string,
-): Promise<{
-  main: GeneratedMainManifestModule;
-  support: GeneratedSupportManifestModule;
-}> => {
+): Promise<GeneratedMainManifestModule> => {
   const base = resolveManifestOptions();
   const cfgPath = resolveIocConfigPath(base.paths.projectRoot, iocConfigPath);
   const config = await tryLoadIocConfig(cfgPath);
@@ -77,26 +75,14 @@ const loadGeneratedManifestModules = async (
     ? mergeManifestOptionsWithIocConfig(base, config)
     : base;
   const manifestPath = path.resolve(options.paths.manifestOutPath);
-  const supportPath = path.join(
-    path.dirname(manifestPath),
-    "ioc-manifest.support.ts",
-  );
-  const [main, support] = await Promise.all([
-    import(
-      pathToFileURL(manifestPath).href
-    ) as Promise<GeneratedMainManifestModule>,
-    import(
-      pathToFileURL(supportPath).href
-    ) as Promise<GeneratedSupportManifestModule>,
-  ]);
-  return { main, support };
+  const main = (await import(pathToFileURL(manifestPath).href)) as
+    GeneratedMainManifestModule;
+  return main;
 };
 
 const main = async (): Promise<void> => {
   const cli = parseArgs(process.argv);
-  const { main: mainMod } = await loadGeneratedManifestModules(
-    cli.iocConfigPath,
-  );
+  const mainMod = await loadGeneratedManifestModule(cli.iocConfigPath);
 
   if (cli.discovery) {
     const analysis = await runDiscoveryAnalysis({
