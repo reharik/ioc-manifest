@@ -71,6 +71,7 @@ jobs:
             echo "| Step | Status |"
             echo "| --- | --- |"
             echo "| Typecheck (\`tsc --noEmit\`) | passed |"
+            echo "| Lint  | passed |"
             echo "| Tests | passed |"
             echo "| Build | passed |"
           } >> "$GITHUB_STEP_SUMMARY"
