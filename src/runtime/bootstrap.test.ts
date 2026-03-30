@@ -16,13 +16,14 @@ type TestCradle = {
   counters: Record<string, CounterService>;
 };
 
-const createManifestForSingleContract = (lifetime: "singleton" | "scoped" | "transient"): IocContractManifest => ({
+const createManifestForSingleContract = (
+  lifetime: "singleton" | "scoped" | "transient",
+): IocContractManifest => ({
   Svc: {
     svc: {
       exportName: "buildSvc",
       registrationKey: "svc",
       modulePath: "svc.ts",
-      sourceFilePath: "svc.ts",
       relImport: "../svc.js",
       contractName: "Svc",
       implementationName: "svc",
@@ -43,7 +44,6 @@ describe("registerIocFromManifest", () => {
             exportName: "buildZeroArg",
             registrationKey: "zeroArg",
             modulePath: "zero.ts",
-            sourceFilePath: "zero.ts",
             relImport: "../zero.js",
             contractName: "ZeroArg",
             implementationName: "zeroArg",
@@ -57,7 +57,6 @@ describe("registerIocFromManifest", () => {
             exportName: "buildSvcWithDefaultParam",
             registrationKey: "svc",
             modulePath: "svc.ts",
-            sourceFilePath: "svc.ts",
             relImport: "../svc.js",
             contractName: "Svc",
             implementationName: "svc",
@@ -88,7 +87,10 @@ describe("registerIocFromManifest", () => {
       >({
         injectionMode: "PROXY",
       });
-      registerIocFromManifest(container, { contracts: manifest, moduleImports });
+      registerIocFromManifest(container, {
+        contracts: manifest,
+        moduleImports,
+      });
 
       const zeroArg = container.resolve("zeroArg");
       const svc = container.resolve("svc");
@@ -106,7 +108,6 @@ describe("registerIocFromManifest", () => {
             exportName: "buildSqlite",
             registrationKey: "sqliteKnex",
             modulePath: "knex.ts",
-            sourceFilePath: "knex.ts",
             relImport: "../knex.js",
             contractName: "Knex",
             implementationName: "sqlite",
@@ -126,7 +127,10 @@ describe("registerIocFromManifest", () => {
         sqliteKnex: { driver: string };
         database: { driver: string };
       }>({ injectionMode: "PROXY" });
-      registerIocFromManifest(container, { contracts: manifest, moduleImports });
+      registerIocFromManifest(container, {
+        contracts: manifest,
+        moduleImports,
+      });
       const viaAccess = container.resolve("database") as { driver: string };
       const viaReg = container.resolve("sqliteKnex") as { driver: string };
       assert.strictEqual(viaAccess.driver, "sqlite");
@@ -143,7 +147,6 @@ describe("registerIocFromManifest", () => {
               exportName: "buildZ",
               registrationKey: "zReg",
               modulePath: "svc.ts",
-              sourceFilePath: "svc.ts",
               relImport: "../svc.js",
               contractName: "Svc",
               implementationName: "zImpl",
@@ -155,7 +158,6 @@ describe("registerIocFromManifest", () => {
               exportName: "buildA",
               registrationKey: "aReg",
               modulePath: "svc.ts",
-              sourceFilePath: "svc.ts",
               relImport: "../svc.js",
               contractName: "Svc",
               implementationName: "aImpl",
@@ -176,7 +178,10 @@ describe("registerIocFromManifest", () => {
           svc: { tag: string };
           svcs: { tag: string }[];
         }>({ injectionMode: "PROXY" });
-        registerIocFromManifest(container, { contracts: manifest, moduleImports });
+        registerIocFromManifest(container, {
+          contracts: manifest,
+          moduleImports,
+        });
         const svcs = container.resolve("svcs") as { tag: string }[];
         assert.ok(Array.isArray(svcs));
         assert.strictEqual(svcs.length, 2);
@@ -197,7 +202,6 @@ describe("registerIocFromManifest", () => {
             exportName: "buildFast",
             registrationKey: "fastCounter",
             modulePath: "counter.ts",
-            sourceFilePath: "counter.ts",
             relImport: "../counter.js",
             contractName: "CounterService",
             implementationName: "fast",
@@ -209,7 +213,6 @@ describe("registerIocFromManifest", () => {
             exportName: "buildStable",
             registrationKey: "stableCounter",
             modulePath: "counter.ts",
-            sourceFilePath: "counter.ts",
             relImport: "../counter.js",
             contractName: "CounterService",
             implementationName: "stable",
@@ -226,7 +229,10 @@ describe("registerIocFromManifest", () => {
       ];
 
       const container = createContainer<TestCradle>({ injectionMode: "PROXY" });
-      registerIocFromManifest(container, { contracts: manifest, moduleImports });
+      registerIocFromManifest(container, {
+        contracts: manifest,
+        moduleImports,
+      });
       const first = container.resolve("counterServices") as CounterService[];
       const second = container.resolve("counterServices") as CounterService[];
       assert.notStrictEqual(first, second);
@@ -241,7 +247,6 @@ describe("registerIocFromManifest", () => {
             exportName: "buildFast",
             registrationKey: "fastCounter",
             modulePath: "counter.ts",
-            sourceFilePath: "counter.ts",
             relImport: "../counter.js",
             contractName: "CounterService",
             implementationName: "fast",
@@ -253,7 +258,6 @@ describe("registerIocFromManifest", () => {
             exportName: "buildStable",
             registrationKey: "stableCounter",
             modulePath: "counter.ts",
-            sourceFilePath: "counter.ts",
             relImport: "../counter.js",
             contractName: "CounterService",
             implementationName: "stable",
@@ -287,7 +291,6 @@ describe("registerIocFromManifest", () => {
             exportName: "buildFast",
             registrationKey: "fastCounter",
             modulePath: "counter.ts",
-            sourceFilePath: "counter.ts",
             relImport: "../counter.js",
             contractName: "CounterService",
             implementationName: "fast",
@@ -299,7 +302,6 @@ describe("registerIocFromManifest", () => {
             exportName: "buildStable",
             registrationKey: "stableCounter",
             modulePath: "counter.ts",
-            sourceFilePath: "counter.ts",
             relImport: "../counter.js",
             contractName: "CounterService",
             implementationName: "stable",
@@ -333,7 +335,6 @@ describe("registerIocFromManifest", () => {
             exportName: "buildAlpha",
             registrationKey: "alphaSvc",
             modulePath: "svc.ts",
-            sourceFilePath: "svc.ts",
             relImport: "../svc.js",
             contractName: "Svc",
             implementationName: "alpha",
@@ -344,7 +345,6 @@ describe("registerIocFromManifest", () => {
             exportName: "buildBeta",
             registrationKey: "betaSvc",
             modulePath: "svc.ts",
-            sourceFilePath: "svc.ts",
             relImport: "../svc.js",
             contractName: "Svc",
             implementationName: "beta",
@@ -363,7 +363,10 @@ describe("registerIocFromManifest", () => {
       const container = createContainer<{ svc: { kind: string } }>({
         injectionMode: "PROXY",
       });
-      registerIocFromManifest(container, { contracts: manifest, moduleImports });
+      registerIocFromManifest(container, {
+        contracts: manifest,
+        moduleImports,
+      });
       const resolved = container.resolve("svc");
       assert.strictEqual(resolved.kind, "beta");
     });
@@ -377,7 +380,6 @@ describe("registerIocFromManifest", () => {
             exportName: "buildPrimary",
             registrationKey: "primaryWidget",
             modulePath: "primary.ts",
-            sourceFilePath: "primary.ts",
             relImport: "../primary.js",
             contractName: "Widget",
             implementationName: "primaryWidget",
@@ -388,7 +390,6 @@ describe("registerIocFromManifest", () => {
             exportName: "buildSecondary",
             registrationKey: "secondaryWidget",
             modulePath: "secondary.ts",
-            sourceFilePath: "secondary.ts",
             relImport: "../secondary.js",
             contractName: "Widget",
             implementationName: "secondaryWidget",
@@ -399,7 +400,6 @@ describe("registerIocFromManifest", () => {
             exportName: "buildWidget",
             registrationKey: "widget",
             modulePath: "widget.ts",
-            sourceFilePath: "widget.ts",
             relImport: "../widget.js",
             contractName: "Widget",
             implementationName: "widget",
@@ -418,7 +418,10 @@ describe("registerIocFromManifest", () => {
       const container = createContainer<{ widget: { kind: string } }>({
         injectionMode: "PROXY",
       });
-      registerIocFromManifest(container, { contracts: manifest, moduleImports });
+      registerIocFromManifest(container, {
+        contracts: manifest,
+        moduleImports,
+      });
       const resolved = container.resolve("widget");
       assert.strictEqual(resolved.kind, "conventional");
     });
@@ -432,7 +435,6 @@ describe("registerIocFromManifest", () => {
             exportName: "buildLocal",
             registrationKey: "localMediaStorage",
             modulePath: "local.ts",
-            sourceFilePath: "local.ts",
             relImport: "../local.js",
             contractName: "MediaStorage",
             implementationName: "local",
@@ -443,7 +445,6 @@ describe("registerIocFromManifest", () => {
             exportName: "buildRemote",
             registrationKey: "remoteMediaStorage",
             modulePath: "remote.ts",
-            sourceFilePath: "remote.ts",
             relImport: "../remote.js",
             contractName: "MediaStorage",
             implementationName: "remote",
@@ -462,7 +463,11 @@ describe("registerIocFromManifest", () => {
         injectionMode: "PROXY",
       });
       assert.throws(
-        () => registerIocFromManifest(container, { contracts: manifest, moduleImports }),
+        () =>
+          registerIocFromManifest(container, {
+            contracts: manifest,
+            moduleImports,
+          }),
         /Multiple implementations for contract/,
       );
     });
@@ -473,7 +478,8 @@ describe("registerIocFromManifest", () => {
       const missingModuleContainer = createContainer<TestCradle>({
         injectionMode: "PROXY",
       });
-      const missingModuleManifest = createManifestForSingleContract("singleton");
+      const missingModuleManifest =
+        createManifestForSingleContract("singleton");
       assert.throws(
         () =>
           registerIocFromManifest(missingModuleContainer, {
@@ -505,7 +511,6 @@ describe("registerIocFromManifest", () => {
       > & { moduleIndex?: number; default?: boolean },
     ): IocContractManifest[string][string] => ({
       modulePath: `${partial.implementationName}.ts`,
-      sourceFilePath: `${partial.implementationName}.ts`,
       relImport: `../${partial.implementationName}.js`,
       lifetime: "singleton",
       moduleIndex: partial.moduleIndex ?? 0,
@@ -526,13 +531,17 @@ describe("registerIocFromManifest", () => {
       };
       const moduleImports: readonly IocModuleNamespace[] = [
         {
-          buildRoot: (deps: { missingLeaf: unknown }): unknown => deps.missingLeaf,
+          buildRoot: (deps: { missingLeaf: unknown }): unknown =>
+            deps.missingLeaf,
         },
       ];
       const container = createContainer<{ root: unknown }>({
         injectionMode: "PROXY",
       });
-      registerIocFromManifest(container, { contracts: manifest, moduleImports });
+      registerIocFromManifest(container, {
+        contracts: manifest,
+        moduleImports,
+      });
 
       assert.throws(
         () => container.resolve("root"),
@@ -591,7 +600,10 @@ describe("registerIocFromManifest", () => {
         levelA: unknown;
         levelB: unknown;
       }>({ injectionMode: "PROXY" });
-      registerIocFromManifest(container, { contracts: manifest, moduleImports });
+      registerIocFromManifest(container, {
+        contracts: manifest,
+        moduleImports,
+      });
 
       assert.throws(
         () => container.resolve("root"),
@@ -653,7 +665,10 @@ describe("registerIocFromManifest", () => {
         levelA: unknown;
         levelB: unknown;
       }>({ injectionMode: "PROXY" });
-      registerIocFromManifest(container, { contracts: manifest, moduleImports });
+      registerIocFromManifest(container, {
+        contracts: manifest,
+        moduleImports,
+      });
 
       assert.throws(
         () => container.resolve("root"),
@@ -686,116 +701,115 @@ describe("registerIocFromManifest", () => {
   describe("When the manifest includes group roots at the top level", () => {
     describe("When the group is a collection", () => {
       it("should resolve implementations in manifest order", () => {
-      const manifest: IocContractManifest = {
-        A: {
-          a: {
-            exportName: "buildA",
-            registrationKey: "implA",
-            modulePath: "a.ts",
-            sourceFilePath: "a.ts",
-            relImport: "../a.js",
-            contractName: "A",
-            implementationName: "a",
-            lifetime: "singleton",
-            moduleIndex: 0,
-            default: true,
+        const manifest: IocContractManifest = {
+          A: {
+            a: {
+              exportName: "buildA",
+              registrationKey: "implA",
+              modulePath: "a.ts",
+              relImport: "../a.js",
+              contractName: "A",
+              implementationName: "a",
+              lifetime: "singleton",
+              moduleIndex: 0,
+              default: true,
+            },
           },
-        },
-        B: {
-          b: {
-            exportName: "buildB",
-            registrationKey: "implB",
-            modulePath: "b.ts",
-            sourceFilePath: "b.ts",
-            relImport: "../b.js",
-            contractName: "B",
-            implementationName: "b",
-            lifetime: "singleton",
-            moduleIndex: 1,
-            default: true,
+          B: {
+            b: {
+              exportName: "buildB",
+              registrationKey: "implB",
+              modulePath: "b.ts",
+              relImport: "../b.js",
+              contractName: "B",
+              implementationName: "b",
+              lifetime: "singleton",
+              moduleIndex: 1,
+              default: true,
+            },
           },
-        },
-      };
-      const groups: IocGroupsManifest = {
-        pair: [
-          { contractName: "A", registrationKey: "implA" },
-          { contractName: "B", registrationKey: "implB" },
-        ],
-      };
-      const moduleImports: readonly IocModuleNamespace[] = [
-        { buildA: (): { tag: string } => ({ tag: "a" }) },
-        { buildB: (): { tag: string } => ({ tag: "b" }) },
-      ];
-      const container = createContainer<{
-        implA: { tag: string };
-        implB: { tag: string };
-        pair: { tag: string }[];
-      }>({ injectionMode: "PROXY" });
-      registerIocFromManifest(container, {
-        contracts: manifest,
-        moduleImports,
-        ...groups,
-      });
-      const pair = container.resolve("pair");
-      assert.deepStrictEqual(pair.map((x) => x.tag), ["a", "b"]);
+        };
+        const groups: IocGroupsManifest = {
+          pair: [
+            { contractName: "A", registrationKey: "implA" },
+            { contractName: "B", registrationKey: "implB" },
+          ],
+        };
+        const moduleImports: readonly IocModuleNamespace[] = [
+          { buildA: (): { tag: string } => ({ tag: "a" }) },
+          { buildB: (): { tag: string } => ({ tag: "b" }) },
+        ];
+        const container = createContainer<{
+          implA: { tag: string };
+          implB: { tag: string };
+          pair: { tag: string }[];
+        }>({ injectionMode: "PROXY" });
+        registerIocFromManifest(container, {
+          contracts: manifest,
+          moduleImports,
+          ...groups,
+        });
+        const pair = container.resolve("pair");
+        assert.deepStrictEqual(
+          pair.map((x) => x.tag),
+          ["a", "b"],
+        );
       });
     });
 
     describe("When the group is an object keyed by contract key", () => {
       it("should resolve each property from leaf registrationKey on the cradle", () => {
-      const manifest: IocContractManifest = {
-        A: {
-          a: {
-            exportName: "buildA",
-            registrationKey: "implA",
-            modulePath: "a.ts",
-            sourceFilePath: "a.ts",
-            relImport: "../a.js",
-            contractName: "A",
-            implementationName: "a",
-            lifetime: "singleton",
-            moduleIndex: 0,
-            default: true,
+        const manifest: IocContractManifest = {
+          A: {
+            a: {
+              exportName: "buildA",
+              registrationKey: "implA",
+              modulePath: "a.ts",
+              relImport: "../a.js",
+              contractName: "A",
+              implementationName: "a",
+              lifetime: "singleton",
+              moduleIndex: 0,
+              default: true,
+            },
           },
-        },
-        B: {
-          b: {
-            exportName: "buildB",
-            registrationKey: "implB",
-            modulePath: "b.ts",
-            sourceFilePath: "b.ts",
-            relImport: "../b.js",
-            contractName: "B",
-            implementationName: "b",
-            lifetime: "singleton",
-            moduleIndex: 1,
-            default: true,
+          B: {
+            b: {
+              exportName: "buildB",
+              registrationKey: "implB",
+              modulePath: "b.ts",
+              relImport: "../b.js",
+              contractName: "B",
+              implementationName: "b",
+              lifetime: "singleton",
+              moduleIndex: 1,
+              default: true,
+            },
           },
-        },
-      };
-      const groups: IocGroupsManifest = {
-        byKey: {
-          a: { contractName: "A", registrationKey: "implA" },
-          b: { contractName: "B", registrationKey: "implB" },
-        },
-      };
-      const moduleImports: readonly IocModuleNamespace[] = [
-        { buildA: (): { tag: string } => ({ tag: "a" }) },
-        { buildB: (): { tag: string } => ({ tag: "b" }) },
-      ];
-      const container = createContainer<{
-        implA: { tag: string };
-        implB: { tag: string };
-        byKey: { a: { tag: string }; b: { tag: string } };
-      }>({ injectionMode: "PROXY" });
-      registerIocFromManifest(container, {
-        contracts: manifest,
-        moduleImports,
-        ...groups,
-      });
-      const byKey = container.resolve("byKey");
-      assert.strictEqual(byKey.a.tag, "a");
-      assert.strictEqual(byKey.b.tag, "b");
+        };
+        const groups: IocGroupsManifest = {
+          byKey: {
+            a: { contractName: "A", registrationKey: "implA" },
+            b: { contractName: "B", registrationKey: "implB" },
+          },
+        };
+        const moduleImports: readonly IocModuleNamespace[] = [
+          { buildA: (): { tag: string } => ({ tag: "a" }) },
+          { buildB: (): { tag: string } => ({ tag: "b" }) },
+        ];
+        const container = createContainer<{
+          implA: { tag: string };
+          implB: { tag: string };
+          byKey: { a: { tag: string }; b: { tag: string } };
+        }>({ injectionMode: "PROXY" });
+        registerIocFromManifest(container, {
+          contracts: manifest,
+          moduleImports,
+          ...groups,
+        });
+        const byKey = container.resolve("byKey");
+        assert.strictEqual(byKey.a.tag, "a");
+        assert.strictEqual(byKey.b.tag, "b");
       });
     });
   });

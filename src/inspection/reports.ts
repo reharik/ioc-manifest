@@ -100,7 +100,7 @@ export const buildInspectionReport = (
 };
 
 export type DiscoveryExportReportRow = {
-  sourceFilePath: string;
+  modulePath: string;
   exportName?: string;
   status: "discovered" | "skipped";
   contractName?: string;
@@ -110,19 +110,19 @@ export type DiscoveryExportReportRow = {
 
 export type DiscoveryReport = {
   files: readonly {
-    sourceFilePath: string;
+    modulePath: string;
     rows: readonly DiscoveryExportReportRow[];
   }[];
 };
 
 const outcomeToRows = (
-  sourceFilePath: string,
+  modulePath: string,
   outcome: IocDiscoveryOutcome,
 ): DiscoveryExportReportRow[] => {
   if (outcome.scope === "file") {
     return [
       {
-        sourceFilePath,
+        modulePath,
         status: "skipped",
         skipReason: outcome.skipReason,
       },
@@ -132,7 +132,7 @@ const outcomeToRows = (
   if (outcome.status === "discovered") {
     return [
       {
-        sourceFilePath,
+        modulePath,
         exportName: outcome.exportName,
         status: "discovered",
         contractName: outcome.contractName,
@@ -143,7 +143,7 @@ const outcomeToRows = (
 
   return [
     {
-      sourceFilePath,
+      modulePath,
       exportName: outcome.exportName,
       status: "skipped",
       skipReason: outcome.skipReason,
@@ -167,10 +167,10 @@ export const buildDiscoveryReport = (
 
   const files = discoveryFiles
     .slice()
-    .sort((a, b) => a.sourceFilePath.localeCompare(b.sourceFilePath))
+    .sort((a, b) => a.modulePath.localeCompare(b.modulePath))
     .map((file) => ({
-      sourceFilePath: file.sourceFilePath,
-      rows: file.outcomes.flatMap((o) => outcomeToRows(file.sourceFilePath, o)),
+      modulePath: file.modulePath,
+      rows: file.outcomes.flatMap((o) => outcomeToRows(file.modulePath, o)),
     }));
 
   return { files };

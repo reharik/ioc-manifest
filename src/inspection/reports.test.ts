@@ -13,7 +13,6 @@ const sampleManifest = (): IocContractManifest => ({
       exportName: "buildLocalMediaStorage",
       registrationKey: "localMediaStorage",
       modulePath: "src/media/buildLocalMediaStorage.ts",
-      sourceFilePath: "src/media/buildLocalMediaStorage.ts",
       relImport: "../media/buildLocalMediaStorage.js",
       contractName: "MediaStorage",
       implementationName: "local",
@@ -27,7 +26,6 @@ const sampleManifest = (): IocContractManifest => ({
       exportName: "buildAlbumService",
       registrationKey: "albumService",
       modulePath: "src/albums/buildAlbumService.ts",
-      sourceFilePath: "src/albums/buildAlbumService.ts",
       relImport: "../albums/buildAlbumService.js",
       contractName: "AlbumService",
       implementationName: "albumService",
@@ -62,7 +60,6 @@ describe("Inspection reports", () => {
             exportName: "buildPrimary",
             registrationKey: "primaryWidget",
             modulePath: "p.ts",
-            sourceFilePath: "p.ts",
             relImport: "../p.js",
             contractName: "Widget",
             implementationName: "primaryWidget",
@@ -73,7 +70,6 @@ describe("Inspection reports", () => {
             exportName: "buildWidget",
             registrationKey: "widget",
             modulePath: "w.ts",
-            sourceFilePath: "w.ts",
             relImport: "../w.js",
             contractName: "Widget",
             implementationName: "widget",
@@ -98,7 +94,6 @@ describe("Inspection reports", () => {
             exportName: "buildA",
             registrationKey: "a",
             modulePath: "a.ts",
-            sourceFilePath: "a.ts",
             relImport: "../a.js",
             contractName: "MediaStorage",
             implementationName: "a",
@@ -109,7 +104,6 @@ describe("Inspection reports", () => {
             exportName: "buildB",
             registrationKey: "b",
             modulePath: "b.ts",
-            sourceFilePath: "b.ts",
             relImport: "../b.js",
             contractName: "MediaStorage",
             implementationName: "b",
@@ -131,7 +125,7 @@ describe("Inspection reports", () => {
     it("should format discovered and skipped exports from on-demand discovery files", () => {
       const report = buildDiscoveryReport([
         {
-          sourceFilePath: "src/media/buildLocalMediaStorage.ts",
+          modulePath: "src/media/buildLocalMediaStorage.ts",
           outcomes: [
             {
               scope: "export",
@@ -145,7 +139,7 @@ describe("Inspection reports", () => {
           ],
         },
         {
-          sourceFilePath: "src/media/localMediaStorage.ts",
+          modulePath: "src/media/localMediaStorage.ts",
           outcomes: [
             {
               scope: "file",
@@ -157,11 +151,11 @@ describe("Inspection reports", () => {
       ]);
       assert.strictEqual(report.files.length, 2);
       const discoveredFile = report.files.find((f) =>
-        f.sourceFilePath.includes("buildLocal"),
+        f.modulePath.includes("buildLocal"),
       );
       assert.ok(discoveredFile?.rows.some((r) => r.status === "discovered"));
       const skippedFile = report.files.find((f) =>
-        f.sourceFilePath.includes("localMediaStorage.ts"),
+        f.modulePath.includes("localMediaStorage.ts"),
       );
       assert.ok(
         skippedFile?.rows.some(

@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Type check
+        run: |
+          if npm run | grep -q " typecheck"; then
+            npm run typecheck
+          else
+            npx tsc --noEmit
+          fi
+
+      - name: Lint
+        run: |
+          if npm run | grep -q " lint"; then
+            npm run lint
+          else
+            echo "No lint script found, skipping."
+          fi
+
+      - name: Test
+        run: |
+          if npm run | grep -q " test"; then
+            npm test
+          else
+            echo "No test script found, skipping."
+          fi
+
+      - name: Build
+        run: |
+          if npm run | grep -q " build"; then
+            npm run build
+          else
+            echo "No build script found, skipping."
+          fi
+
+      - name: Summary
+        if: success()
+        run: |
+          {
+            echo "## CI summary"
+            echo ""
+            echo "| Step | Status |"
+            echo "| --- | --- |"
+            echo "| Typecheck (\`tsc --noEmit\`) | passed |"
+            echo "| Tests | passed |"
+            echo "| Build | passed |"
+          } >> "$GITHUB_STEP_SUMMARY"

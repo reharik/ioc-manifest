@@ -264,7 +264,7 @@ export const collectFileAnalysisForFactoryDiscovery = (
 };
 
 export type ScanFactoryFileResult = {
-  sourceFilePath: string;
+  modulePath: string;
   outcomes: IocDiscoveryOutcome[];
   discovered: DiscoveredFactory[];
 };
@@ -306,7 +306,7 @@ export const scanFactoryFile = (
     paths: { srcDir, generatedDir },
   } = context;
 
-  const sourceFilePath = modulePathFromSrc(absPath, srcDir);
+  const modulePath = modulePathFromSrc(absPath, srcDir);
   const discovered: DiscoveredFactory[] = [];
   const outcomes: IocDiscoveryOutcome[] = [];
 
@@ -318,7 +318,7 @@ export const scanFactoryFile = (
       status: IocDiscoveryStatus.SKIPPED,
       skipReason: IocDiscoverySkipReason.NO_FACTORY_PATTERN_IN_SOURCE,
     });
-    return { sourceFilePath, outcomes, discovered };
+    return { modulePath, outcomes, discovered };
   }
 
   const analysis = collectFileAnalysisForFactoryDiscovery(sourceFile);
@@ -341,7 +341,7 @@ export const scanFactoryFile = (
       status: IocDiscoveryStatus.SKIPPED,
       skipReason: IocDiscoverySkipReason.NO_MATCHING_EXPORT,
     });
-    return { sourceFilePath, outcomes, discovered };
+    return { modulePath, outcomes, discovered };
   }
 
   for (const exportName of candidateExports) {
@@ -451,7 +451,7 @@ export const scanFactoryFile = (
       implementationName,
       exportName,
       registrationKey,
-      modulePath: sourceFilePath,
+      modulePath,
       relImport: relImportFromGeneratedDir(absPath, generatedDir),
       discoveredBy: match.matchedBy,
     });
@@ -467,5 +467,5 @@ export const scanFactoryFile = (
     });
   }
 
-  return { sourceFilePath, outcomes, discovered };
+  return { modulePath, outcomes, discovered };
 };

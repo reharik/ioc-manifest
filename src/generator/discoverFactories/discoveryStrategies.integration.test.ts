@@ -173,7 +173,7 @@ describe("Discovery strategies (discoverFactories)", () => {
 
       assert.strictEqual(acceptedFactories.length, 0);
       const record = discoveryFiles.find((f) =>
-        f.sourceFilePath.endsWith("invalid-factory.ts"),
+        f.modulePath.endsWith("invalid-factory.ts"),
       );
       assert.ok(record);
       const exportOutcome = record.outcomes.find(

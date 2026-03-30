@@ -49,7 +49,7 @@ export type IocDiscoveryOutcome =
 
 export type IocDiscoveryFileRecord = {
   /** Path relative to the project `src/` root (POSIX). */
-  sourceFilePath: string;
+  modulePath: string;
   outcomes: readonly IocDiscoveryOutcome[];
 };
 

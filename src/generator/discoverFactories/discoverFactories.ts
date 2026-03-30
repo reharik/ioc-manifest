@@ -112,7 +112,7 @@ export const discoverFactories = (
     const scan = scanFactoryFile(fileContext, checker);
     if (collectRecords) {
       discoveryFiles.push({
-        sourceFilePath: scan.sourceFilePath,
+        modulePath: scan.modulePath,
         outcomes: scan.outcomes,
       });
     }
@@ -156,7 +156,7 @@ export const discoverFactories = (
   const sortedFiles = collectRecords
     ? discoveryFiles
         .slice()
-        .sort((a, b) => a.sourceFilePath.localeCompare(b.sourceFilePath))
+        .sort((a, b) => a.modulePath.localeCompare(b.modulePath))
     : [];
 
   return {

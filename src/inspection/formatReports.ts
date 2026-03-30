@@ -51,7 +51,7 @@ export const formatDiscoveryReport = (report: DiscoveryReport): string => {
   const lines: string[] = [];
 
   for (const file of report.files) {
-    lines.push(file.sourceFilePath);
+    lines.push(file.modulePath);
 
     for (const row of file.rows) {
       const statusIcon = row.status === "discovered" ? "✔" : "✖";
