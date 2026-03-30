@@ -1,51 +1,109 @@
 # ioc-manifest
 
-**Contract-first IoC for TypeScript.** Discover factory functions, generate a typed Awilix manifest, and register implementations with predictable keys—plus optional **groups** that collect every implementation assignable to a shared base type.
+**Compile-time dependency registration for Awilix (PROXY mode).**
 
-This package is aimed at teams that want compile-time clarity (what is registered, under which keys, with which lifetimes) without maintaining registration boilerplate by hand.
+This library is **not an IoC container**. Instead, it generates a fully-typed registration manifest for Awilix, allowing you to use Awilix’s **PROXY injection mode** without manually wiring dependencies.
+
+It works by **discovering factory functions in your codebase**, inferring their contracts from TypeScript, and generating:
+
+- A runtime manifest for registering dependencies with Awilix
+- Strongly-typed container (cradle) definitions
+- Predictable registration keys based on conventions
+
+The result is a system where:
+
+- Dependencies are wired **by convention, not manual registration**
+- The container remains **flat and predictable**
+- All registrations are **visible and validated at build time**
+
+---
+
+## Design philosophy
+
+This library is intentionally opinionated:
+
+- **Function-first** — designed for factory functions (`buildX`) rather than classes or decorators
+- **Awilix PROXY mode** — dependencies are injected via parameter destructuring, not constructor injection
+- **Convention over configuration** — naming and return types drive registration
+- **No runtime magic** — all discovery happens at build time using the TypeScript compiler
+
+---
+
+## When to use this
+
+Use `ioc-manifest` if you:
+
+- Use (or want to use) **Awilix in PROXY mode**
+- Prefer **plain functions over classes**
+- Want **zero manual registration boilerplate**
+- Care about **strong typing of your container**
+
+Avoid it if you:
+
+- Prefer class-based DI frameworks (e.g. NestJS, Inversify)
+- Rely on decorators or runtime reflection
+- Need highly dynamic or runtime-defined registrations
+
+---
+
+## Mental model
+
+```
+Factory → Implementation → Contract → Registration → Container
+```
+
+- You write **factories**
+- The generator infers **contracts**
+- It produces a **manifest**
+- The runtime registers everything into Awilix
+
+---
+
+## Key derivation (important)
+
+Given a factory:
+
+```ts
+export const buildHttpClient = (): MyService => { ... }
+```
+
+We derive:
+
+- **Contract** → `MyService` (from return type)
+- **Implementation name** → `httpClient` (from function name without prefix)
+- **Default access key** → `myService` (camel-cased contract name)
+
+Result:
+
+```ts
+container.resolve("myService"); // default implementation
+container.resolve("httpClient"); // specific implementation
+container.resolve("myServices"); // array (if multiple implementations exist)
+```
+
+You can override these via config.
+
+---
+
+## Contract detection rules
+
+A factory is associated with a contract if:
+
+- Its return type is explicitly annotated, OR
+- TypeScript can resolve a concrete return type via the compiler
+
+Factories without a resolvable return type are skipped.
 
 ---
 
 ## Features
 
-- **Discovery** — Scans your source tree with configurable globs; uses the TypeScript program from your `tsconfig.json` so return types and dependency shapes are real, not guessed.
-- **Generated manifest** — Emits `ioc-manifest.ts` (runtime metadata + static imports) and `ioc-registry.types.ts` (cradle / container typing).
-- **Awilix integration** — `registerIocFromManifest` registers factories, default-slot aliases, plural **collection** keys for multi-implementation contracts, and **group** roots.
-- **Configuration** — `ioc.config.ts` controls discovery paths, per-implementation overrides (`name`, `lifetime`, `default`), contract-level `accessKey`, and **groups** (`collection` vs `object` over a `baseType`).
-- **Inspection** — Library APIs and a small CLI (`ioc inspect`) to validate manifests and compare live discovery to what you think is registered.
-
----
-
-## Prerequisites
-
-- **Node.js** (current LTS recommended)
-- **TypeScript** project with a root `tsconfig.json`
-- **Awilix** as your DI container (`awilix` is a direct dependency when you use the runtime helpers)
-
----
-
-## Installation
-
-```bash
-npm install ioc-manifest
-```
-
-The published artifact includes `dist/` (compiled ESM + types) and `bin/ioc.cjs` (CLI shim).
-
-> **Note:** This repository’s `package.json` may set `"private": true` during development. For npm publishing, clear `private`, verify `"files"`, version, and run `npm publish` from a clean build.
-
----
-
-## Concepts
-
-| Term | Meaning |
-|------|---------|
-| **Contract** | The TypeScript interface / type alias your factory is understood to return (from the checker). |
-| **Implementation** | One concrete factory + module for that contract (multiple implementations per contract are supported). |
-| **Registration key** | The Awilix cradle property name for an implementation (derived from the export name or overridden in config). |
-| **Default slot** | The singular key used to resolve the chosen default implementation for a contract (convention: camel-cased contract name, or `$contract.accessKey`). |
-| **Collection key** | When a contract has more than one implementation, a plural key (e.g. `mediaStorages`) resolves to **all** implementations as an array. |
-| **Group** | A named cradle key whose value is either an array (**collection**) or object (**object**) of implementations whose **declared contract types** are assignable to a configured `baseType`. |
+- **Discovery** — Scans your source tree using your `tsconfig.json`
+- **Generated manifest** — Emits runtime + type-safe container definitions
+- **Awilix integration** — Registers everything with correct lifetimes and keys
+- **Configuration** — Override naming, defaults, lifetimes, and access keys
+- **Groups** — Aggregate implementations by shared base type
+- **Inspection CLI** — Debug and validate your dependency graph
 
 ---
 
@@ -53,9 +111,7 @@ The published artifact includes `dist/` (compiled ESM + types) and `bin/ioc.cjs`
 
 ### 1. Add IoC configuration
 
-Create `src/ioc.config.ts` (default location). Use `defineIocConfig` for typing:
-
-```typescript
+```ts
 import { defineIocConfig } from "ioc-manifest";
 
 export default defineIocConfig({
@@ -65,177 +121,172 @@ export default defineIocConfig({
     excludes: ["**/*.test.ts", "generated/**/*"],
     factoryPrefix: "build",
   },
-  registrations: {
-    // Contract name → implementation name → overrides
-    MyService: {
-      httpClient: { default: true, lifetime: "singleton" },
-    },
-  },
 });
 ```
 
+---
+
 ### 2. Implement factories
 
-Use the configured prefix (default `build`) and export factory functions whose return type is your contract:
-
-```typescript
+```ts
 import type { MyService } from "./MyService.js";
 
 export const buildHttpClient = (): MyService => {
-  /* ... */
+  return {
+    doThing: () => "hello",
+  };
 };
 ```
 
+---
+
 ### 3. Generate the manifest
 
-From your app or CI:
-
-```typescript
+```ts
 import { generateManifest } from "ioc-manifest";
 
 await generateManifest();
 ```
 
-Or add a script that runs the built CLI entry (this repo uses `tsx` during development):
+---
 
-```json
-{
-  "scripts": {
-    "gen:manifest": "tsx node_modules/ioc-manifest/dist/generator/gen-manifest.js"
-  }
-}
-```
+### 4. Register with Awilix
 
-After generation you should have (by default) `src/generated/ioc-manifest.ts` and `src/generated/ioc-registry.types.ts`.
+```ts
+import { createContainer } from "awilix";
+import { registerIocFromManifest } from "ioc-manifest";
 
-### 4. Register with Awilix at runtime
-
-```typescript
-import { createContainer, asClass } from "awilix";
-import {
-  registerIocFromManifest,
-  extractGroupRootsFromContainerManifest,
-} from "ioc-manifest";
-import type { IocGeneratedCradle } from "./generated/ioc-registry.types.js";
 import { iocManifest } from "./generated/ioc-manifest.js";
+import type { IocGeneratedCradle } from "./generated/ioc-registry.types.js";
 
 const container = createContainer<IocGeneratedCradle>();
 
-registerIocFromManifest(
-  container,
-  iocManifest.contracts,
-  iocManifest.moduleImports,
-  extractGroupRootsFromContainerManifest(iocManifest),
-);
+registerIocFromManifest(container, iocManifest);
 
-// Resolve by registration key or group root as typed on IocGeneratedCradle
 const svc = container.resolve("myService");
 ```
 
-If you do not use **groups**, pass `undefined` as the fourth argument (or omit if your helper allows).
+---
+
+## Groups
+
+Groups let you collect implementations across contracts using a shared base type.
+
+### Example
+
+```ts
+groups: {
+  handlers: { kind: "collection", baseType: "CommandHandler" },
+}
+```
+
+If multiple factories return types assignable to `CommandHandler`:
+
+```ts
+container.resolve("handlers");
+// → [createUserHandler, deleteUserHandler, ...]
+```
+
+### Group types
+
+- **collection** → array of implementations
+- **object** → map of contract → default implementation
+
+---
+
+## CLI (important)
+
+Use the CLI to debug your system:
+
+```bash
+npx ioc inspect
+npx ioc inspect --discovery
+```
+
+### Why this matters
+
+- See what was discovered
+- Detect missing contracts
+- Validate config before runtime
+
+**Tip:** Run `--discovery` when something “isn’t registering”.
 
 ---
 
 ## Configuration reference
 
-### `discovery`
+### discovery
 
-| Field | Description |
-|-------|-------------|
-| `rootDir` | Directory relative to project root (often `src`). |
-| `includes` | fast-glob patterns relative to `rootDir`. |
-| `excludes` | Ignore tests, `dist`, `node_modules`, etc. |
-| `factoryPrefix` | Prefix for discoverable exports (default `build`). |
-| `generatedDir` | Output folder relative to `rootDir`, or absolute (default `generated`). |
+| Field           | Description                    |
+| --------------- | ------------------------------ |
+| `rootDir`       | Root directory (usually `src`) |
+| `includes`      | Files to scan                  |
+| `excludes`      | Files to ignore                |
+| `factoryPrefix` | Prefix for factories (`build`) |
+| `generatedDir`  | Output directory               |
 
-Merged options automatically exclude the configured generated directory so the scanner does not read its own output.
+---
 
-### `registrations`
+### registrations
 
-Keyed by **contract name** (the TypeScript type name). Values are maps of **implementation name** → overrides.
+Override behavior per contract:
 
-- Special key **`$contract`** (`IOC_CONTRACT_CONFIG_KEY`): contract-level metadata (e.g. `accessKey` for the default slot).
-- Per-implementation keys may set `name` (Awilix key), `lifetime`, `default`.
-
-Rules enforced at generation time include: at most one `default: true` per contract when using config flags, globally unique registration keys, and no collision between access keys, collection keys, and other contracts’ keys.
-
-### `groups`
-
-```typescript
-groups: {
-  handlers: { kind: "collection", baseType: "CommandHandler" },
-  servicesByContract: { kind: "object", baseType: "DomainService" },
+```ts
+registrations: {
+  MyService: {
+    httpClient: { default: true, lifetime: "singleton" },
+  },
 }
 ```
 
-- **`collection`** — Ordered array of every matching implementation’s **registration key** (with filters so “default slot only” duplicates are not listed twice incorrectly).
-- **`object`** — Keys are **contract keys** (camel-cased contract names); values are the **default** implementation for each matching contract.
+Supports:
 
-Group root names must not collide with `moduleImports`, `contracts`, or any existing registration key.
-
----
-
-## CLI
-
-After build, the `ioc` binary runs the inspect CLI:
-
-```bash
-npx ioc inspect
-npx ioc inspect --discovery
-npx ioc inspect --config ./path/to/ioc.config.ts
-```
-
-- **`inspect`** — Loads the generated manifest (using the same config resolution as generation) and prints contracts, implementations, lifetimes, and validation messages.
-- **`--discovery`** — Re-runs factory discovery from source without reading the manifest; useful for spotting drift before you regenerate.
-
----
-
-## Library API highlights
-
-| Export | Role |
-|--------|------|
-| `generateManifest` | Full codegen pipeline |
-| `registerIocFromManifest` | Awilix registration from manifest slices |
-| `extractGroupRootsFromContainerManifest` | Strip fixed keys → `IocGroupsManifest` |
-| `defineIocConfig` / `loadIocConfig` | Config authoring & loading |
-| `validateManifest` / `buildInspectionReport` | Programmatic checks |
-| `runDiscoveryAnalysis` / `buildDiscoveryReport` | Discovery-only analysis |
-| `IocResolutionError` | Structured errors with manifest-aware chains |
-
-Full surface is available from the package root (`import { … } from "ioc-manifest"`).
+- `default`
+- `lifetime`
+- `name` (override registration key)
+- `$contract.accessKey` (override default slot)
 
 ---
 
 ## Generated files
 
-**Do not edit generated files** (`ioc-manifest.ts`, `ioc-registry.types.ts`). If output is wrong, fix `ioc.config.ts`, factories, or this package’s inputs, then re-run generation.
+- `ioc-manifest.ts` — runtime registration data
+- `ioc-registry.types.ts` — typed container (cradle)
+
+**Do not edit these manually.**
 
 ---
 
-## Error messages
+## Error handling
 
-Runtime and config validators prefix messages with `[ioc]` or `[ioc-config]` so you can grep logs quickly. Factory resolution wraps failures in `IocResolutionError` where the stack of contract / implementation frames is merged with Awilix’s resolution path.
+Errors are prefixed:
+
+- `[ioc]` — runtime
+- `[ioc-config]` — config issues
+
+Resolution errors include dependency chains for debugging.
 
 ---
 
-## Scripts (development)
+## Why not decorators?
 
-| Script | Purpose |
-|--------|---------|
-| `npm run build` | `tsc` to `dist/` |
-| `npm test` | Node’s test runner over `src/**/*.test.ts` |
-| `npm run gen:manifest` | Regenerate fixtures / example manifest in this repo |
+Unlike decorator-based DI systems:
+
+- No runtime metadata
+- No decorators required
+- Works with plain functions
+- Full compile-time visibility
 
 ---
 
 ## Design stance
 
-- **Minimal runtime** — Heavy lifting is at build time; runtime focuses on registration and clear errors.
-- **Flat Awilix cradle** — Registration keys share one namespace; the planner rejects collisions early.
-- **TypeScript-grounded** — Discovery uses your compiler settings; no parallel mini-type system.
+- **Minimal runtime** — all heavy work happens at build time
+- **Flat container** — single namespace, no hidden nesting
+- **TypeScript-grounded** — uses your compiler, not a custom type system
 
 ---
 
 ## License
 
-License file not present in this repository; add one before publishing if you need explicit terms.
+Add a license before publishing.

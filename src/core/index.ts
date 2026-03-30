@@ -16,10 +16,8 @@ export type {
   IocGroupsManifest,
   IocImplementationLifetime,
   IocModuleNamespace,
+  IocRegisterableManifest,
   ModuleFactoryManifestMetadata,
 } from "./manifest.js";
 
-export {
-  extractGroupRootsFromContainerManifest,
-  IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS,
-} from "./manifest.js";
+export { IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS } from "./manifest.js";

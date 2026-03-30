@@ -10,12 +10,14 @@ import {
   type AwilixContainer,
   type NameAndRegistrationPair,
 } from "awilix";
-import type {
-  IocContractManifest,
-  IocGroupNodeManifest,
-  IocGroupsManifest,
-  IocModuleNamespace,
-  ModuleFactoryManifestMetadata,
+import {
+  IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS,
+  type IocContractManifest,
+  type IocGroupNodeManifest,
+  type IocGroupsManifest,
+  type IocModuleNamespace,
+  type IocRegisterableManifest,
+  type ModuleFactoryManifestMetadata,
 } from "../core/manifest.js";
 import {
   contractNameToCollectionRegistrationKey,
@@ -38,6 +40,29 @@ import {
   buildRegistrationKeyIndex,
   type RegistrationKeyIndex,
 } from "./registrationKeyIndex.js";
+
+/** Group-root entries only: strips fixed manifest keys (`moduleImports`, `contracts`). */
+const extractGroupRootsFromContainerManifest = (
+  manifest: IocRegisterableManifest,
+): IocGroupsManifest => {
+  const out: IocGroupsManifest = {};
+
+  for (const key of Object.keys(manifest)) {
+    if (IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS.has(key)) {
+      continue;
+    }
+
+    const value = manifest[key];
+    if (value === undefined) {
+      continue;
+    }
+
+    /* Generated manifests only place `IocGroupNodeManifest` values on non-fixed keys. */
+    out[key] = value as IocGroupNodeManifest;
+  }
+
+  return out;
+};
 
 const lifetimeToAwilix = (
   lifetime: "singleton" | "scoped" | "transient",
@@ -240,7 +265,7 @@ const registerContractDefaultAliases = <TCradle extends object>(
 /**
  * Registers the automatic per-contract multi-implementation slot: plural collection key →
  * **array** of all concrete implementations (sorted by `registrationKey`), independent of
- * configured group roots in the human manifest (see `extractGroupRootsFromContainerManifest`).
+ * configured group roots in the human manifest.
  */
 const registerImplementationCollections = <TCradle extends object>(
   container: AwilixContainer<TCradle>,
@@ -340,20 +365,15 @@ const registerGroups = <TCradle extends object>(
 };
 
 /**
- * Registers factories from a generated manifest into an Awilix container.
- * Call order:
- * 1. concrete implementation factories
- * 2. default contract aliases
- * 3. multi-implementation collections
- * 4. group roots from `IocGroupsManifest` (base-type discovery; often from
- *    `extractGroupRootsFromContainerManifest(iocManifest)`)
+ * Registers everything described by a generated container manifest into an Awilix container
+ * (implementation factories, default access-key aliases, plural collection keys, and group roots).
  */
 export const registerIocFromManifest = <TCradle extends object>(
   container: AwilixContainer<TCradle>,
-  manifestByContract: IocContractManifest,
-  moduleImports: readonly IocModuleNamespace[],
-  groupsManifest?: IocGroupsManifest,
+  manifest: IocRegisterableManifest,
 ): void => {
+  const { contracts: manifestByContract, moduleImports } = manifest;
+  const groupsManifest = extractGroupRootsFromContainerManifest(manifest);
   const keyIndex = buildRegistrationKeyIndex(manifestByContract);
   registerImplementationFactories(
     container,

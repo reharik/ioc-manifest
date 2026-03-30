@@ -79,30 +79,11 @@ export type IocGeneratedContainerManifest<
 > = IocGeneratedContainerManifestCore & Readonly<TGroupRoots>;
 
 /**
- * Strips `moduleImports` and `contracts` from a generated container manifest, returning the
- * `IocGroupsManifest` shape expected by `registerIocFromManifest` (fourth argument).
+ * Full generated container manifest accepted by `registerIocFromManifest`: `moduleImports`,
+ * `contracts`, and any extra top-level group-root entries emitted by codegen.
  */
-export const extractGroupRootsFromContainerManifest = (
-  manifest: IocGeneratedContainerManifestCore & Record<string, unknown>,
-): IocGroupsManifest => {
-  const out: IocGroupsManifest = {};
-
-  for (const key of Object.keys(manifest)) {
-    if (IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS.has(key)) {
-      continue;
-    }
-
-    const value = manifest[key];
-    if (value === undefined) {
-      continue;
-    }
-
-    /* Generated manifests only place `IocGroupNodeManifest` values on non-fixed keys. */
-    out[key] = value as IocGroupNodeManifest;
-  }
-
-  return out;
-};
+export type IocRegisterableManifest = IocGeneratedContainerManifestCore &
+  Record<string, unknown>;
 
 /** One implementation slot in a generated group (collection item or object property value). */
 export type IocGroupLeafManifest = {
