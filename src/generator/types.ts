@@ -19,7 +19,7 @@ export type DiscoveredFactory = {
   default?: boolean;
   lifetime?: IocLifetime;
   /** Set when the export matched a discovery strategy. */
-  discoveredBy?: "naming" | "injectable-wrapper";
+  discoveredBy?: "naming";
   /** Contract types inferred from the factory deps parameter (see manifest metadata). */
   dependencyContractNames?: string[];
 };

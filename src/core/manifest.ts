@@ -1,17 +1,13 @@
 export type IocModuleNamespace = Record<string, unknown>;
 
-/** Manual / example wiring: list of modules with namespace exports (not codegen). */
-export type IocManifestEntry = {
-  modulePath: string;
-  exports: IocModuleNamespace;
-};
-
-export type IocManifest = IocManifestEntry[];
-
 /** Lifetime values stored in generated manifests (lowercase; maps to Awilix `Lifetime`). */
 export type IocImplementationLifetime = "singleton" | "scoped" | "transient";
 
-export type IocConfigOverrideField = "name" | "lifetime" | "default" | "accessKey";
+export type IocConfigOverrideField =
+  | "name"
+  | "lifetime"
+  | "default"
+  | "accessKey";
 
 /**
  * Contract-first manifest: each contract (interface/type name) maps to one or more
@@ -24,11 +20,6 @@ export type ModuleFactoryManifestMetadata = {
   registrationKey: string;
   /** Path relative to `src/`, informational. */
   modulePath: string;
-  /**
-   * Same as `modulePath` (explicit alias for inspection tooling).
-   * Omitted in older generated manifests; consumers should fall back to `modulePath`.
-   */
-  sourceFilePath?: string;
   /** Relative import path from the generated manifest directory to the source file. */
   relImport: string;
   /** Contract / interface or type alias name the factory returns. */
@@ -43,7 +34,7 @@ export type ModuleFactoryManifestMetadata = {
   /** True when this implementation is the resolved default for the contract (config + discovery). */
   default?: boolean;
   /** How the export was matched during discovery. */
-  discoveredBy?: "naming" | "injectable-wrapper";
+  discoveredBy?: "naming";
   /** Which `ioc.config` registration fields were applied for this implementation after merge. */
   configOverridesApplied?: readonly IocConfigOverrideField[];
   /**
@@ -62,43 +53,22 @@ export type IocContractManifest = Record<
   Record<string, ModuleFactoryManifestMetadata>
 >;
 
-/**
- * Human-oriented implementation row in the primary generated manifest (no moduleIndex/relImport).
- * Contract and implementation names come from the surrounding object keys.
- */
-export type IocContainerImplementationView = {
-  exportName: string;
-  registrationKey: string;
-  /** Source module path relative to `src/` (POSIX). */
-  sourceFile: string;
-  lifetime: IocImplementationLifetime;
-  default?: boolean;
-  discoveredBy?: "naming" | "injectable-wrapper";
-  configOverridesApplied?: readonly IocConfigOverrideField[];
-  dependencyContractNames?: readonly string[];
-};
-
-export type IocContainerContractsView = Record<
-  string,
-  Record<string, IocContainerImplementationView>
->;
-
-/** Fixed top-level keys on the generated human manifest; group roots must not use these names. */
+/** Fixed top-level keys on the generated container manifest; group roots must not use these names. */
 export const IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS: ReadonlySet<string> =
   new Set(["moduleImports", "contracts"]);
 
 /**
  * Core shape every generated container manifest includes. Configured group roots are emitted
- * as additional top-level properties alongside these (see `IocGeneratedContainerManifest`).
+ * as additional top-level properties alongside these.
  */
 export type IocGeneratedContainerManifestCore = {
   readonly moduleImports: readonly IocModuleNamespace[];
-  readonly contracts: IocContainerContractsView;
+  readonly contracts: IocContractManifest;
 };
 
 /**
- * Primary generated container description: module imports, contracts, and configured group roots
- * as top-level entries (same names as Awilix registrations for those groups).
+ * Primary generated container description: module imports, canonical contract manifest, and
+ * configured group roots as top-level entries.
  *
  * `TGroupRoots` is intentionally loose (`Record<string, unknown>`): the emitted
  * `IocManifestGroupRoots` helper uses `readonly` tuple literals that are not always assignable to
@@ -116,17 +86,21 @@ export const extractGroupRootsFromContainerManifest = (
   manifest: IocGeneratedContainerManifestCore & Record<string, unknown>,
 ): IocGroupsManifest => {
   const out: IocGroupsManifest = {};
+
   for (const key of Object.keys(manifest)) {
     if (IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS.has(key)) {
       continue;
     }
+
     const value = manifest[key];
     if (value === undefined) {
       continue;
     }
+
     /* Generated manifests only place `IocGroupNodeManifest` values on non-fixed keys. */
     out[key] = value as IocGroupNodeManifest;
   }
+
   return out;
 };
 

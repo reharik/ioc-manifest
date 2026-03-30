@@ -4,7 +4,7 @@ export type IocResolutionFrame = {
   contractName: string;
   implementationName: string;
   registrationKey: string;
-  sourceFile?: string;
+  modulePath?: string;
 };
 
 const stack: IocResolutionFrame[] = [];
@@ -27,8 +27,5 @@ export const frameFromManifestMeta = (
   contractName: meta.contractName,
   implementationName: meta.implementationName,
   registrationKey: meta.registrationKey,
-  sourceFile:
-    meta.sourceFilePath !== undefined && meta.sourceFilePath.length > 0
-      ? meta.sourceFilePath
-      : meta.modulePath,
+  modulePath: meta.modulePath,
 });

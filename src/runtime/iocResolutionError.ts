@@ -5,15 +5,19 @@ import type { RegistrationKeyIndex } from "./registrationKeyIndex.js";
 export type ResolutionFrame = {
   contractName: string;
   implementationName?: string;
-  sourceFile?: string;
+  modulePath?: string;
   /** Awilix registration key when known (used to merge stacks without duplicating frames). */
   registrationKey?: string;
 };
 
-export type IocResolutionFailureType = "missing" | "threw" | "cyclic" | "lifetime";
+export type IocResolutionFailureType =
+  | "missing"
+  | "threw"
+  | "cyclic"
+  | "lifetime";
 
-const registrationKeyOf = (f: ResolutionFrame): string =>
-  f.registrationKey ?? f.contractName;
+const registrationKeyOf = (frame: ResolutionFrame): string =>
+  frame.registrationKey ?? frame.contractName;
 
 /**
  * Merges an ancestor IoC stack with frames already on an error so parents appear once at the front.
@@ -25,25 +29,32 @@ export const mergeFrameSequences = (
   if (ancestorPrefix.length === 0) {
     return [...existing];
   }
-  let k = 0;
-  const n = Math.min(ancestorPrefix.length, existing.length);
+
+  let matchCount = 0;
+  const maxSharedPrefix = Math.min(ancestorPrefix.length, existing.length);
+
   while (
-    k < n &&
-    registrationKeyOf(ancestorPrefix[k]!) === registrationKeyOf(existing[k]!)
+    matchCount < maxSharedPrefix &&
+    registrationKeyOf(ancestorPrefix[matchCount]!) ===
+      registrationKeyOf(existing[matchCount]!)
   ) {
-    k += 1;
+    matchCount += 1;
   }
-  if (k === ancestorPrefix.length) {
+
+  if (matchCount === ancestorPrefix.length) {
     return [...existing];
   }
-  return [...ancestorPrefix, ...existing.slice(k)];
+
+  return [...ancestorPrefix, ...existing.slice(matchCount)];
 };
 
-const stackFrameToResolutionFrame = (f: IocResolutionFrame): ResolutionFrame => ({
-  contractName: f.contractName,
-  implementationName: f.implementationName,
-  sourceFile: f.sourceFile,
-  registrationKey: f.registrationKey,
+const stackFrameToResolutionFrame = (
+  frame: IocResolutionFrame,
+): ResolutionFrame => ({
+  contractName: frame.contractName,
+  implementationName: frame.implementationName,
+  modulePath: frame.modulePath,
+  registrationKey: frame.registrationKey,
 });
 
 const frameFromRegistrationKey = (
@@ -55,13 +66,11 @@ const frameFromRegistrationKey = (
     return {
       contractName: meta.contractName,
       implementationName: meta.implementationName,
-      sourceFile:
-        meta.sourceFilePath !== undefined && meta.sourceFilePath.length > 0
-          ? meta.sourceFilePath
-          : meta.modulePath,
+      modulePath: meta.modulePath,
       registrationKey: key,
     };
   }
+
   const contract = keyIndex.contractByAccessKey.get(key);
   if (contract !== undefined) {
     return {
@@ -69,18 +78,21 @@ const frameFromRegistrationKey = (
       registrationKey: key,
     };
   }
+
   return { contractName: key, registrationKey: key };
 };
 
 const parseAwilixResolutionPath = (message: string): string[] | undefined => {
-  const m = message.match(/Resolution path:\s*(.+?)(?:\r?\n|$)/);
-  if (m === null || m[1] === undefined) {
+  const match = message.match(/Resolution path:\s*(.+?)(?:\r?\n|$)/);
+  if (match === null || match[1] === undefined) {
     return undefined;
   }
-  const parts = m[1]
+
+  const parts = match[1]
     .split("->")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+
   return parts.length > 0 ? parts : undefined;
 };
 
@@ -90,9 +102,11 @@ const classifyAwilixResolutionError = (
   if (message.includes("Cyclic dependencies detected")) {
     return "cyclic";
   }
+
   if (message.includes("has a shorter lifetime than its ancestor")) {
     return "lifetime";
   }
+
   return "missing";
 };
 
@@ -101,31 +115,34 @@ const describeFrameLine = (
   keyIndex: RegistrationKeyIndex,
 ): string => {
   const key = frame.registrationKey;
+
   if (key !== undefined) {
     const meta = keyIndex.metaByRegistrationKey.get(key);
     if (meta !== undefined) {
-      const src =
-        meta.sourceFilePath !== undefined && meta.sourceFilePath.length > 0
-          ? meta.sourceFilePath
-          : meta.modulePath;
-      const fileSuffix = src.length > 0 ? ` [${src}]` : "";
+      const fileSuffix =
+        meta.modulePath.length > 0 ? ` [${meta.modulePath}]` : "";
       return `${meta.contractName} (${meta.implementationName})${fileSuffix}`;
     }
+
     const contract = keyIndex.contractByAccessKey.get(key);
     if (contract !== undefined) {
       return `${contract} (contract default slot ${JSON.stringify(key)})`;
     }
+
     return key;
   }
-  const file =
-    frame.sourceFile !== undefined && frame.sourceFile.length > 0
-      ? ` [${frame.sourceFile}]`
+
+  const fileSuffix =
+    frame.modulePath !== undefined && frame.modulePath.length > 0
+      ? ` [${frame.modulePath}]`
       : "";
-  const impl =
-    frame.implementationName !== undefined && frame.implementationName.length > 0
+  const implementationSuffix =
+    frame.implementationName !== undefined &&
+    frame.implementationName.length > 0
       ? ` (${frame.implementationName})`
       : "";
-  return `${frame.contractName}${impl}${file}`;
+
+  return `${frame.contractName}${implementationSuffix}${fileSuffix}`;
 };
 
 const formatHeadline = (
@@ -136,24 +153,56 @@ const formatHeadline = (
   if (first === undefined) {
     return "Container resolution failed.";
   }
+
   const key = first.registrationKey;
   if (key !== undefined) {
     const meta = keyIndex.metaByRegistrationKey.get(key);
     if (meta !== undefined) {
       return `Cannot build ${meta.contractName} using implementation ${meta.implementationName}.`;
     }
+
     const contract = keyIndex.contractByAccessKey.get(key);
     if (contract !== undefined) {
       return `Cannot resolve ${contract} (contract default slot ${JSON.stringify(key)}).`;
     }
   }
+
   if (
     first.implementationName !== undefined &&
     first.implementationName.length > 0
   ) {
     return `Cannot build ${first.contractName} using implementation ${first.implementationName}.`;
   }
+
   return `Cannot build ${first.contractName}.`;
+};
+
+const formatChainWithUniformLeaf = (
+  frames: readonly ResolutionFrame[],
+  keyIndex: RegistrationKeyIndex,
+  leafText: string,
+): string => {
+  if (frames.length === 0) {
+    return `Resolution chain:\n    ${leafText}\n`;
+  }
+
+  if (frames.length === 1) {
+    return `Resolution chain:\n    ${describeFrameLine(frames[0]!, keyIndex)} ${leafText}\n`;
+  }
+
+  let out = "Resolution chain:\n";
+
+  for (let i = 0; i < frames.length - 1; i += 1) {
+    const pad = "  ".repeat(i + 1);
+    const connector = i === 0 ? "" : "-> ";
+    out += `${pad}${connector}${describeFrameLine(frames[i]!, keyIndex)}\n`;
+  }
+
+  const last = frames[frames.length - 1]!;
+  const lastPad = "  ".repeat(frames.length);
+  out += `${lastPad}-> ${describeFrameLine(last, keyIndex)} ${leafText}\n`;
+
+  return out;
 };
 
 const formatResolutionChainBlock = (
@@ -161,11 +210,13 @@ const formatResolutionChainBlock = (
   keyIndex: RegistrationKeyIndex,
 ): string => {
   const frames = err.frames;
+
   if (frames.length === 0) {
     if (err.failureType === "threw") {
       const detail = err.throwDetail ?? err.cause?.message ?? "unknown error";
       return `Resolution chain:\n    ✖ factory threw while building: ${detail}\n`;
     }
+
     return `Resolution chain:\n    ✖ ${err.awilixDetail ?? "resolution failed"}\n`;
   }
 
@@ -173,15 +224,19 @@ const formatResolutionChainBlock = (
     if (frames.length === 1) {
       return `Resolution chain:\n    ${describeFrameLine(frames[0]!, keyIndex)} ✖ no registered implementation\n`;
     }
+
     let out = "Resolution chain:\n";
-    for (let i = 0; i < frames.length - 1; i++) {
+
+    for (let i = 0; i < frames.length - 1; i += 1) {
       const pad = "  ".repeat(i + 1);
-      const conn = i === 0 ? "" : "-> ";
-      out += `${pad}${conn}${describeFrameLine(frames[i]!, keyIndex)}\n`;
+      const connector = i === 0 ? "" : "-> ";
+      out += `${pad}${connector}${describeFrameLine(frames[i]!, keyIndex)}\n`;
     }
+
     const last = frames[frames.length - 1]!;
     const lastPad = "  ".repeat(frames.length);
     out += `${lastPad}-> ${describeFrameLine(last, keyIndex)} ✖ no registered implementation\n`;
+
     return out;
   }
 
@@ -203,36 +258,16 @@ const formatResolutionChainBlock = (
 
   const detail = err.throwDetail ?? err.cause?.message ?? "unknown error";
   let out = "Resolution chain:\n";
-  for (let i = 0; i < frames.length; i++) {
+
+  for (let i = 0; i < frames.length; i += 1) {
     const pad = "  ".repeat(i + 1);
-    const conn = i === 0 ? "" : "-> ";
-    out += `${pad}${conn}${describeFrameLine(frames[i]!, keyIndex)}\n`;
+    const connector = i === 0 ? "" : "-> ";
+    out += `${pad}${connector}${describeFrameLine(frames[i]!, keyIndex)}\n`;
   }
+
   const leafPad = "  ".repeat(frames.length + 1);
   out += `${leafPad}✖ factory threw while building: ${detail}\n`;
-  return out;
-};
 
-const formatChainWithUniformLeaf = (
-  frames: readonly ResolutionFrame[],
-  keyIndex: RegistrationKeyIndex,
-  leafText: string,
-): string => {
-  if (frames.length === 0) {
-    return `Resolution chain:\n    ${leafText}\n`;
-  }
-  if (frames.length === 1) {
-    return `Resolution chain:\n    ${describeFrameLine(frames[0]!, keyIndex)} ${leafText}\n`;
-  }
-  let out = "Resolution chain:\n";
-  for (let i = 0; i < frames.length - 1; i++) {
-    const pad = "  ".repeat(i + 1);
-    const conn = i === 0 ? "" : "-> ";
-    out += `${pad}${conn}${describeFrameLine(frames[i]!, keyIndex)}\n`;
-  }
-  const last = frames[frames.length - 1]!;
-  const lastPad = "  ".repeat(frames.length);
-  out += `${lastPad}-> ${describeFrameLine(last, keyIndex)} ${leafText}\n`;
   return out;
 };
 
@@ -276,8 +311,9 @@ export class IocResolutionError extends Error {
   }
 }
 
-export const isIocResolutionError = (e: unknown): e is IocResolutionError =>
-  e instanceof IocResolutionError;
+export const isIocResolutionError = (
+  value: unknown,
+): value is IocResolutionError => value instanceof IocResolutionError;
 
 const createFromAwilix = (
   cause: AwilixResolutionError,
@@ -286,14 +322,11 @@ const createFromAwilix = (
 ): IocResolutionError => {
   const path = parseAwilixResolutionPath(cause.message);
   const kind = classifyAwilixResolutionError(cause.message);
-  const failureType: IocResolutionFailureType =
-    kind === "cyclic"
-      ? "cyclic"
-      : kind === "lifetime"
-        ? "lifetime"
-        : "missing";
 
-  const pathFrames: ResolutionFrame[] | undefined =
+  const failureType: IocResolutionFailureType =
+    kind === "cyclic" ? "cyclic" : kind === "lifetime" ? "lifetime" : "missing";
+
+  const pathFrames =
     path !== undefined
       ? path.map((key) => frameFromRegistrationKey(key, keyIndex))
       : undefined;
@@ -318,17 +351,18 @@ const createFromFactoryThrow = (
   stackSnapshot: readonly IocResolutionFrame[],
 ): IocResolutionError => {
   const frames = stackSnapshot.map(stackFrameToResolutionFrame);
-  const orig =
+  const original =
     cause instanceof Error
       ? cause
       : new Error(typeof cause === "string" ? cause : String(cause));
+
   const throwDetail =
-    orig.message.length > 0 ? orig.message : String(cause);
+    original.message.length > 0 ? original.message : String(cause);
 
   return new IocResolutionError({
     frames,
     failureType: "threw",
-    cause: cause instanceof Error ? cause : orig,
+    cause: cause instanceof Error ? cause : original,
     throwDetail,
   });
 };
@@ -344,9 +378,11 @@ export const createIocResolutionError = (
   if (cause instanceof IocResolutionError) {
     return cause;
   }
+
   if (cause instanceof AwilixResolutionError) {
     return createFromAwilix(cause, keyIndex, stackSnapshot);
   }
+
   return createFromFactoryThrow(cause, stackSnapshot);
 };
 

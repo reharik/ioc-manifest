@@ -25,7 +25,7 @@ export type ResolvedImplementationEntry = {
   modulePath: string;
   relImport: string;
   lifetime: IocLifetime;
-  discoveredBy?: "naming" | "injectable-wrapper";
+  discoveredBy?: "naming";
   /** Fields present on the matching `ioc.config` registration override for this implementation. */
   configOverridesApplied?: readonly IocConfigOverrideField[];
   dependencyContractNames?: readonly string[];
@@ -66,9 +66,11 @@ export const normalizeIocOverride = (
 ): Partial<DiscoveredFactory> => {
   const { name, ...rest } = override;
   const out: Partial<DiscoveredFactory> = { ...rest };
+
   if (name !== undefined) {
     out.registrationKey = name;
   }
+
   return out;
 };
 
@@ -79,6 +81,7 @@ const mergeDiscoveredWithOverride = (
   if (override === undefined) {
     return factory;
   }
+
   return { ...factory, ...normalizeIocOverride(override) };
 };
 
@@ -93,12 +96,13 @@ const contractConfigSpecifiesDefault = (
   if (perContract === undefined) {
     return false;
   }
+
   return Object.entries(perContract).some(
-    ([k, o]) =>
-      k !== IOC_CONTRACT_CONFIG_KEY &&
-      o !== undefined &&
-      isIocImplementationOverride(o) &&
-      Object.hasOwn(o, "default"),
+    ([key, override]) =>
+      key !== IOC_CONTRACT_CONFIG_KEY &&
+      override !== undefined &&
+      isIocImplementationOverride(override) &&
+      Object.hasOwn(override, "default"),
   );
 };
 
@@ -109,12 +113,12 @@ const stripDiscoveredDefault = (
   return rest;
 };
 
-const listImplFactories = (factories: DiscoveredFactory[]): string =>
+const listImplFactories = (factories: readonly DiscoveredFactory[]): string =>
   Array.from(factories)
     .sort((a, b) => a.implementationName.localeCompare(b.implementationName))
     .map(
-      (f) =>
-        `"${f.implementationName}" (${f.modulePath}, export ${f.exportName})`,
+      (factory) =>
+        `"${factory.implementationName}" (${factory.modulePath}, export ${factory.exportName})`,
     )
     .join("; ");
 
@@ -123,7 +127,8 @@ const selectDefaultImplementationKey = (
   mergedByImplName: Map<string, DiscoveredFactory>,
 ): string => {
   const factories = Array.from(mergedByImplName.values());
-  const withDefault = factories.filter((f) => f.default === true);
+  const withDefault = factories.filter((factory) => factory.default === true);
+
   if (withDefault.length > 1) {
     throw new Error(
       `[ioc] Contract ${JSON.stringify(contractName)} has multiple implementations marked default: true after applying ioc.config overrides: ${listImplFactories(withDefault)}. Mark exactly one with default: true in source or in registrations[${JSON.stringify(contractName)}][implementationName], or reduce to a single implementation.`,
@@ -131,12 +136,13 @@ const selectDefaultImplementationKey = (
   }
 
   const rows = Array.from(mergedByImplName.entries()).map(
-    ([implementationName, f]) => ({
+    ([implementationName, factory]) => ({
       implementationName,
-      registrationKey: f.registrationKey,
-      ...(f.default === true ? { default: true as const } : {}),
+      registrationKey: factory.registrationKey,
+      ...(factory.default === true ? { default: true as const } : {}),
     }),
   );
+
   return selectDefaultImplementationName(contractName, rows);
 };
 
@@ -144,6 +150,7 @@ const resolveLifetime = (factory: DiscoveredFactory): IocLifetime => {
   if (factory.lifetime !== undefined) {
     return factory.lifetime;
   }
+
   return DEFAULT_LIFETIME;
 };
 
@@ -152,22 +159,26 @@ const assertUniqueContractTypeRelImport = (
   mergedByImplName: Map<string, DiscoveredFactory>,
 ): string => {
   let seen: string | undefined;
-  for (const f of mergedByImplName.values()) {
+
+  for (const factory of mergedByImplName.values()) {
     if (seen === undefined) {
-      seen = f.contractTypeRelImport;
+      seen = factory.contractTypeRelImport;
       continue;
     }
-    if (f.contractTypeRelImport !== seen) {
+
+    if (factory.contractTypeRelImport !== seen) {
       throw new Error(
-        `[ioc] contract "${contractName}": implementations disagree on contract type import source ("${seen}" vs "${f.contractTypeRelImport}"). Factories: ${listImplFactories(Array.from(mergedByImplName.values()))}. Each factory must return the same contract type symbol.`,
+        `[ioc] contract "${contractName}": implementations disagree on contract type import source ("${seen}" vs "${factory.contractTypeRelImport}"). Factories: ${listImplFactories(Array.from(mergedByImplName.values()))}. Each factory must return the same contract type symbol.`,
       );
     }
   }
+
   if (seen === undefined) {
     throw new Error(
       `[ioc] internal error: no implementations for "${contractName}"`,
     );
   }
+
   return seen;
 };
 
@@ -179,14 +190,17 @@ const mergeContractOverrides = (
   const perContract = config?.registrations?.[contractName];
   const configOwnsDefault = contractConfigSpecifiesDefault(perContract);
   const out = new Map<string, DiscoveredFactory>();
+
   for (const [implementationName, factory] of implByKey) {
     const base = configOwnsDefault ? stripDiscoveredDefault(factory) : factory;
     const override = getImplOverrideForImplementation(
       perContract,
       implementationName,
     );
+
     out.set(implementationName, mergeDiscoveredWithOverride(base, override));
   }
+
   return out;
 };
 
@@ -197,6 +211,7 @@ export const validateConfigContractsExist = (
   if (config?.registrations === undefined) {
     return;
   }
+
   for (const contract of Object.keys(config.registrations)) {
     if (!contractNames.has(contract)) {
       throw new Error(
@@ -217,6 +232,7 @@ const validateConfigImplementationKeys = (
   if (config?.registrations === undefined) {
     return;
   }
+
   for (const [contractName, implOverrides] of Object.entries(
     config.registrations,
   )) {
@@ -224,10 +240,12 @@ const validateConfigImplementationKeys = (
     if (discovered === undefined) {
       continue;
     }
+
     for (const implKey of Object.keys(implOverrides)) {
       if (implKey === IOC_CONTRACT_CONFIG_KEY) {
         continue;
       }
+
       if (!discovered.has(implKey)) {
         throw new Error(
           `[ioc-config] registrations[${JSON.stringify(contractName)}][${JSON.stringify(implKey)}] is not a discovered implementation for that contract. Discovered implementations: ${Array.from(discovered.keys()).sort().join(", ")}`,
@@ -247,20 +265,22 @@ const validateAtMostOneConfigDefaultPerContract = (
   if (config?.registrations === undefined) {
     return;
   }
+
   for (const [contractName, implOverrides] of Object.entries(
     config.registrations,
   )) {
     const withDefault = Object.entries(implOverrides).filter(
-      ([k, o]) =>
-        k !== IOC_CONTRACT_CONFIG_KEY &&
-        o !== undefined &&
-        isIocImplementationOverride(o) &&
-        o.default === true,
+      ([key, override]) =>
+        key !== IOC_CONTRACT_CONFIG_KEY &&
+        override !== undefined &&
+        isIocImplementationOverride(override) &&
+        override.default === true,
     );
+
     if (withDefault.length > 1) {
       throw new Error(
         `[ioc-config] registrations[${JSON.stringify(contractName)}] sets default: true on multiple implementations (${withDefault
-          .map(([k]) => JSON.stringify(k))
+          .map(([key]) => JSON.stringify(key))
           .sort()
           .join(", ")}). At most one default per contract.`,
       );
@@ -268,7 +288,10 @@ const validateAtMostOneConfigDefaultPerContract = (
   }
 };
 
-type ImplRef = { contractName: string; implementationName: string };
+type ImplRef = {
+  contractName: string;
+  implementationName: string;
+};
 
 /**
  * Effective Awilix key after overrides: `override.name` replaces the discovered
@@ -291,6 +314,7 @@ const validateGlobalNamespaceCollisions = (
         `[ioc-config] global registration name collision on ${JSON.stringify(key)}: ${existing.contractName}.${existing.implementationName} and ${ref.contractName}.${ref.implementationName} both resolve to that Awilix key. Adjust resolver metadata or registrations[].name overrides so keys are unique across all contracts.`,
       );
     }
+
     keyOwner.set(key, ref);
   };
 
@@ -310,36 +334,40 @@ const validateGlobalNamespaceCollisions = (
       config?.registrations?.[contractName],
       contractName,
     );
+
     accessKeyByContract.set(contractName, configured ?? convention);
   }
 
   const accessKeyOwnerContract = new Map<string, string>();
-  for (const [contractName, ak] of accessKeyByContract) {
-    const existing = accessKeyOwnerContract.get(ak);
+  for (const [contractName, accessKey] of accessKeyByContract) {
+    const existing = accessKeyOwnerContract.get(accessKey);
     if (existing !== undefined) {
       throw new Error(
-        `[ioc-config] contract access key ${JSON.stringify(ak)} is used by both ${JSON.stringify(existing)} and ${JSON.stringify(contractName)} ($contract.accessKey must be unique across contracts).`,
+        `[ioc-config] contract access key ${JSON.stringify(accessKey)} is used by both ${JSON.stringify(existing)} and ${JSON.stringify(contractName)} ($contract.accessKey must be unique across contracts).`,
       );
     }
-    accessKeyOwnerContract.set(ak, contractName);
+
+    accessKeyOwnerContract.set(accessKey, contractName);
   }
 
-  for (const [contractName, ak] of accessKeyByContract) {
-    for (const [c2, merged2] of mergedByContract) {
-      if (merged2.size <= 1) {
+  for (const [contractName, accessKey] of accessKeyByContract) {
+    for (const [otherContractName, otherMerged] of mergedByContract) {
+      if (otherMerged.size <= 1) {
         continue;
       }
-      const collectionKey = contractNameToCollectionRegistrationKey(c2);
-      if (ak === collectionKey) {
+
+      const collectionKey =
+        contractNameToCollectionRegistrationKey(otherContractName);
+      if (accessKey === collectionKey) {
         throw new Error(
-          `[ioc-config] access key ${JSON.stringify(ak)} for contract ${JSON.stringify(contractName)} collides with the collection slot ${JSON.stringify(collectionKey)} for contract ${JSON.stringify(c2)}.`,
+          `[ioc-config] access key ${JSON.stringify(accessKey)} for contract ${JSON.stringify(contractName)} collides with the collection slot ${JSON.stringify(collectionKey)} for contract ${JSON.stringify(otherContractName)}.`,
         );
       }
     }
   }
 
   for (const [contractName, merged] of mergedByContract) {
-    const ak = accessKeyByContract.get(contractName)!;
+    const accessKey = accessKeyByContract.get(contractName)!;
     const defaultImplementationName = selectDefaultImplementationKey(
       contractName,
       merged,
@@ -351,11 +379,11 @@ const validateGlobalNamespaceCollisions = (
     );
     const accessKeyExplicitlyConfigured = configuredAccessKey !== undefined;
 
-    if (accessKeyExplicitlyConfigured && ak !== defaultKey) {
+    if (accessKeyExplicitlyConfigured && accessKey !== defaultKey) {
       for (const [implementationName, factory] of merged) {
-        if (factory.registrationKey === ak) {
+        if (factory.registrationKey === accessKey) {
           throw new Error(
-            `[ioc-config] contract ${JSON.stringify(contractName)}: access key ${JSON.stringify(ak)} from $contract is reserved for the default-slot alias (default implementation registers as ${JSON.stringify(defaultKey)}), but implementation ${JSON.stringify(implementationName)} uses that key.`,
+            `[ioc-config] contract ${JSON.stringify(contractName)}: access key ${JSON.stringify(accessKey)} from $contract is reserved for the default-slot alias (default implementation registers as ${JSON.stringify(defaultKey)}), but implementation ${JSON.stringify(implementationName)} uses that key.`,
           );
         }
       }
@@ -365,12 +393,14 @@ const validateGlobalNamespaceCollisions = (
       if (otherContractName === contractName) {
         continue;
       }
+
       for (const [implementationName, factory] of otherMerged) {
-        if (factory.registrationKey !== ak) {
+        if (factory.registrationKey !== accessKey) {
           continue;
         }
+
         throw new Error(
-          `[ioc-config] registration key ${JSON.stringify(ak)} is reserved as the contract default slot for ${JSON.stringify(contractName)} (the selected default implementation is registered as ${JSON.stringify(defaultKey)}). ${otherContractName}.${implementationName} cannot use ${JSON.stringify(ak)}. Choose a different resolver key or registrations[].name override.`,
+          `[ioc-config] registration key ${JSON.stringify(accessKey)} is reserved as the contract default slot for ${JSON.stringify(contractName)} (the selected default implementation is registered as ${JSON.stringify(defaultKey)}). ${otherContractName}.${implementationName} cannot use ${JSON.stringify(accessKey)}. Choose a different resolver key or registrations[].name override.`,
         );
       }
     }
@@ -380,7 +410,9 @@ const validateGlobalNamespaceCollisions = (
     if (merged.size <= 1) {
       continue;
     }
+
     const collectionKey = contractNameToCollectionRegistrationKey(contractName);
+
     for (const [otherContractName, otherMerged] of mergedByContract) {
       for (const [implementationName, factory] of otherMerged) {
         if (factory.registrationKey === collectionKey) {
@@ -404,17 +436,19 @@ const validateIocConfigSemantics = (
   config: IocConfig | undefined,
 ): Map<string, Map<string, DiscoveredFactory>> => {
   const contractNames = new Set(contractMap.keys());
+
   validateConfigContractsExist(config, contractNames);
   validateConfigImplementationKeys(config, contractMap);
   validateAtMostOneConfigDefaultPerContract(config);
 
   const mergedByContract = new Map<string, Map<string, DiscoveredFactory>>();
-  for (const contractName of contractMap.keys()) {
-    const impls = contractMap.get(contractName)!;
+
+  for (const [contractName, implementations] of contractMap) {
     const implByKey = new Map<string, DiscoveredFactory>();
-    for (const [k, f] of impls) {
-      implByKey.set(k, f);
+    for (const [implementationName, factory] of implementations) {
+      implByKey.set(implementationName, factory);
     }
+
     mergedByContract.set(
       contractName,
       mergeContractOverrides(contractName, implByKey, config),
@@ -432,7 +466,7 @@ export const buildRegistrationPlan = (
 ): ResolvedContractRegistration[] => {
   const mergedByContract = validateIocConfigSemantics(contractMap, config);
 
-  const sortedContracts = Array.from(contractMap.keys()).sort((a, b) =>
+  const sortedContracts = Array.from(mergedByContract.keys()).sort((a, b) =>
     a.localeCompare(b),
   );
 
@@ -476,7 +510,9 @@ export const buildRegistrationPlan = (
           config?.registrations?.[contractName],
           implementationName,
         );
+
         const configOverridesApplied: IocConfigOverrideField[] = [];
+
         if (implOverride?.name !== undefined) {
           configOverridesApplied.push("name");
         }
@@ -492,6 +528,7 @@ export const buildRegistrationPlan = (
         ) {
           configOverridesApplied.push("accessKey");
         }
+
         return {
           implementationName,
           exportName: factory.exportName,

@@ -66,15 +66,19 @@ const collectReservedCradleKeys = (
   plans: readonly ResolvedContractRegistration[],
 ): Set<string> => {
   const reserved = new Set<string>();
+
   for (const plan of plans) {
     reserved.add(plan.accessKey);
+
     if (plan.collectionKey !== undefined) {
       reserved.add(plan.collectionKey);
     }
-    for (const impl of plan.implementations) {
-      reserved.add(impl.registrationKey);
+
+    for (const implementation of plan.implementations) {
+      reserved.add(implementation.registrationKey);
     }
   }
+
   return reserved;
 };
 
@@ -91,35 +95,48 @@ const validateGroupDefinition = (
   if (!isRecord(raw)) {
     return { kind: "group_invalid_entry", groupName };
   }
+
   const kind = raw.kind;
   const baseType = raw.baseType;
+
   if (!isValidGroupKind(kind)) {
     return { kind: "group_invalid_entry", groupName };
   }
+
   if (typeof baseType !== "string" || baseType.length === 0) {
     return { kind: "group_invalid_entry", groupName };
   }
-  const extra = Object.keys(raw).filter((k) => k !== "kind" && k !== "baseType");
-  if (extra.length > 0) {
+
+  const extraKeys = Object.keys(raw).filter(
+    (key) => key !== "kind" && key !== "baseType",
+  );
+  if (extraKeys.length > 0) {
     return { kind: "group_invalid_entry", groupName };
   }
+
   return undefined;
 };
 
-export const groupPlanToManifestNode = (plan: GroupPlan): IocGroupNodeManifest => {
+export const groupPlanToManifestNode = (
+  plan: GroupPlan,
+): IocGroupNodeManifest => {
   if (plan.kind === "collection") {
-    return plan.members.map((m) => ({
-      contractName: m.contractName,
-      registrationKey: m.registrationKey,
+    return plan.members.map((member) => ({
+      contractName: member.contractName,
+      registrationKey: member.registrationKey,
     }));
   }
-  const out: Record<string, { contractName: string; registrationKey: string }> = {};
-  for (const m of plan.members) {
-    out[m.contractKey] = {
-      contractName: m.contractName,
-      registrationKey: m.registrationKey,
+
+  const out: Record<string, { contractName: string; registrationKey: string }> =
+    {};
+
+  for (const member of plan.members) {
+    out[member.contractKey] = {
+      contractName: member.contractName,
+      registrationKey: member.registrationKey,
     };
   }
+
   return out;
 };
 
@@ -130,19 +147,22 @@ const buildObjectGroupMembersOrIssue = (
   | { ok: true; members: ContractDefaultGroupMember[] }
   | { ok: false; issue: GroupPlanIssue } => {
   const seen = new Set<string>();
-  for (const m of members) {
-    if (seen.has(m.contractKey)) {
+
+  for (const member of members) {
+    if (seen.has(member.contractKey)) {
       return {
         ok: false,
         issue: {
           kind: "group_duplicate_contract_key",
           groupName,
-          contractKey: m.contractKey,
+          contractKey: member.contractKey,
         },
       };
     }
-    seen.add(m.contractKey);
+
+    seen.add(member.contractKey);
   }
+
   return { ok: true, members: [...members] };
 };
 
@@ -150,29 +170,38 @@ export const formatGroupPlanIssue = (issue: GroupPlanIssue): string => {
   switch (issue.kind) {
     case "groups_not_object":
       return "[ioc-config] groups must be an object when set";
+
     case "group_invalid_entry":
       return `[ioc-config] groups.${JSON.stringify(issue.groupName)} must be { kind: "collection" | "object", baseType: string }`;
+
     case "group_unknown_base_type":
       return `[ioc-config] groups.${JSON.stringify(issue.groupName)}: ${issue.message}`;
+
     case "group_no_matches":
       return `[ioc-config] groups.${JSON.stringify(issue.groupName)}: no implementations found for base type ${JSON.stringify(issue.baseType)}`;
+
     case "group_duplicate_contract_key":
       return `[ioc-config] groups.${JSON.stringify(issue.groupName)}: duplicate contract key ${JSON.stringify(issue.contractKey)} in object group`;
+
     case "group_root_key_collision":
       return `[ioc-config] groups root key ${JSON.stringify(issue.key)} collides with an existing Awilix registration key`;
+
     case "group_root_key_reserved_manifest":
       return `[ioc-config] groups root key ${JSON.stringify(issue.key)} is reserved for the generated container manifest (use a different group name)`;
+
     case "group_discovery_missing_context":
       return "[ioc-config] groups require TypeScript program context. Use the IoC manifest generator or pass GroupDiscoveryBuildContext into buildGroupPlan.";
+
     default: {
-      const _exhaustive: never = issue;
-      return String(_exhaustive);
+      const exhaustive: never = issue;
+      return String(exhaustive);
     }
   }
 };
 
-export const formatGroupPlanIssues = (issues: readonly GroupPlanIssue[]): string =>
-  issues.map((i) => formatGroupPlanIssue(i)).join("\n");
+export const formatGroupPlanIssues = (
+  issues: readonly GroupPlanIssue[],
+): string => issues.map((issue) => formatGroupPlanIssue(issue)).join("\n");
 
 const runGroupPlan = (
   groups: unknown,
@@ -184,30 +213,37 @@ const runGroupPlan = (
   if (!isRecord(groups)) {
     return { ok: false, issues: [{ kind: "groups_not_object" }] };
   }
+
   if (discovery === undefined) {
     return { ok: false, issues: [{ kind: "group_discovery_missing_context" }] };
   }
 
   const checker = discovery.program.getTypeChecker();
   const reserved = collectReservedCradleKeys(plans);
-
   const groupPlans: GroupPlan[] = [];
   const issues: GroupPlanIssue[] = [];
 
-  const sortedGroupNames = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+  const sortedGroupNames = Object.keys(groups).sort((a, b) =>
+    a.localeCompare(b),
+  );
+
   for (const groupName of sortedGroupNames) {
     if (IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS.has(groupName)) {
       issues.push({ kind: "group_root_key_reserved_manifest", key: groupName });
       continue;
     }
+
     if (reserved.has(groupName)) {
       issues.push({ kind: "group_root_key_collision", key: groupName });
       continue;
     }
 
-    const defIssue = validateGroupDefinition(groupName, groups[groupName]);
-    if (defIssue !== undefined) {
-      issues.push(defIssue);
+    const definitionIssue = validateGroupDefinition(
+      groupName,
+      groups[groupName],
+    );
+    if (definitionIssue !== undefined) {
+      issues.push(definitionIssue);
       continue;
     }
 
@@ -217,6 +253,7 @@ const runGroupPlan = (
       checker,
       entry.baseType,
     );
+
     if (!base.ok) {
       issues.push({
         kind: "group_unknown_base_type",
@@ -249,6 +286,7 @@ const runGroupPlan = (
         issues.push(built.issue);
         continue;
       }
+
       reserved.add(groupName);
       groupPlans.push({
         groupName,
@@ -256,33 +294,34 @@ const runGroupPlan = (
         baseType: entry.baseType,
         members: built.members,
       });
-    } else {
-      const members = collectImplementationMembersAssignableToBase(
-        checker,
-        discovery.program,
-        discovery.generatedDir,
-        plans,
-        base.type,
-        shouldIncludeImplInCollectionGroup,
-      );
-
-      if (members.length === 0) {
-        issues.push({
-          kind: "group_no_matches",
-          groupName,
-          baseType: entry.baseType,
-        });
-        continue;
-      }
-
-      reserved.add(groupName);
-      groupPlans.push({
-        groupName,
-        kind: "collection",
-        baseType: entry.baseType,
-        members,
-      });
+      continue;
     }
+
+    const members = collectImplementationMembersAssignableToBase(
+      checker,
+      discovery.program,
+      discovery.generatedDir,
+      plans,
+      base.type,
+      shouldIncludeImplInCollectionGroup,
+    );
+
+    if (members.length === 0) {
+      issues.push({
+        kind: "group_no_matches",
+        groupName,
+        baseType: entry.baseType,
+      });
+      continue;
+    }
+
+    reserved.add(groupName);
+    groupPlans.push({
+      groupName,
+      kind: "collection",
+      baseType: entry.baseType,
+      members,
+    });
   }
 
   if (issues.length > 0) {
@@ -290,9 +329,10 @@ const runGroupPlan = (
   }
 
   const manifest: IocGroupsManifest = {};
-  for (const p of groupPlans) {
-    manifest[p.groupName] = groupPlanToManifestNode(p);
+  for (const plan of groupPlans) {
+    manifest[plan.groupName] = groupPlanToManifestNode(plan);
   }
+
   return { ok: true, plans: groupPlans, manifest };
 };
 
@@ -304,10 +344,12 @@ export const buildGroupPlan = (
   if (groups === undefined) {
     return undefined;
   }
+
   const result = runGroupPlan(groups, plans, discovery);
   if (!result.ok) {
     throw new Error(formatGroupPlanIssues(result.issues));
   }
+
   return { plans: result.plans, manifest: result.manifest };
 };
 
@@ -333,6 +375,7 @@ export const analyzeGroupPlan = (
   if (groups === undefined) {
     return { ok: true, plans: [], manifest: undefined, issues: [] };
   }
+
   const result = runGroupPlan(groups, plans, discovery);
   if (!result.ok) {
     return {
@@ -342,6 +385,7 @@ export const analyzeGroupPlan = (
       issues: result.issues,
     };
   }
+
   return {
     ok: true,
     plans: result.plans,

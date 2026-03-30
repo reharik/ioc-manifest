@@ -15,14 +15,13 @@ const fixtureDir = path.join(__dirname, "test-fixtures", "base-type-discovery");
 const projectRoot = path.resolve(__dirname, "..", "..");
 const srcDir = path.join(projectRoot, "src");
 const generatedDir = path.join(srcDir, "generated");
-const injectablePath = path.join(srcDir, "core", "injectable.ts");
 const contractsPath = path.join(fixtureDir, "contracts.ts");
 const factoriesPath = path.join(fixtureDir, "factories.ts");
 const duplicateReadBasePath = path.join(fixtureDir, "duplicate-read-base.ts");
 
 const makeProgram = (): ts.Program =>
   ts.createProgram({
-    rootNames: [contractsPath, factoriesPath, injectablePath],
+    rootNames: [contractsPath, factoriesPath],
     options: {
       target: ts.ScriptTarget.ES2022,
       module: ts.ModuleKind.ESNext,
@@ -34,7 +33,7 @@ const makeProgram = (): ts.Program =>
 
 const makeProgramWithDuplicateReadService = (): ts.Program =>
   ts.createProgram({
-    rootNames: [contractsPath, factoriesPath, injectablePath, duplicateReadBasePath],
+    rootNames: [contractsPath, factoriesPath, duplicateReadBasePath],
     options: {
       target: ts.ScriptTarget.ES2022,
       module: ts.ModuleKind.ESNext,

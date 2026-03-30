@@ -8,8 +8,6 @@ import {
 import type { DiscoveredFactory } from "./types.js";
 import type { ResolvedContractRegistration } from "./resolveRegistrationPlan.js";
 import type {
-  IocContainerContractsView,
-  IocContainerImplementationView,
   IocContractManifest,
   IocGroupNodeManifest,
   IocGroupsManifest,
@@ -44,13 +42,18 @@ const uniqueModuleRows = (
   sortedFactories: DiscoveredFactory[],
 ): { relImport: string; modulePath: string }[] => {
   const seen = new Map<string, { relImport: string; modulePath: string }>();
-  for (const f of sortedFactories) {
-    if (seen.has(f.modulePath)) continue;
-    seen.set(f.modulePath, {
-      relImport: f.relImport,
-      modulePath: f.modulePath,
+
+  for (const factory of sortedFactories) {
+    if (seen.has(factory.modulePath)) {
+      continue;
+    }
+
+    seen.set(factory.modulePath, {
+      relImport: factory.relImport,
+      modulePath: factory.modulePath,
     });
   }
+
   return Array.from(seen.values()).sort((a, b) =>
     a.modulePath.localeCompare(b.modulePath),
   );
@@ -79,32 +82,38 @@ const assignStableModuleAliases = (
 ): Map<string, string> => {
   const pathToAlias = new Map<string, string>();
   const used = new Set<string>();
-  for (const m of modules) {
-    const withoutExt = m.modulePath.replace(/\.[^.]+$/, "");
+
+  for (const moduleEntry of modules) {
+    const withoutExt = moduleEntry.modulePath.replace(/\.[^.]+$/, "");
     const segments = withoutExt.split(/[/\\]/).filter(Boolean);
-    let base = sanitizeToIdentifierPart(
+    const base = sanitizeToIdentifierPart(
       segments.length > 0 ? `ioc_${segments.join("_")}` : "ioc_module",
     );
+
     let candidate = base;
     let n = 2;
     while (used.has(candidate)) {
       candidate = `${base}_${n}`;
       n += 1;
     }
+
     used.add(candidate);
-    pathToAlias.set(m.modulePath, candidate);
+    pathToAlias.set(moduleEntry.modulePath, candidate);
   }
+
   return pathToAlias;
 };
 
 const buildModuleIndexByPath = (
   modules: { relImport: string; modulePath: string }[],
 ): Map<string, number> => {
-  const m = new Map<string, number>();
+  const out = new Map<string, number>();
+
   modules.forEach((row, index) => {
-    m.set(row.modulePath, index);
+    out.set(row.modulePath, index);
   });
-  return m;
+
+  return out;
 };
 
 const plansToIocContractManifest = (
@@ -112,8 +121,10 @@ const plansToIocContractManifest = (
   moduleIndexByPath: Map<string, number>,
 ): IocContractManifest => {
   const out: IocContractManifest = {};
+
   for (const plan of plans) {
-    const inner: Record<string, ModuleFactoryManifestMetadata> = {};
+    const implementations: Record<string, ModuleFactoryManifestMetadata> = {};
+
     for (const impl of plan.implementations) {
       const moduleIndex = moduleIndexByPath.get(impl.modulePath);
       if (moduleIndex === undefined) {
@@ -121,22 +132,25 @@ const plansToIocContractManifest = (
           `[ioc] internal error: module path "${impl.modulePath}" missing from module index map`,
         );
       }
+
       const isResolvedDefault =
         impl.implementationName === plan.defaultImplementationName;
       const accessKeyDiffersFromConvention =
         plan.accessKey !== plan.contractKey;
-      inner[impl.implementationName] = {
+
+      implementations[impl.implementationName] = {
         exportName: impl.exportName,
         registrationKey: impl.registrationKey,
         modulePath: impl.modulePath,
-        sourceFilePath: impl.modulePath,
         relImport: impl.relImport,
         contractName: plan.contractName,
         implementationName: impl.implementationName,
         lifetime: impl.lifetime,
         moduleIndex,
         ...(isResolvedDefault ? { default: true } : {}),
-        ...(accessKeyDiffersFromConvention ? { accessKey: plan.accessKey } : {}),
+        ...(accessKeyDiffersFromConvention
+          ? { accessKey: plan.accessKey }
+          : {}),
         ...(impl.discoveredBy !== undefined
           ? { discoveredBy: impl.discoveredBy }
           : {}),
@@ -150,99 +164,11 @@ const plansToIocContractManifest = (
           : {}),
       };
     }
-    out[plan.contractName] = inner;
+
+    out[plan.contractName] = implementations;
   }
+
   return out;
-};
-
-const plansToLeanContainerContracts = (
-  plans: ResolvedContractRegistration[],
-): IocContainerContractsView => {
-  const sortedPlans = [...plans].sort((a, b) =>
-    a.contractName.localeCompare(b.contractName),
-  );
-  const out: IocContainerContractsView = {};
-  for (const plan of sortedPlans) {
-    const inner: Record<string, IocContainerImplementationView> = {};
-    const implNames = [...plan.implementations].sort((a, b) =>
-      a.implementationName.localeCompare(b.implementationName),
-    );
-    for (const impl of implNames) {
-      const isResolvedDefault =
-        impl.implementationName === plan.defaultImplementationName;
-      inner[impl.implementationName] = {
-        exportName: impl.exportName,
-        registrationKey: impl.registrationKey,
-        sourceFile: impl.modulePath,
-        lifetime: impl.lifetime,
-        ...(isResolvedDefault ? { default: true } : {}),
-        ...(impl.discoveredBy !== undefined
-          ? { discoveredBy: impl.discoveredBy }
-          : {}),
-        ...(impl.configOverridesApplied !== undefined &&
-        impl.configOverridesApplied.length > 0
-          ? { configOverridesApplied: impl.configOverridesApplied }
-          : {}),
-        ...(impl.dependencyContractNames !== undefined &&
-        impl.dependencyContractNames.length > 0
-          ? { dependencyContractNames: impl.dependencyContractNames }
-          : {}),
-      };
-    }
-    out[plan.contractName] = inner;
-  }
-  return out;
-};
-
-const serializeLeanImplementationBlock = (
-  row: IocContainerImplementationView,
-): string => {
-  const lines = [
-    `        exportName: ${JSON.stringify(row.exportName)},`,
-    `        registrationKey: ${JSON.stringify(row.registrationKey)},`,
-    `        sourceFile: ${JSON.stringify(row.sourceFile)},`,
-    `        lifetime: ${JSON.stringify(row.lifetime)},`,
-  ];
-  if (row.default !== undefined) {
-    lines.push(`        default: ${row.default},`);
-  }
-  if (row.discoveredBy !== undefined) {
-    lines.push(`        discoveredBy: ${JSON.stringify(row.discoveredBy)},`);
-  }
-  if (row.configOverridesApplied !== undefined) {
-    lines.push(
-      `        configOverridesApplied: ${JSON.stringify(row.configOverridesApplied)},`,
-    );
-  }
-  if (row.dependencyContractNames !== undefined) {
-    lines.push(
-      `        dependencyContractNames: ${JSON.stringify(row.dependencyContractNames)},`,
-    );
-  }
-  return lines.join("\n");
-};
-
-const serializeLeanContractsObject = (
-  lean: IocContainerContractsView,
-): string => {
-  const contractNames = Object.keys(lean).sort((a, b) => a.localeCompare(b));
-  const lines: string[] = ["  contracts: {"];
-  for (const contractName of contractNames) {
-    lines.push("");
-    lines.push(`    // ${contractName}`);
-    const impls = lean[contractName]!;
-    const implKeys = Object.keys(impls).sort((a, b) => a.localeCompare(b));
-    lines.push(`    ${JSON.stringify(contractName)}: {`);
-    for (const implKey of implKeys) {
-      const row = impls[implKey]!;
-      lines.push(`      ${JSON.stringify(implKey)}: {`);
-      lines.push(serializeLeanImplementationBlock(row));
-      lines.push(`      },`);
-    }
-    lines.push(`    },`);
-  }
-  lines.push("  },");
-  return lines.join("\n");
 };
 
 const serializeGroupNodeLiteral = (
@@ -250,30 +176,40 @@ const serializeGroupNodeLiteral = (
   baseIndent: string,
 ): string => {
   const inner = `${baseIndent}  `;
+
   if (Array.isArray(node)) {
     if (node.length === 0) {
       return "[]";
     }
+
     const lines: string[] = ["["];
     for (const leaf of node) {
       lines.push(`${inner}{`);
-      lines.push(`${inner}  contractName: ${JSON.stringify(leaf.contractName)},`);
-      lines.push(`${inner}  registrationKey: ${JSON.stringify(leaf.registrationKey)},`);
+      lines.push(
+        `${inner}  contractName: ${JSON.stringify(leaf.contractName)},`,
+      );
+      lines.push(
+        `${inner}  registrationKey: ${JSON.stringify(leaf.registrationKey)},`,
+      );
       lines.push(`${inner}},`);
     }
     lines.push(`${baseIndent}]`);
     return lines.join("\n");
   }
+
   const propKeys = Object.keys(node).sort((a, b) => a.localeCompare(b));
   if (propKeys.length === 0) {
     return "{}";
   }
+
   const lines: string[] = ["{"];
-  for (const pk of propKeys) {
-    const leaf = node[pk]!;
-    lines.push(`${inner}${tsIdentifierOrQuoted(pk)}: {`);
+  for (const propKey of propKeys) {
+    const leaf = node[propKey]!;
+    lines.push(`${inner}${tsIdentifierOrQuoted(propKey)}: {`);
     lines.push(`${inner}  contractName: ${JSON.stringify(leaf.contractName)},`);
-    lines.push(`${inner}  registrationKey: ${JSON.stringify(leaf.registrationKey)},`);
+    lines.push(
+      `${inner}  registrationKey: ${JSON.stringify(leaf.registrationKey)},`,
+    );
     lines.push(`${inner}},`);
   }
   lines.push(`${baseIndent}}`);
@@ -286,10 +222,12 @@ const serializeGroupRootsForManifest = (
   if (groupsManifest === undefined) {
     return "";
   }
+
   const rootKeys = Object.keys(groupsManifest).sort((a, b) =>
     a.localeCompare(b),
   );
   const blocks: string[] = [];
+
   for (const key of rootKeys) {
     const node = groupsManifest[key]!;
     blocks.push("");
@@ -298,6 +236,7 @@ const serializeGroupRootsForManifest = (
       `  ${tsIdentifierOrQuoted(key)}: ${serializeGroupNodeLiteral(node, "  ")},`,
     );
   }
+
   return blocks.join("\n");
 };
 
@@ -308,6 +247,7 @@ const buildIocManifestGroupRootsTypeSource = (
     a.localeCompare(b),
   );
   const lines: string[] = ["type IocManifestGroupRoots = {"];
+
   for (const key of rootKeys) {
     const node = groupsManifest[key]!;
     if (Array.isArray(node)) {
@@ -317,19 +257,21 @@ const buildIocManifestGroupRootsTypeSource = (
           `    { readonly contractName: ${JSON.stringify(leaf.contractName)}; readonly registrationKey: ${JSON.stringify(leaf.registrationKey)} },`,
         );
       }
-      lines.push(`  ];`);
-    } else {
-      lines.push(`  readonly ${tsIdentifierOrQuoted(key)}: {`);
-      const propKeys = Object.keys(node).sort((a, b) => a.localeCompare(b));
-      for (const pk of propKeys) {
-        const leaf = node[pk]!;
-        lines.push(
-          `    readonly ${tsIdentifierOrQuoted(pk)}: { readonly contractName: ${JSON.stringify(leaf.contractName)}; readonly registrationKey: ${JSON.stringify(leaf.registrationKey)} };`,
-        );
-      }
-      lines.push(`  };`);
+      lines.push("  ];");
+      continue;
     }
+
+    lines.push(`  readonly ${tsIdentifierOrQuoted(key)}: {`);
+    const propKeys = Object.keys(node).sort((a, b) => a.localeCompare(b));
+    for (const propKey of propKeys) {
+      const leaf = node[propKey]!;
+      lines.push(
+        `    readonly ${tsIdentifierOrQuoted(propKey)}: { readonly contractName: ${JSON.stringify(leaf.contractName)}; readonly registrationKey: ${JSON.stringify(leaf.registrationKey)} };`,
+      );
+    }
+    lines.push("  };");
   }
+
   lines.push("};");
   return lines.join("\n");
 };
@@ -341,13 +283,13 @@ const serializeMetadataBlock = (
     `      exportName: ${JSON.stringify(meta.exportName)},`,
     `      registrationKey: ${JSON.stringify(meta.registrationKey)},`,
     `      modulePath: ${JSON.stringify(meta.modulePath)},`,
-    `      sourceFilePath: ${JSON.stringify(meta.sourceFilePath ?? meta.modulePath)},`,
     `      relImport: ${JSON.stringify(meta.relImport)},`,
     `      contractName: ${JSON.stringify(meta.contractName)},`,
     `      implementationName: ${JSON.stringify(meta.implementationName)},`,
     `      lifetime: ${JSON.stringify(meta.lifetime)},`,
     `      moduleIndex: ${meta.moduleIndex},`,
   ];
+
   if (meta.group !== undefined) {
     lines.push(`      group: ${JSON.stringify(meta.group)},`);
   }
@@ -370,6 +312,7 @@ const serializeMetadataBlock = (
   if (meta.accessKey !== undefined) {
     lines.push(`      accessKey: ${JSON.stringify(meta.accessKey)},`);
   }
+
   return lines.join("\n");
 };
 
@@ -384,14 +327,15 @@ const serializeRegistrationManifestValue = (
   for (const contractName of contractNames) {
     const impls = manifest[contractName]!;
     const implKeys = Object.keys(impls).sort((a, b) => a.localeCompare(b));
+
     contractLines.push(`  ${JSON.stringify(contractName)}: {`);
     for (const implKey of implKeys) {
       const meta = impls[implKey]!;
       contractLines.push(`    ${JSON.stringify(implKey)}: {`);
       contractLines.push(serializeMetadataBlock(meta));
-      contractLines.push(`    },`);
+      contractLines.push("    },");
     }
-    contractLines.push(`  },`);
+    contractLines.push("  },");
   }
 
   contractLines.push("}");
@@ -399,28 +343,28 @@ const serializeRegistrationManifestValue = (
 };
 
 const serializeMainIocManifestSource = (
-  lean: IocContainerContractsView,
+  contractManifest: IocContractManifest,
   groupsManifest: IocGroupsManifest | undefined,
   manifestImportFromPackage: string,
   importLines: string[],
   moduleArrayLines: string[],
 ): string => {
   const header = `/* AUTO-GENERATED. DO NOT EDIT.
-Primary container manifest (human-oriented). Registration bindings: ioc-manifest.support.ts
-Re-run \`npm run gen:manifest\` after adding/removing injectable factories.
+Primary container manifest.
+Re-run \`npm run gen:manifest\` after changing factories or IoC config.
 */
 `;
 
-  const contractsBlock = serializeLeanContractsObject(lean);
   const groupRootsBlock = serializeGroupRootsForManifest(groupsManifest);
   const hasGroups =
     groupsManifest !== undefined && Object.keys(groupsManifest).length > 0;
   const groupRootsTypeBlock = hasGroups
-    ? `${buildIocManifestGroupRootsTypeSource(groupsManifest!)}\n\n`
+    ? `${buildIocManifestGroupRootsTypeSource(groupsManifest)}\n\n`
     : "";
   const satisfiesType = hasGroups
     ? "IocGeneratedContainerManifest<IocManifestGroupRoots>"
     : "IocGeneratedContainerManifest";
+  const contractsBlock = serializeRegistrationManifestValue(contractManifest);
 
   return `${header}import type {
   IocGeneratedContainerManifest,
@@ -434,28 +378,8 @@ ${groupRootsTypeBlock}export const iocManifest = {
 ${moduleArrayLines.join("\n")}
   ] as const satisfies readonly IocModuleNamespace[],
 
-${contractsBlock}${groupRootsBlock}
+  contracts: ${contractsBlock},${groupRootsBlock}
 } as const satisfies ${satisfiesType};
-`;
-};
-
-const serializeSupportManifestSource = (
-  registrationManifest: IocContractManifest,
-  manifestImportFromPackage: string,
-): string => {
-  const header = `/* AUTO-GENERATED. DO NOT EDIT.
-Runtime registration bindings (moduleIndex, relImport).
-Used by registerIocFromManifest(...) and inspection helpers. See ioc-manifest.ts for the human-oriented view.
-Re-run \`npm run gen:manifest\` after changing factories or IoC config.
-*/
-`;
-
-  const registrationBody = serializeRegistrationManifestValue(registrationManifest);
-
-  return `${header}import type { IocContractManifest } from "${manifestImportFromPackage}";
-
-export const iocRegistrationManifest: IocContractManifest =
-${registrationBody};
 `;
 };
 
@@ -468,12 +392,14 @@ const buildCradleTypeSource = (
 
   if (registryTypesBuildContext === undefined) {
     const typeImports = new Map<string, Set<string>>();
+
     for (const plan of plans) {
       const importPath = plan.contractTypeRelImport;
       const set = typeImports.get(importPath) ?? new Set<string>();
       set.add(plan.contractName);
       typeImports.set(importPath, set);
     }
+
     for (const [relImport, names] of Array.from(typeImports.entries()).sort(
       ([a], [b]) => a.localeCompare(b),
     )) {
@@ -496,6 +422,7 @@ const buildCradleTypeSource = (
         bucket = { named: new Set(), defaults: new Set() };
         grouped.set(relImport, bucket);
       }
+
       const sourceFile = resolveContractTypeSourceFile(
         program,
         generatedDir,
@@ -504,6 +431,7 @@ const buildCradleTypeSource = (
       const useDefault =
         sourceFile !== undefined &&
         cradleTypeImportUsesDefaultExport(sourceFile, plan.contractName);
+
       if (useDefault) {
         bucket.defaults.add(plan.contractName);
       } else {
@@ -520,8 +448,9 @@ const buildCradleTypeSource = (
       const namedNames = Array.from(bucket.named).sort((x, y) =>
         x.localeCompare(y),
       );
-      for (const d of defaultNames) {
-        importLines.push(`import type ${d} from "${relImport}";`);
+
+      for (const defaultName of defaultNames) {
+        importLines.push(`import type ${defaultName} from "${relImport}";`);
       }
       if (namedNames.length > 0) {
         importLines.push(
@@ -532,7 +461,6 @@ const buildCradleTypeSource = (
   }
 
   const propertyLines: string[] = [];
-
   const sortedPlans = [...plans].sort((a, b) =>
     a.contractName.localeCompare(b.contractName),
   );
@@ -540,7 +468,7 @@ const buildCradleTypeSource = (
   for (const plan of sortedPlans) {
     const typeName = plan.contractName;
     propertyLines.push(`  ${plan.accessKey}: ${typeName};`);
-    // Automatic per-contract collection (plural key): array, same element order as runtime.
+
     if (plan.collectionKey !== undefined) {
       propertyLines.push(
         `  ${plan.collectionKey}: ReadonlyArray<${typeName}>;`,
@@ -548,26 +476,35 @@ const buildCradleTypeSource = (
     }
   }
 
-  const appendGroupNodeType = (node: IocGroupNodeManifest, indent: string): string => {
+  const appendGroupNodeType = (
+    node: IocGroupNodeManifest,
+    indent: string,
+  ): string => {
     if (Array.isArray(node)) {
       const seen = new Set<string>();
       const order: string[] = [];
+
       for (const leaf of node) {
         if (!seen.has(leaf.contractName)) {
           seen.add(leaf.contractName);
           order.push(leaf.contractName);
         }
       }
+
       const union = order.length > 0 ? order.join(" | ") : "never";
       return `ReadonlyArray<${union}>`;
     }
 
     const lines: string[] = [`${indent}{`];
     const sortedKeys = Object.keys(node).sort((a, b) => a.localeCompare(b));
+
     for (const key of sortedKeys) {
       const leaf = node[key]!;
-      lines.push(`${indent}  ${tsIdentifierOrQuoted(key)}: ${leaf.contractName};`);
+      lines.push(
+        `${indent}  ${tsIdentifierOrQuoted(key)}: ${leaf.contractName};`,
+      );
     }
+
     lines.push(`${indent}}`);
     return lines.join("\n");
   };
@@ -576,6 +513,7 @@ const buildCradleTypeSource = (
     const groupRootKeys = Object.keys(groupsManifest).sort((a, b) =>
       a.localeCompare(b),
     );
+
     for (const key of groupRootKeys) {
       const node = groupsManifest[key]!;
       propertyLines.push(
@@ -602,6 +540,7 @@ const replaceFileFromTemp = async (
   contents: string,
 ): Promise<void> => {
   const tempPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
+
   try {
     await fs.writeFile(tempPath, contents, "utf8");
     await fs.rename(tempPath, targetPath);
@@ -627,11 +566,7 @@ export const writeManifest = async (
   const modules = uniqueModuleRows(sortedFactories);
   const moduleIndexByPath = buildModuleIndexByPath(modules);
   const aliasByPath = assignStableModuleAliases(modules);
-  const iocRegistrationManifest = plansToIocContractManifest(
-    plans,
-    moduleIndexByPath,
-  );
-  const leanContracts = plansToLeanContainerContracts(plans);
+  const contractManifest = plansToIocContractManifest(plans, moduleIndexByPath);
   const iocGroupsManifest: IocGroupsManifest | undefined = groupsManifest;
 
   const importLines = modules.map((moduleEntry) => {
@@ -655,24 +590,14 @@ export const writeManifest = async (
   });
 
   const mainSource = serializeMainIocManifestSource(
-    leanContracts,
+    contractManifest,
     iocGroupsManifest,
     manifestImportFromPackage,
     importLines,
     moduleArrayLines,
   );
 
-  const supportPath = path.join(
-    path.dirname(manifestOutPath),
-    "ioc-manifest.support.ts",
-  );
-  const supportSource = serializeSupportManifestSource(
-    iocRegistrationManifest,
-    manifestImportFromPackage,
-  );
-
   await replaceFileFromTemp(manifestOutPath, mainSource);
-  await replaceFileFromTemp(supportPath, supportSource);
 
   const typesPath = path.join(
     path.dirname(manifestOutPath),

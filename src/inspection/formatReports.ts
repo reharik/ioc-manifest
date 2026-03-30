@@ -1,10 +1,11 @@
 import type { DiscoveryReport, InspectionReport } from "./reports.js";
 import type { ManifestValidationIssue } from "./validateManifest.js";
 
-const formatManifestIssues = (issues: readonly ManifestValidationIssue[]): string => {
-  if (issues.length === 0) {
-    return "";
-  }
+const formatManifestIssues = (
+  issues: readonly ManifestValidationIssue[],
+): string => {
+  if (issues.length === 0) return "";
+
   return [
     "Manifest validation:",
     ...issues.map((i) => `  - [${i.code}] ${i.message}`),
@@ -14,6 +15,7 @@ const formatManifestIssues = (issues: readonly ManifestValidationIssue[]): strin
 
 export const formatInspectionReport = (report: InspectionReport): string => {
   const lines: string[] = [];
+
   const header = formatManifestIssues(report.manifestIssues);
   if (header.length > 0) {
     lines.push(header.trimEnd());
@@ -22,17 +24,20 @@ export const formatInspectionReport = (report: InspectionReport): string => {
 
   for (const c of report.contracts) {
     lines.push(c.contractName);
+
     if (c.defaultImplementationName !== undefined) {
       lines.push(`  default: ${c.defaultImplementationName}`);
     } else {
       lines.push(`  default: (unresolved — see manifest validation)`);
     }
+
     lines.push(`  implementations:`);
+
     for (const impl of c.implementations) {
       lines.push(`    - ${impl.implementationName}`);
       lines.push(`      lifecycle: ${impl.lifecycle}`);
-      lines.push(`      source: ${impl.sourceFilePath}`);
     }
+
     lines.push("");
   }
 
@@ -41,29 +46,38 @@ export const formatInspectionReport = (report: InspectionReport): string => {
 
 export const formatDiscoveryReport = (report: DiscoveryReport): string => {
   const lines: string[] = [];
+
   for (const file of report.files) {
     lines.push(file.sourceFilePath);
+
     for (const row of file.rows) {
+      const statusIcon = row.status === "discovered" ? "✔" : "✖";
+
       if (row.exportName === undefined) {
-        lines.push(`  ${row.status === "discovered" ? "✔" : "✖"} ${row.status}`);
-        if (row.skipReason !== undefined) {
-          lines.push(`  reason: ${row.skipReason}`);
+        lines.push(`  ${statusIcon} ${row.status}`);
+        if (row.skipReason) {
+          lines.push(`    reason: ${row.skipReason}`);
         }
         continue;
       }
-      lines.push(`  ${row.status === "discovered" ? "✔" : "✖"} ${row.status}`);
-      lines.push(`  export: ${row.exportName}`);
-      if (row.contractName !== undefined) {
-        lines.push(`  contract: ${row.contractName}`);
+
+      lines.push(`  ${statusIcon} ${row.exportName}`);
+
+      if (row.contractName) {
+        lines.push(`    contract: ${row.contractName}`);
       }
-      if (row.registrationKey !== undefined) {
-        lines.push(`  registrationKey: ${row.registrationKey}`);
+
+      if (row.registrationKey) {
+        lines.push(`    registrationKey: ${row.registrationKey}`);
       }
-      if (row.skipReason !== undefined) {
-        lines.push(`  reason: ${row.skipReason}`);
+
+      if (row.skipReason) {
+        lines.push(`    reason: ${row.skipReason}`);
       }
     }
+
     lines.push("");
   }
+
   return lines.join("\n").trimEnd();
 };

@@ -12,53 +12,151 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const GROUP_KINDS = new Set(["collection", "object"]);
+const IOC_LIFETIMES = new Set(["singleton", "scoped", "transient"]);
+
+const isIocLifetime = (value: unknown): value is IocLifetime =>
+  typeof value === "string" && IOC_LIFETIMES.has(value);
 
 const validateGroupsShape = (value: unknown, pathLabel: string): void => {
   if (!isRecord(value)) {
     throw new Error(`[ioc-config] ${pathLabel} must be an object`);
   }
+
   for (const [name, entry] of Object.entries(value)) {
     if (!isRecord(entry)) {
       throw new Error(
         `[ioc-config] ${pathLabel}.${JSON.stringify(name)} must be an object`,
       );
     }
+
     const kind = entry.kind;
     if (typeof kind !== "string" || !GROUP_KINDS.has(kind)) {
       throw new Error(
         `[ioc-config] ${pathLabel}.${JSON.stringify(name)}.kind must be "collection" or "object"`,
       );
     }
+
     const baseType = entry.baseType;
     if (typeof baseType !== "string" || baseType.length === 0) {
       throw new Error(
         `[ioc-config] ${pathLabel}.${JSON.stringify(name)}.baseType must be a non-empty string`,
       );
     }
+
     const allowed = new Set(["kind", "baseType"]);
-    for (const k of Object.keys(entry)) {
-      if (!allowed.has(k)) {
+    for (const key of Object.keys(entry)) {
+      if (!allowed.has(key)) {
         throw new Error(
-          `[ioc-config] ${pathLabel}.${JSON.stringify(name)} has unknown property ${JSON.stringify(k)} (only kind and baseType are allowed)`,
+          `[ioc-config] ${pathLabel}.${JSON.stringify(name)} has unknown property ${JSON.stringify(key)} (only kind and baseType are allowed)`,
         );
       }
     }
   }
 };
 
-const IOC_LIFETIMES = new Set(["singleton", "scoped", "transient"]);
+const validateStringArray: (
+  value: unknown,
+  pathLabel: string,
+) => asserts value is string[] = (value, pathLabel) => {
+  if (
+    !Array.isArray(value) ||
+    !value.every((item) => typeof item === "string")
+  ) {
+    throw new Error(`[ioc-config] ${pathLabel} must be string[] when set`);
+  }
+};
 
-const isIocLifetime = (value: unknown): value is IocLifetime =>
-  typeof value === "string" && IOC_LIFETIMES.has(value);
+const validateOptionalNonEmptyString = (
+  value: unknown,
+  pathLabel: string,
+): void => {
+  if (
+    value !== undefined &&
+    (typeof value !== "string" || value.length === 0)
+  ) {
+    throw new Error(
+      `[ioc-config] ${pathLabel} must be a non-empty string when set`,
+    );
+  }
+};
+
+const validateRegistrationsShape = (
+  registrations: unknown,
+  sourceLabel: string,
+): void => {
+  if (registrations === undefined) {
+    return;
+  }
+
+  if (!isRecord(registrations)) {
+    throw new Error(
+      `[ioc-config] ${sourceLabel} registrations must be an object`,
+    );
+  }
+
+  for (const [contractName, perImplementation] of Object.entries(
+    registrations,
+  )) {
+    if (!isRecord(perImplementation)) {
+      throw new Error(
+        `[ioc-config] ${sourceLabel} registrations["${contractName}"] must be an object`,
+      );
+    }
+
+    for (const [implementationName, override] of Object.entries(
+      perImplementation,
+    )) {
+      if (!isRecord(override)) {
+        throw new Error(
+          `[ioc-config] ${sourceLabel} registrations["${contractName}"]["${implementationName}"] must be an object`,
+        );
+      }
+
+      if (implementationName === IOC_CONTRACT_CONFIG_KEY) {
+        parseContractLevelConfig(
+          override,
+          `${sourceLabel} registrations["${contractName}"]["${implementationName}"]`,
+        );
+        continue;
+      }
+
+      if (override.name !== undefined && typeof override.name !== "string") {
+        throw new Error(
+          `[ioc-config] ${sourceLabel} registrations["${contractName}"]["${implementationName}"].name must be a string when set`,
+        );
+      }
+
+      if (
+        override.lifetime !== undefined &&
+        !isIocLifetime(override.lifetime)
+      ) {
+        throw new Error(
+          `[ioc-config] ${sourceLabel} registrations["${contractName}"]["${implementationName}"].lifetime must be singleton | scoped | transient when set`,
+        );
+      }
+
+      if (
+        override.default !== undefined &&
+        typeof override.default !== "boolean"
+      ) {
+        throw new Error(
+          `[ioc-config] ${sourceLabel} registrations["${contractName}"]["${implementationName}"].default must be a boolean when set`,
+        );
+      }
+    }
+  }
+};
 
 const validateIocConfig = (raw: unknown, sourceLabel: string): IocConfig => {
   if (!isRecord(raw)) {
     throw new Error(`[ioc-config] ${sourceLabel} must export an object`);
   }
+
   const discovery = raw.discovery;
   if (!isRecord(discovery)) {
     throw new Error(`[ioc-config] ${sourceLabel} is missing discovery`);
   }
+
   const rootDir = discovery.rootDir;
   if (typeof rootDir !== "string" || rootDir.length === 0) {
     throw new Error(
@@ -66,93 +164,33 @@ const validateIocConfig = (raw: unknown, sourceLabel: string): IocConfig => {
     );
   }
 
-  const includes = discovery.includes;
-  if (includes !== undefined) {
-    if (!Array.isArray(includes) || !includes.every((x) => typeof x === "string")) {
-      throw new Error(
-        `[ioc-config] ${sourceLabel} discovery.includes must be string[] when set`,
-      );
-    }
-  }
-
-  const excludes = discovery.excludes;
-  if (excludes !== undefined) {
-    if (!Array.isArray(excludes) || !excludes.every((x) => typeof x === "string")) {
-      throw new Error(
-        `[ioc-config] ${sourceLabel} discovery.excludes must be string[] when set`,
-      );
-    }
-  }
-
-  const factoryPrefix = discovery.factoryPrefix;
-  if (
-    factoryPrefix !== undefined &&
-    (typeof factoryPrefix !== "string" || factoryPrefix.length === 0)
-  ) {
-    throw new Error(
-      `[ioc-config] ${sourceLabel} discovery.factoryPrefix must be a non-empty string when set`,
+  if (discovery.includes !== undefined) {
+    validateStringArray(
+      discovery.includes,
+      `${sourceLabel} discovery.includes`,
     );
   }
 
-  const generatedDir = discovery.generatedDir;
-  if (
-    generatedDir !== undefined &&
-    (typeof generatedDir !== "string" || generatedDir.length === 0)
-  ) {
-    throw new Error(
-      `[ioc-config] ${sourceLabel} discovery.generatedDir must be a non-empty string when set`,
+  if (discovery.excludes !== undefined) {
+    validateStringArray(
+      discovery.excludes,
+      `${sourceLabel} discovery.excludes`,
     );
   }
 
-  const registrations = raw.registrations;
-  if (registrations !== undefined) {
-    if (!isRecord(registrations)) {
-      throw new Error(`[ioc-config] ${sourceLabel} registrations must be an object`);
-    }
-    for (const [contract, perImpl] of Object.entries(registrations)) {
-      if (!isRecord(perImpl)) {
-        throw new Error(
-          `[ioc-config] ${sourceLabel} registrations["${contract}"] must be an object`,
-        );
-      }
-      for (const [implName, override] of Object.entries(perImpl)) {
-        if (!isRecord(override)) {
-          throw new Error(
-            `[ioc-config] ${sourceLabel} registrations["${contract}"]["${implName}"] must be an object`,
-          );
-        }
-        if (implName === IOC_CONTRACT_CONFIG_KEY) {
-          parseContractLevelConfig(
-            override,
-            `${sourceLabel} registrations["${contract}"]["${implName}"]`,
-          );
-          continue;
-        }
-        if (override.name !== undefined && typeof override.name !== "string") {
-          throw new Error(
-            `[ioc-config] ${sourceLabel} registrations["${contract}"]["${implName}"].name must be a string when set`,
-          );
-        }
-        if (override.lifetime !== undefined && !isIocLifetime(override.lifetime)) {
-          throw new Error(
-            `[ioc-config] ${sourceLabel} registrations["${contract}"]["${implName}"].lifetime must be singleton | scoped | transient when set`,
-          );
-        }
-        if (
-          override.default !== undefined &&
-          typeof override.default !== "boolean"
-        ) {
-          throw new Error(
-            `[ioc-config] ${sourceLabel} registrations["${contract}"]["${implName}"].default must be a boolean when set`,
-          );
-        }
-      }
-    }
-  }
+  validateOptionalNonEmptyString(
+    discovery.factoryPrefix,
+    `${sourceLabel} discovery.factoryPrefix`,
+  );
+  validateOptionalNonEmptyString(
+    discovery.generatedDir,
+    `${sourceLabel} discovery.generatedDir`,
+  );
 
-  const groups = raw.groups;
-  if (groups !== undefined) {
-    validateGroupsShape(groups, `${sourceLabel} groups`);
+  validateRegistrationsShape(raw.registrations, sourceLabel);
+
+  if (raw.groups !== undefined) {
+    validateGroupsShape(raw.groups, `${sourceLabel} groups`);
   }
 
   return raw as IocConfig;
@@ -176,10 +214,14 @@ export const resolveIocConfigPath = (
       ? explicitPath
       : path.resolve(projectRoot, explicitPath);
   }
+
   const fromEnv = process.env.IOC_CONFIG;
   if (typeof fromEnv === "string" && fromEnv.length > 0) {
-    return path.isAbsolute(fromEnv) ? fromEnv : path.resolve(projectRoot, fromEnv);
+    return path.isAbsolute(fromEnv)
+      ? fromEnv
+      : path.resolve(projectRoot, fromEnv);
   }
+
   return path.join(projectRoot, "src", "ioc.config.ts");
 };
 
@@ -191,5 +233,6 @@ export const tryLoadIocConfig = async (
   } catch {
     return undefined;
   }
+
   return loadIocConfig(absoluteConfigPath);
 };

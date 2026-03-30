@@ -25,11 +25,10 @@ const makeProgram = (): ts.Program => {
   const roots = [
     path.join(fixtureDir, "contract.ts"),
     path.join(fixtureDir, "naming-factories.ts"),
+    path.join(fixtureDir, "extra-naming-factories.ts"),
     path.join(fixtureDir, "create-factories.ts"),
-    path.join(fixtureDir, "wrapper-factories.ts"),
     path.join(fixtureDir, "both-matching-factories.ts"),
     path.join(fixtureDir, "invalid-factory.ts"),
-    path.join(srcDir, "core/injectable.ts"),
   ];
 
   return ts.createProgram({
@@ -128,71 +127,8 @@ describe("Discovery strategies (discoverFactories)", () => {
     });
   });
 
-  describe("When injectable(...) wrapper discovery is enabled", () => {
-    it("should discover wrapped factories even when export name does not match the naming prefix", () => {
-      const program = makeProgram();
-      const wrapperFile = path.join(fixtureDir, "wrapper-factories.ts");
-
-      const { acceptedFactories } = discoverFactories(
-        [wrapperFile],
-        program,
-        projectRoot,
-        "build",
-        {
-          srcDir,
-          generatedDir,
-        },
-      );
-
-      const exports = acceptedFactories.map((f) => f.exportName);
-      assert.ok(exports.includes("makeWrapped"));
-      assert.ok(exports.includes("makeWrappedZero"));
-      assert.ok(exports.includes("makeWrappedWithDeps"));
-    });
-
-    it("should discover wrapped zero-arg factories", () => {
-      const program = makeProgram();
-      const wrapperFile = path.join(fixtureDir, "wrapper-factories.ts");
-
-      const { acceptedFactories } = discoverFactories(
-        [wrapperFile],
-        program,
-        projectRoot,
-        "build",
-        {
-          srcDir,
-          generatedDir,
-        },
-      );
-
-      const f = expectFactory(acceptedFactories, "makeWrappedZero");
-      assert.strictEqual(f.contractName, "Foo");
-      assert.strictEqual(f.implementationName, "makeWrappedZero");
-    });
-
-    it("should discover wrapped dependency-injected factories", () => {
-      const program = makeProgram();
-      const wrapperFile = path.join(fixtureDir, "wrapper-factories.ts");
-
-      const { acceptedFactories } = discoverFactories(
-        [wrapperFile],
-        program,
-        projectRoot,
-        "build",
-        {
-          srcDir,
-          generatedDir,
-        },
-      );
-
-      const f = expectFactory(acceptedFactories, "makeWrappedWithDeps");
-      assert.strictEqual(f.contractName, "Foo");
-      assert.strictEqual(f.implementationName, "makeWrappedWithDeps");
-    });
-  });
-
-  describe("When naming and wrapper discovery overlap", () => {
-    it("should treat a wrapped naming-convention factory using naming-derived implementation name", () => {
+  describe("When naming convention discovery handles plain factory exports", () => {
+    it("should use naming-derived implementation name for the configured prefix", () => {
       const program = makeProgram();
       const bothFile = path.join(
         fixtureDir,
@@ -241,8 +177,7 @@ describe("Discovery strategies (discoverFactories)", () => {
       );
       assert.ok(record);
       const exportOutcome = record.outcomes.find(
-        (o) =>
-          o.scope === "export" && o.exportName === "makeInvalidWrapped",
+        (o) => o.scope === "export" && o.exportName === "buildInvalid",
       );
       assert.ok(exportOutcome && exportOutcome.scope === "export");
       if (exportOutcome.scope === "export") {
@@ -255,14 +190,14 @@ describe("Discovery strategies (discoverFactories)", () => {
     });
   });
 
-  describe("When both patterns can coexist in the same project", () => {
-    it("should discover factories from multiple exports in one pass", () => {
+  describe("When multiple modules each define naming-convention factories", () => {
+    it("should discover factories from multiple files in one pass", () => {
       const program = makeProgram();
       const namingFile = path.join(fixtureDir, "naming-factories.ts");
-      const wrapperFile = path.join(fixtureDir, "wrapper-factories.ts");
+      const extraFile = path.join(fixtureDir, "extra-naming-factories.ts");
 
       const { acceptedFactories } = discoverFactories(
-        [namingFile, wrapperFile],
+        [namingFile, extraFile],
         program,
         projectRoot,
         "build",
@@ -274,7 +209,7 @@ describe("Discovery strategies (discoverFactories)", () => {
 
       const exports = new Set(acceptedFactories.map((f) => f.exportName));
       assert.ok(exports.has("buildFoo"));
-      assert.ok(exports.has("makeWrappedZero"));
+      assert.ok(exports.has("buildExtra"));
     });
   });
 });

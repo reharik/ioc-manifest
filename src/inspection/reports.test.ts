@@ -48,7 +48,7 @@ describe("Inspection reports", () => {
       assert.strictEqual(media.defaultImplementationName, "local");
       assert.strictEqual(media.implementations[0]?.lifecycle, "singleton");
       assert.ok(
-        media.implementations[0]?.sourceFilePath.includes("buildLocalMediaStorage"),
+        media.implementations[0]?.modulePath.includes("buildLocalMediaStorage"),
       );
       assert.strictEqual(report.manifestIssues.length, 0);
     });

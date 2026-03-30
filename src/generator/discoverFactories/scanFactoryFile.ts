@@ -1,21 +1,20 @@
 import path from "node:path";
 import ts from "typescript";
 import { getImplOverrideForImplementation } from "../../config/iocConfig.js";
-import {
-  keyFromExportName,
-  resolveRegistrationKeyForFactory,
-} from "../../core/resolver.js";
+import { resolveRegistrationKeyForFactory } from "../../core/resolver.js";
 import {
   IocDiscoverySkipReason,
   IocDiscoveryStatus,
   type IocDiscoveryOutcome,
 } from "./discoveryOutcomeTypes.js";
-import type { DiscoveredFactory, FactoryDiscoveryFileContext } from "../types.js";
+import type {
+  DiscoveredFactory,
+  FactoryDiscoveryFileContext,
+} from "../types.js";
 
 /** Structural facts about a source file, collected in one AST walk. */
 export type FileAnalysis = {
   exportedNames: Set<string>;
-  injectableWrappedExports: Set<string>;
   localTypes: Set<string>;
   importedIds: Set<string>;
   factoryDeclByExport: Map<string, ts.FunctionLike>;
@@ -56,10 +55,12 @@ const implementationNameFromFactoryExport = (
   if (!exportName.startsWith(factoryPrefix)) {
     return undefined;
   }
+
   const rest = exportName.slice(factoryPrefix.length);
   if (rest.length === 0) {
     return undefined;
   }
+
   return rest.charAt(0).toLowerCase() + rest.slice(1);
 };
 
@@ -130,7 +131,9 @@ const relImportFromGeneratedDir = (
 ): string => {
   let rel = path.relative(generatedDir, absFile);
   rel = toPosix(rel).replace(/\.[^.]+$/, "");
-  if (!rel.startsWith(".")) rel = "./" + rel;
+  if (!rel.startsWith(".")) {
+    rel = "./" + rel;
+  }
   return `${rel}.js`;
 };
 
@@ -151,41 +154,10 @@ const unwrapExpression = (expr: ts.Expression): ts.Expression => {
   return expr;
 };
 
-const isInjectableCallExpression = (expr: ts.Expression): boolean => {
-  const unwrapped = unwrapExpression(expr);
-  return (
-    ts.isCallExpression(unwrapped) &&
-    ts.isIdentifier(unwrapped.expression) &&
-    unwrapped.expression.text === "injectable"
-  );
-};
-
-const getInjectableWrappedFactoryDecl = (
-  expr: ts.Expression,
-): ts.FunctionLike | undefined => {
-  const unwrapped = unwrapExpression(expr);
-  if (!isInjectableCallExpression(unwrapped)) {
-    return undefined;
-  }
-  if (!ts.isCallExpression(unwrapped)) {
-    return undefined;
-  }
-  const arg0 = unwrapped.arguments[0];
-  if (!arg0) {
-    return undefined;
-  }
-  const inner = unwrapExpression(arg0);
-  if (ts.isArrowFunction(inner) || ts.isFunctionExpression(inner)) {
-    return inner;
-  }
-  return undefined;
-};
-
 export const collectFileAnalysisForFactoryDiscovery = (
   sourceFile: ts.SourceFile,
 ): FileAnalysis => {
   const exportedNames = new Set<string>();
-  const injectableWrappedExports = new Set<string>();
   const localTypes = new Set<string>();
   const importedIds = new Set<string>();
   const factoryDeclByExport = new Map<string, ts.FunctionLike>();
@@ -196,7 +168,10 @@ export const collectFileAnalysisForFactoryDiscovery = (
         if (ts.isIdentifier(decl.name)) {
           const exportName = decl.name.text;
           exportedNames.add(exportName);
-          if (!decl.initializer || factoryDeclByExport.has(exportName)) continue;
+
+          if (!decl.initializer || factoryDeclByExport.has(exportName)) {
+            continue;
+          }
 
           const initUnwrapped = unwrapExpression(decl.initializer);
           if (ts.isArrowFunction(initUnwrapped)) {
@@ -206,14 +181,6 @@ export const collectFileAnalysisForFactoryDiscovery = (
           if (ts.isFunctionExpression(initUnwrapped)) {
             factoryDeclByExport.set(exportName, initUnwrapped);
             continue;
-          }
-
-          const wrappedFactoryDecl = getInjectableWrappedFactoryDecl(
-            decl.initializer,
-          );
-          if (wrappedFactoryDecl) {
-            factoryDeclByExport.set(exportName, wrappedFactoryDecl);
-            injectableWrappedExports.add(exportName);
           }
         }
       }
@@ -249,9 +216,11 @@ export const collectFileAnalysisForFactoryDiscovery = (
     if (ts.isInterfaceDeclaration(node) && isExportedNode(node) && node.name) {
       localTypes.add(node.name.text);
     }
+
     if (ts.isTypeAliasDeclaration(node) && isExportedNode(node)) {
       localTypes.add(node.name.text);
     }
+
     if (
       ts.isExportDeclaration(node) &&
       node.exportClause &&
@@ -268,6 +237,7 @@ export const collectFileAnalysisForFactoryDiscovery = (
         if (clause.name) {
           importedIds.add(clause.name.text);
         }
+
         if (clause.namedBindings) {
           if (ts.isNamespaceImport(clause.namedBindings)) {
             importedIds.add(clause.namedBindings.name.text);
@@ -287,7 +257,6 @@ export const collectFileAnalysisForFactoryDiscovery = (
 
   return {
     exportedNames,
-    injectableWrappedExports,
     localTypes,
     importedIds,
     factoryDeclByExport,
@@ -298,6 +267,30 @@ export type ScanFactoryFileResult = {
   sourceFilePath: string;
   outcomes: IocDiscoveryOutcome[];
   discovered: DiscoveredFactory[];
+};
+
+type DiscoveryMatch = {
+  matchedBy: "naming";
+  implementationName: string;
+};
+
+const matchFactoryExport = (
+  exportName: string,
+  factoryPrefix: string,
+): DiscoveryMatch | undefined => {
+  const implementationName = implementationNameFromFactoryExport(
+    exportName,
+    factoryPrefix,
+  );
+
+  if (!implementationName || implementationName.length === 0) {
+    return undefined;
+  }
+
+  return {
+    matchedBy: "naming",
+    implementationName,
+  };
 };
 
 export const scanFactoryFile = (
@@ -318,8 +311,7 @@ export const scanFactoryFile = (
   const outcomes: IocDiscoveryOutcome[] = [];
 
   const sourceText = sourceFile.getText();
-  const shouldScan =
-    sourceText.includes(factoryPrefix) || sourceText.includes("injectable(");
+  const shouldScan = sourceText.includes(factoryPrefix);
   if (!shouldScan) {
     outcomes.push({
       scope: "file",
@@ -336,44 +328,12 @@ export const scanFactoryFile = (
 
   const fileLabel = relProjectPath(projectRoot, absPath);
 
-  type DiscoveryMatch = {
-    matchedBy: "naming" | "injectable-wrapper";
-    implementationName: string;
-  };
-
-  const discoveryMatchers: Array<{
-    matchedBy: DiscoveryMatch["matchedBy"];
-    matchImplementationName: (exportName: string) => string | undefined;
-  }> = [
-    {
-      matchedBy: "naming",
-      matchImplementationName: (exportName: string) =>
-        implementationNameFromFactoryExport(exportName, factoryPrefix),
-    },
-    {
-      matchedBy: "injectable-wrapper",
-      matchImplementationName: (exportName: string) =>
-        analysis.injectableWrappedExports.has(exportName)
-          ? keyFromExportName(exportName)
-          : undefined,
-    },
-  ];
-
-  const matchInjectableExport = (
-    exportName: string,
-  ): DiscoveryMatch | undefined => {
-    for (const matcher of discoveryMatchers) {
-      const implementationName = matcher.matchImplementationName(exportName);
-      if (implementationName !== undefined && implementationName.length > 0) {
-        return { matchedBy: matcher.matchedBy, implementationName };
-      }
-    }
-    return undefined;
-  };
-
   const candidateExports = Array.from(analysis.exportedNames)
     .sort((a, b) => a.localeCompare(b))
-    .filter((exportName) => matchInjectableExport(exportName) !== undefined);
+    .filter(
+      (exportName) =>
+        matchFactoryExport(exportName, factoryPrefix) !== undefined,
+    );
 
   if (candidateExports.length === 0) {
     outcomes.push({
@@ -385,22 +345,12 @@ export const scanFactoryFile = (
   }
 
   for (const exportName of candidateExports) {
-    const match = matchInjectableExport(exportName);
+    const match = matchFactoryExport(exportName, factoryPrefix);
     if (!match) {
       continue;
     }
 
     const implementationName = match.implementationName;
-    if (!implementationName || implementationName.length === 0) {
-      outcomes.push({
-        scope: "export",
-        exportName,
-        status: IocDiscoveryStatus.SKIPPED,
-        skipReason: IocDiscoverySkipReason.UNSUPPORTED_PATTERN,
-      });
-      continue;
-    }
-
     const factoryDecl = analysis.factoryDeclByExport.get(exportName);
     if (!factoryDecl) {
       outcomes.push({
@@ -471,6 +421,7 @@ export const scanFactoryFile = (
       iocConfig?.registrations?.[contractName],
       implementationName,
     )?.name;
+
     let registrationKey: string;
     try {
       registrationKey = resolveRegistrationKeyForFactory(

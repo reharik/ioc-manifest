@@ -37,7 +37,7 @@ export type IocDiscoveryOutcome =
       contractName: string;
       implementationName: string;
       registrationKey: string;
-      discoveredBy: "naming" | "injectable-wrapper";
+      discoveredBy: "naming";
     }
   | {
       scope: "export";

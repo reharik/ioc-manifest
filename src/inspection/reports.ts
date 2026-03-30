@@ -1,7 +1,5 @@
 import { selectDefaultImplementationName } from "../core/defaultImplementationSelection.js";
 import type {
-  IocContainerContractsView,
-  IocContainerImplementationView,
   IocContractManifest,
   ModuleFactoryManifestMetadata,
 } from "../core/manifest.js";
@@ -10,34 +8,11 @@ import type {
   IocDiscoveryOutcome,
 } from "../generator/discoverFactories/discoveryOutcomeTypes.js";
 import type { ManifestValidationIssue } from "./validateManifest.js";
-import {
-  validateContainerContractsView,
-  validateManifest,
-} from "./validateManifest.js";
+import { validateManifest } from "./validateManifest.js";
 
-/** Result shape from {@link runDiscoveryAnalysis}; inlined to avoid import cycles. */
 export type DiscoveryReportInput =
   | IocDiscoveryAnalysisFiles
   | { discoveryFiles: IocDiscoveryAnalysisFiles };
-
-export type InspectionContractsInput =
-  | IocContainerContractsView
-  | IocContractManifest;
-
-const isRegistrationManifest = (
-  contracts: InspectionContractsInput,
-): contracts is IocContractManifest => {
-  for (const implMap of Object.values(contracts)) {
-    for (const row of Object.values(implMap)) {
-      return (
-        row != null &&
-        typeof row === "object" &&
-        "moduleIndex" in row
-      );
-    }
-  }
-  return false;
-};
 
 export type InspectionContractReport = {
   contractName: string;
@@ -47,7 +22,7 @@ export type InspectionContractReport = {
     implementationName: string;
     registrationKey: string;
     lifecycle: string;
-    sourceFilePath: string;
+    modulePath: string;
     exportName: string;
     isDefault: boolean;
   }[];
@@ -58,14 +33,13 @@ export type InspectionReport = {
   manifestIssues: readonly ManifestValidationIssue[];
 };
 
-const pickDefaultRegistration = (
+const pickDefault = (
   contractName: string,
   impls: Record<string, ModuleFactoryManifestMetadata>,
 ): { name: string; meta: ModuleFactoryManifestMetadata } | undefined => {
   const list = Object.values(impls);
-  if (list.length === 0) {
-    return undefined;
-  }
+  if (list.length === 0) return undefined;
+
   try {
     const name = selectDefaultImplementationName(
       contractName,
@@ -75,56 +49,18 @@ const pickDefaultRegistration = (
         ...(m.default === true ? { default: true as const } : {}),
       })),
     );
-    const meta = list.find((m) => m.implementationName === name);
-    if (meta === undefined) {
-      return undefined;
-    }
-    return { name: meta.implementationName, meta };
-  } catch {
-    return undefined;
-  }
-};
 
-const pickDefaultLean = (
-  contractName: string,
-  impls: Record<string, IocContainerImplementationView>,
-): { name: string; meta: IocContainerImplementationView } | undefined => {
-  const implKeys = Object.keys(impls).sort((a, b) => a.localeCompare(b));
-  if (implKeys.length === 0) {
-    return undefined;
-  }
-  try {
-    const name = selectDefaultImplementationName(
-      contractName,
-      implKeys.map((k) => {
-        const row = impls[k]!;
-        return {
-          implementationName: k,
-          registrationKey: row.registrationKey,
-          ...(row.default === true ? { default: true as const } : {}),
-        };
-      }),
-    );
-    const meta = impls[name];
-    if (meta === undefined) {
-      return undefined;
-    }
-    return { name, meta };
+    const meta = list.find((m) => m.implementationName === name);
+    return meta ? { name, meta } : undefined;
   } catch {
     return undefined;
   }
 };
 
 export const buildInspectionReport = (
-  contracts: InspectionContractsInput,
-  options?: { registrationManifest?: IocContractManifest },
+  contracts: IocContractManifest,
 ): InspectionReport => {
-  const manifestIssues =
-    options?.registrationManifest !== undefined
-      ? validateManifest(options.registrationManifest)
-      : isRegistrationManifest(contracts)
-        ? validateManifest(contracts)
-        : validateContainerContractsView(contracts);
+  const manifestIssues = validateManifest(contracts);
 
   const contractNames = Object.keys(contracts).sort((a, b) =>
     a.localeCompare(b),
@@ -134,41 +70,22 @@ export const buildInspectionReport = (
     (contractName) => {
       const impls = contracts[contractName]!;
       const implKeys = Object.keys(impls).sort((a, b) => a.localeCompare(b));
-      if (isRegistrationManifest(contracts)) {
-        const full = impls as Record<string, ModuleFactoryManifestMetadata>;
-        const selected = pickDefaultRegistration(contractName, full);
-        return {
-          contractName,
-          defaultImplementationName: selected?.name,
-          defaultRegistrationKey: selected?.meta.registrationKey,
-          implementations: implKeys.map((k) => {
-            const m = full[k]!;
-            return {
-              implementationName: m.implementationName,
-              registrationKey: m.registrationKey,
-              lifecycle: m.lifetime,
-              sourceFilePath: m.sourceFilePath ?? m.modulePath,
-              exportName: m.exportName,
-              isDefault: selected?.name === m.implementationName,
-            };
-          }),
-        };
-      }
-      const lean = impls as Record<string, IocContainerImplementationView>;
-      const selected = pickDefaultLean(contractName, lean);
+
+      const selected = pickDefault(contractName, impls);
+
       return {
         contractName,
         defaultImplementationName: selected?.name,
         defaultRegistrationKey: selected?.meta.registrationKey,
         implementations: implKeys.map((k) => {
-          const m = lean[k]!;
+          const m = impls[k]!;
           return {
-            implementationName: k,
+            implementationName: m.implementationName,
             registrationKey: m.registrationKey,
             lifecycle: m.lifetime,
-            sourceFilePath: m.sourceFile,
+            modulePath: m.modulePath,
             exportName: m.exportName,
-            isDefault: selected?.name === k,
+            isDefault: selected?.name === m.implementationName,
           };
         }),
       };
@@ -207,6 +124,7 @@ const outcomeToRows = (
       },
     ];
   }
+
   if (outcome.status === "discovered") {
     return [
       {
@@ -218,6 +136,7 @@ const outcomeToRows = (
       },
     ];
   }
+
   return [
     {
       sourceFilePath,
@@ -249,5 +168,6 @@ export const buildDiscoveryReport = (
       sourceFilePath: file.sourceFilePath,
       rows: file.outcomes.flatMap((o) => outcomeToRows(file.sourceFilePath, o)),
     }));
+
   return { files };
 };

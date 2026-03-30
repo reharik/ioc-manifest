@@ -34,9 +34,7 @@ const parseArgs = (argv: string[]): ParsedCli => {
   }
   const command = args[0];
   if (command !== "inspect") {
-    throw new Error(
-      `Unknown command ${JSON.stringify(command)}. Use inspect.`,
-    );
+    throw new Error(`Unknown command ${JSON.stringify(command)}. Use inspect.`);
   }
   let iocConfigPath: string | undefined;
   let discovery = false;
@@ -68,7 +66,10 @@ type GeneratedSupportManifestModule = {
 
 const loadGeneratedManifestModules = async (
   iocConfigPath?: string,
-): Promise<{ main: GeneratedMainManifestModule; support: GeneratedSupportManifestModule }> => {
+): Promise<{
+  main: GeneratedMainManifestModule;
+  support: GeneratedSupportManifestModule;
+}> => {
   const base = resolveManifestOptions();
   const cfgPath = resolveIocConfigPath(base.paths.projectRoot, iocConfigPath);
   const config = await tryLoadIocConfig(cfgPath);
@@ -81,15 +82,19 @@ const loadGeneratedManifestModules = async (
     "ioc-manifest.support.ts",
   );
   const [main, support] = await Promise.all([
-    import(pathToFileURL(manifestPath).href) as Promise<GeneratedMainManifestModule>,
-    import(pathToFileURL(supportPath).href) as Promise<GeneratedSupportManifestModule>,
+    import(
+      pathToFileURL(manifestPath).href
+    ) as Promise<GeneratedMainManifestModule>,
+    import(
+      pathToFileURL(supportPath).href
+    ) as Promise<GeneratedSupportManifestModule>,
   ]);
   return { main, support };
 };
 
 const main = async (): Promise<void> => {
   const cli = parseArgs(process.argv);
-  const { main: mainMod, support } = await loadGeneratedManifestModules(
+  const { main: mainMod } = await loadGeneratedManifestModules(
     cli.iocConfigPath,
   );
 
@@ -101,9 +106,7 @@ const main = async (): Promise<void> => {
     console.log(formatDiscoveryReport(report));
     return;
   }
-  const report = buildInspectionReport(mainMod.iocManifest.contracts, {
-    registrationManifest: support.iocRegistrationManifest,
-  });
+  const report = buildInspectionReport(mainMod.iocManifest.contracts);
   console.log(formatInspectionReport(report));
 };
 

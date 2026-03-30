@@ -118,10 +118,7 @@ export const generateManifest = async (
   );
 
   formatGeneratedFileWithPrettier(manifestOutPath, projectRoot);
-  formatGeneratedFileWithPrettier(
-    path.join(path.dirname(manifestOutPath), "ioc-manifest.support.ts"),
-    projectRoot,
-  );
+
   formatGeneratedFileWithPrettier(
     path.join(path.dirname(manifestOutPath), "ioc-registry.types.ts"),
     projectRoot,

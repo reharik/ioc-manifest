@@ -5,7 +5,6 @@ import type { MediaStorage } from "../examples/b-multiple-implementations.js";
 import { extractGroupRootsFromContainerManifest } from "../core/manifest.js";
 import type { IocGeneratedCradle } from "../generated/ioc-registry.types.js";
 import { iocManifest } from "../generated/ioc-manifest.js";
-import { iocRegistrationManifest } from "../generated/ioc-manifest.support.js";
 import { registerIocFromManifest } from "./bootstrap.js";
 
 describe("registerIocFromManifest", () => {
@@ -14,7 +13,7 @@ describe("registerIocFromManifest", () => {
       const container = createContainer<IocGeneratedCradle>();
       registerIocFromManifest(
         container,
-        iocRegistrationManifest,
+        iocManifest.contracts,
         iocManifest.moduleImports,
         extractGroupRootsFromContainerManifest(iocManifest),
       );
@@ -29,7 +28,7 @@ describe("registerIocFromManifest", () => {
       const container = createContainer<IocGeneratedCradle>();
       registerIocFromManifest(
         container,
-        iocRegistrationManifest,
+        iocManifest.contracts,
         iocManifest.moduleImports,
         extractGroupRootsFromContainerManifest(iocManifest),
       );
@@ -48,7 +47,7 @@ describe("registerIocFromManifest", () => {
       const container = createContainer<IocGeneratedCradle>();
       registerIocFromManifest(
         container,
-        iocRegistrationManifest,
+        iocManifest.contracts,
         iocManifest.moduleImports,
         extractGroupRootsFromContainerManifest(iocManifest),
       );
@@ -70,7 +69,7 @@ describe("registerIocFromManifest", () => {
       const container = createContainer<IocGeneratedCradle>();
       registerIocFromManifest(
         container,
-        iocRegistrationManifest,
+        iocManifest.contracts,
         iocManifest.moduleImports,
         extractGroupRootsFromContainerManifest(iocManifest),
       );
