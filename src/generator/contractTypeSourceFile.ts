@@ -1,17 +1,30 @@
 import path from "node:path";
 import ts from "typescript";
+import type { ResolvedScanDir } from "./manifestPaths.js";
 
-/**
- * Locates the source file for a contract type import path (relative to generated output),
- * matching files present in the TypeScript program.
- */
-export const resolveContractTypeSourceFile = (
+const getTopLevelTypeDeclaration = (
+  sourceFile: ts.SourceFile,
+  typeName: string,
+): ts.InterfaceDeclaration | ts.TypeAliasDeclaration | undefined => {
+  for (const stmt of sourceFile.statements) {
+    if (ts.isInterfaceDeclaration(stmt) && stmt.name.text === typeName) {
+      if (stmt.parent === sourceFile) {
+        return stmt;
+      }
+    }
+    if (ts.isTypeAliasDeclaration(stmt) && stmt.name.text === typeName) {
+      if (stmt.parent === sourceFile) {
+        return stmt;
+      }
+    }
+  }
+  return undefined;
+};
+
+const matchSourceFileByAbsoluteBase = (
   program: ts.Program,
-  generatedDir: string,
-  contractTypeRelImport: string,
+  baseAbs: string,
 ): ts.SourceFile | undefined => {
-  const raw = contractTypeRelImport.replace(/^\.\//, "").replace(/\.js$/i, "");
-  const baseAbs = path.resolve(generatedDir, raw);
   const candidates = [
     `${baseAbs}.ts`,
     `${baseAbs}.tsx`,
@@ -33,6 +46,123 @@ export const resolveContractTypeSourceFile = (
   if (caseHit !== undefined) {
     return caseHit;
   }
+  return undefined;
+};
+
+/**
+ * When {@link importMode} is `root`, the emitted specifier is only `importPrefix`. Find the unique
+ * source file under the scan root that declares `contractName` as a top-level interface or type alias.
+ */
+const findUniqueContractDeclarationSourceUnderScanRoot = (
+  program: ts.Program,
+  scanRootAbs: string,
+  contractName: string,
+): ts.SourceFile | undefined => {
+  const normRoot = path.normalize(scanRootAbs);
+  const hits: ts.SourceFile[] = [];
+
+  for (const sf of program.getSourceFiles()) {
+    if (sf.fileName.includes(`${path.sep}node_modules${path.sep}`)) {
+      continue;
+    }
+    const norm = path.normalize(sf.fileName);
+    const under =
+      norm === normRoot || norm.startsWith(`${normRoot}${path.sep}`);
+    if (!under) {
+      continue;
+    }
+    if (getTopLevelTypeDeclaration(sf, contractName) !== undefined) {
+      hits.push(sf);
+    }
+  }
+
+  if (hits.length === 1) {
+    return hits[0];
+  }
+  return undefined;
+};
+
+const tryResolveRootModeSpecifier = (
+  program: ts.Program,
+  entry: ResolvedScanDir & { importPrefix: string },
+  contractName: string | undefined,
+): ts.SourceFile | undefined => {
+  if (contractName !== undefined) {
+    const unique = findUniqueContractDeclarationSourceUnderScanRoot(
+      program,
+      entry.absPath,
+      contractName,
+    );
+    if (unique !== undefined) {
+      return unique;
+    }
+  }
+  for (const rel of ["index.ts", "index.tsx", "src/index.ts", "src/index.tsx"]) {
+    const full = path.normalize(path.join(entry.absPath, rel));
+    const baseAbs = full.replace(/\.tsx?$/i, "");
+    const hit = matchSourceFileByAbsoluteBase(program, baseAbs);
+    if (hit !== undefined) {
+      return hit;
+    }
+  }
+  return undefined;
+};
+
+/**
+ * Locates the source file for a contract type import path as stored on registration plans:
+ * relative to {@link generatedDir}, or a workspace/package alias when {@link scanDirs} defines
+ * `importPrefix` / `importMode` (see {@link computeManifestModuleSpecifier}).
+ */
+export const resolveContractTypeSourceFile = (
+  program: ts.Program,
+  generatedDir: string,
+  contractTypeRelImport: string,
+  scanDirs: readonly ResolvedScanDir[],
+  contractName?: string,
+): ts.SourceFile | undefined => {
+  const withoutJs = contractTypeRelImport.replace(/\.js$/i, "");
+  const isRelativeSpecifier =
+    contractTypeRelImport.startsWith("./") ||
+    contractTypeRelImport.startsWith("../");
+
+  if (isRelativeSpecifier) {
+    const raw = contractTypeRelImport.replace(/^\.\//, "").replace(/\.js$/i, "");
+    const baseAbs = path.resolve(generatedDir, raw);
+    return matchSourceFileByAbsoluteBase(program, baseAbs);
+  }
+
+  const prefixed = scanDirs
+    .filter(
+      (
+        e,
+      ): e is ResolvedScanDir & {
+        importPrefix: string;
+        importMode: "root" | "subpath";
+      } =>
+        e.importPrefix !== undefined && e.importMode !== undefined,
+    )
+    .sort((a, b) => b.importPrefix.length - a.importPrefix.length);
+
+  for (const entry of prefixed) {
+    const p = entry.importPrefix;
+    if (entry.importMode === "subpath") {
+      const prefixSlash = `${p}/`;
+      if (withoutJs.startsWith(prefixSlash)) {
+        const remainder = withoutJs.slice(prefixSlash.length);
+        if (remainder.length === 0) {
+          continue;
+        }
+        const nativeRel = remainder.split("/").join(path.sep);
+        const baseAbs = path.normalize(path.join(entry.absPath, nativeRel));
+        return matchSourceFileByAbsoluteBase(program, baseAbs);
+      }
+    } else if (entry.importMode === "root") {
+      if (withoutJs === p) {
+        return tryResolveRootModeSpecifier(program, entry, contractName);
+      }
+    }
+  }
+
   return undefined;
 };
 

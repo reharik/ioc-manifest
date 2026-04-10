@@ -34,8 +34,9 @@ const DEFAULT_INCLUDE_PATTERNS = ["examples/**/*.{ts,tsx,js,mjs,cjs}"];
 
 const DEFAULT_EXCLUDE_PATTERNS = [
   "**/*.d.ts",
-  "**/*.test.{ts,tsx,js,mjs,cjs}",
-  "**/*.spec.{ts,tsx,js,mjs,cjs}",
+  // `*.test.ts` and `*.tests.ts` (and .js / .mjs / .cjs)
+  "**/*.{test,tests}.{ts,tsx,js,mjs,cjs}",
+  "**/*.{spec,specs}.{ts,tsx,js,mjs,cjs}",
   "generated/**/*",
   "dist/**/*",
   "node_modules/**/*",

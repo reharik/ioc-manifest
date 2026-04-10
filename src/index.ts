@@ -89,6 +89,7 @@ export {
   type DiscoveryManifestResolution,
   type DiscoveryReport,
   type DiscoveryReportInput,
+  type FormatDiscoveryReportOptions,
   type InspectionReport,
   type ManifestValidationIssue,
 } from "./inspection/index.js";

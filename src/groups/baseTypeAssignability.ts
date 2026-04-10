@@ -1,6 +1,7 @@
 import path from "node:path";
 import ts from "typescript";
 import { resolveContractTypeSourceFile } from "../generator/contractTypeSourceFile.js";
+import type { ResolvedScanDir } from "../generator/manifestPaths.js";
 import type {
   ResolvedContractRegistration,
   ResolvedImplementationEntry,
@@ -45,12 +46,15 @@ export const getContractDeclaredType = (
   checker: ts.TypeChecker,
   program: ts.Program,
   generatedDir: string,
+  scanDirs: readonly ResolvedScanDir[],
   plan: ResolvedContractRegistration,
 ): ts.Type | undefined => {
   const sourceFile = resolveContractTypeSourceFile(
     program,
     generatedDir,
     plan.contractTypeRelImport,
+    scanDirs,
+    plan.contractName,
   );
   if (sourceFile === undefined) {
     return undefined;
@@ -138,6 +142,7 @@ export const collectImplementationMembersAssignableToBase = (
   checker: ts.TypeChecker,
   program: ts.Program,
   generatedDir: string,
+  scanDirs: readonly ResolvedScanDir[],
   plans: readonly ResolvedContractRegistration[],
   baseType: ts.Type,
   filterImpl?: (
@@ -151,6 +156,7 @@ export const collectImplementationMembersAssignableToBase = (
       checker,
       program,
       generatedDir,
+      scanDirs,
       plan,
     );
     if (contractType === undefined) {
@@ -182,6 +188,7 @@ export const collectContractDefaultMembersAssignableToBase = (
   checker: ts.TypeChecker,
   program: ts.Program,
   generatedDir: string,
+  scanDirs: readonly ResolvedScanDir[],
   plans: readonly ResolvedContractRegistration[],
   baseType: ts.Type,
 ): ContractDefaultGroupMember[] => {
@@ -191,6 +198,7 @@ export const collectContractDefaultMembersAssignableToBase = (
       checker,
       program,
       generatedDir,
+      scanDirs,
       plan,
     );
     if (contractType === undefined) {

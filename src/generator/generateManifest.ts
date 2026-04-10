@@ -123,6 +123,7 @@ export const generateManifest = async (
   const groupResult = buildGroupPlan(config?.groups, plans, {
     program,
     generatedDir,
+    scanDirs,
   });
 
   await writeManifest(
@@ -135,6 +136,7 @@ export const generateManifest = async (
       registryTypesBuildContext: {
         program,
         generatedDir,
+        scanDirs,
       },
     },
   );

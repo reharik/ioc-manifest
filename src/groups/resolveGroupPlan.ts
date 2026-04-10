@@ -17,12 +17,14 @@ import {
   type IocGroupNodeManifest,
   type IocGroupsManifest,
 } from "../core/manifest.js";
+import type { ResolvedScanDir } from "../generator/manifestPaths.js";
 import type { ResolvedContractRegistration } from "../generator/resolveRegistrationPlan.js";
 
-/** TypeScript program + generated dir path contract types resolve against. */
+/** TypeScript program + paths used to map stored contract type specifiers back to source files. */
 export type GroupDiscoveryBuildContext = {
   program: ts.Program;
   generatedDir: string;
+  scanDirs: readonly ResolvedScanDir[];
 };
 
 export type IocGroupKind = "collection" | "object";
@@ -195,7 +197,7 @@ export const formatGroupPlanIssue = (issue: GroupPlanIssue): string => {
       return `[ioc-config] groups root key ${JSON.stringify(issue.key)} is reserved for the generated container manifest (use a different group name)`;
 
     case "group_discovery_missing_context":
-      return "[ioc-config] groups require TypeScript program context. Use the IoC manifest generator or pass GroupDiscoveryBuildContext into buildGroupPlan.";
+      return "[ioc-config] groups require TypeScript program context (program, generatedDir, scanDirs). Use the IoC manifest generator or pass GroupDiscoveryBuildContext into buildGroupPlan.";
 
     default: {
       const exhaustive: never = issue;
@@ -273,6 +275,7 @@ const runGroupPlan = (
         checker,
         discovery.program,
         discovery.generatedDir,
+        discovery.scanDirs,
         plans,
         base.type,
       );
@@ -306,6 +309,7 @@ const runGroupPlan = (
       checker,
       discovery.program,
       discovery.generatedDir,
+      discovery.scanDirs,
       plans,
       base.type,
       shouldIncludeImplInCollectionGroup,
@@ -343,7 +347,7 @@ const runGroupPlan = (
 
 /**
  * Validates group definitions and emits the manifest subtree for generated `ioc-manifest.ts`.
- * Requires `discovery` (TypeScript program + `generatedDir`) whenever `groups` is set.
+ * Requires `discovery` (TypeScript program + `generatedDir` + `scanDirs`) whenever `groups` is set.
  */
 export const buildGroupPlan = (
   groups: unknown,

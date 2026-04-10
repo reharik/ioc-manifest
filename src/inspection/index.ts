@@ -21,6 +21,7 @@ export {
 export {
   formatDiscoveryReport,
   formatInspectionReport,
+  type FormatDiscoveryReportOptions,
 } from "./formatReports.js";
 
 export {

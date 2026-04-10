@@ -244,13 +244,21 @@ npx ioc inspect --discovery
 
 ### discovery
 
-| Field           | Description |
-| --------------- | ----------- |
+| Field           | Description                                                                                                                                        |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `scanDirs`      | Directory or list of directories (or `{ path, importPrefix?, importMode? }[]`) to scan for factories, relative to the package root unless absolute |
-| `includes`      | Optional glob list of files to include (omit only if the built-in defaults match your repo) |
-| `excludes`      | Optional glob list of files to exclude |
-| `factoryPrefix` | Prefix for factory exports (default `build`) |
-| `generatedDir`  | Output directory for generated files (default `generated`) |
+| `includes`      | Optional glob list of files to include (omit only if the built-in defaults match your repo)                                                        |
+| `excludes`      | Optional glob list of files to exclude                                                                                                             |
+| `factoryPrefix` | Prefix for factory exports (default `build`)                                                                                                       |
+| `generatedDir`  | Output directory for generated files (default `generated`)                                                                                         |
+
+Object entries in `scanDirs` may set **`importPrefix`** and **`importMode`** so generated manifests import factories through a package alias instead of a relative path:
+
+- **`importMode: "root"`** — emitted specifier is exactly `importPrefix` (one module re-exports the contract). **Requires** `importPrefix`.
+- **`importMode: "subpath"`** with **`importPrefix`** — emitted specifier is `` `${importPrefix}/${pathFromScanRoot}.js` `` (path under that scan directory).
+- **`importMode: "subpath"`** without **`importPrefix`** — same emitted imports as omitting `importMode` (relative path from the generated directory). Use this when you only want to label the scan root or match older configs that did not use aliases.
+
+`importPrefix` always requires **`importMode`** (`root` or `subpath`).
 
 ---
 

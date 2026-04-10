@@ -18,10 +18,12 @@ import type {
   IocGroupsManifest,
   ModuleFactoryManifestMetadata,
 } from "../core/manifest.js";
+import type { ResolvedScanDir } from "./manifestPaths.js";
 
 export type IocRegistryTypesBuildContext = {
   program: ts.Program;
   generatedDir: string;
+  scanDirs: readonly ResolvedScanDir[];
 };
 
 export type WriteManifestOptions = {
@@ -414,7 +416,7 @@ const buildCradleTypeSource = (
       );
     }
   } else {
-    const { program, generatedDir } = registryTypesBuildContext;
+    const { program, generatedDir, scanDirs } = registryTypesBuildContext;
     const grouped = new Map<
       string,
       { named: Set<string>; defaults: Set<string> }
@@ -432,6 +434,8 @@ const buildCradleTypeSource = (
         program,
         generatedDir,
         relImport,
+        scanDirs,
+        plan.contractName,
       );
       const useDefault =
         sourceFile !== undefined &&

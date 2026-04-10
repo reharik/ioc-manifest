@@ -7,6 +7,7 @@ import {
   cradleTypeImportUsesDefaultExport,
   resolveContractTypeSourceFile,
 } from "./contractTypeSourceFile.js";
+import { computeManifestModuleSpecifier } from "./manifestPaths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixtureDir = path.join(__dirname, "test-fixtures/default-export-contract");
@@ -63,9 +64,61 @@ describe("contractTypeSourceFile", () => {
     it("should resolve a relative contract import against generatedDir", () => {
       const rel = "../generator/test-fixtures/default-export-contract/defaultRouter.js";
       const program = makeProgram([defaultRouterFile, namedWidgetFile]);
-      const hit = resolveContractTypeSourceFile(program, generatedDir, rel);
+      const hit = resolveContractTypeSourceFile(program, generatedDir, rel, []);
       assert.ok(hit !== undefined);
       assert.strictEqual(path.normalize(hit.fileName), path.normalize(defaultRouterFile));
+    });
+
+    it("should resolve importPrefix subpath specifiers to the package source file", () => {
+      const pkgFixture = path.join(
+        __dirname,
+        "test-fixtures/scan-prefix-contract/pkg",
+      );
+      const contractFile = path.join(
+        pkgFixture,
+        "src/svc/readContract.ts",
+      );
+      const program = makeProgram([contractFile]);
+      const generatedDirUnused = path.join(pkgFixture, "dist/generated");
+      const scanDirs = [
+        {
+          absPath: pkgFixture,
+          importPrefix: "@acme/lib",
+          importMode: "subpath" as const,
+        },
+      ];
+      const hit = resolveContractTypeSourceFile(
+        program,
+        generatedDirUnused,
+        "@acme/lib/src/svc/readContract.js",
+        scanDirs,
+        "PackageOwnedReadContract",
+      );
+      assert.ok(hit !== undefined);
+      assert.strictEqual(path.normalize(hit.fileName), path.normalize(contractFile));
+    });
+
+    it("should resolve app-local relative imports when generatedDir is under sourceRoot/src", () => {
+      const projectRoot = path.join(__dirname, "test-fixtures/scan-prefix-contract");
+      const srcRoot = path.join(projectRoot, "app/src");
+      const controllerFile = path.join(srcRoot, "controllers/localContract.ts");
+      const generatedUnderSrc = path.join(srcRoot, "di/generated");
+      const program = makeProgram([controllerFile]);
+      const scanDirs = [{ absPath: srcRoot }];
+      const rel = computeManifestModuleSpecifier(
+        controllerFile,
+        generatedUnderSrc,
+        scanDirs,
+      );
+      const hit = resolveContractTypeSourceFile(
+        program,
+        generatedUnderSrc,
+        rel,
+        scanDirs,
+        "LocalContract",
+      );
+      assert.ok(hit !== undefined);
+      assert.strictEqual(path.normalize(hit.fileName), path.normalize(controllerFile));
     });
   });
 });
