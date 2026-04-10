@@ -38,16 +38,17 @@ describe("Contract type import source (discovery)", () => {
       const implA = path.join(fixtureDir, "implA.ts");
       const implB = path.join(fixtureDir, "implB.ts");
       const { contractMap } = discoverFactories([implA, implB], program, projectRoot, "build", {
-        srcDir,
+        projectRoot,
+        scanDirs: [{ absPath: srcDir }],
         generatedDir,
       });
 
       const configA: IocConfig = {
-        discovery: { rootDir: "src" },
+        discovery: { scanDirs: "src" },
         registrations: { Foo: { a: { default: true } } },
       };
       const configB: IocConfig = {
-        discovery: { rootDir: "src" },
+        discovery: { scanDirs: "src" },
         registrations: { Foo: { b: { default: true } } },
       };
 

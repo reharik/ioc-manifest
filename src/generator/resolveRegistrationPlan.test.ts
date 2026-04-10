@@ -119,7 +119,7 @@ describe("buildRegistrationPlan", () => {
         ],
       });
       const config: IocConfig = {
-        discovery: { rootDir: "src" },
+        discovery: { scanDirs: "src" },
         registrations: {
           MediaStorage: {
             s3MediaStorage: { default: true },
@@ -139,7 +139,7 @@ describe("buildRegistrationPlan", () => {
         ],
       });
       const config: IocConfig = {
-        discovery: { rootDir: "src" },
+        discovery: { scanDirs: "src" },
         registrations: { Bar: {} },
       };
       assert.throws(
@@ -165,7 +165,7 @@ describe("buildRegistrationPlan", () => {
         ],
       });
       const config: IocConfig = {
-        discovery: { rootDir: "src" },
+        discovery: { scanDirs: "src" },
         registrations: {
           MediaStorage: {
             s3MediaStorage: { lifetime: "transient" },
@@ -193,7 +193,7 @@ describe("buildRegistrationPlan", () => {
         ],
       });
       const config: IocConfig = {
-        discovery: { rootDir: "src" },
+        discovery: { scanDirs: "src" },
         registrations: {
           MediaStorage: {
             localMediaStorage: {
@@ -352,6 +352,63 @@ describe("buildRegistrationPlan", () => {
     });
   });
 
+  describe("When convention would pick one implementation but config marks another as default", () => {
+    it("should prefer config default over the contract-key convention", () => {
+      const map = toContractMap({
+        MyService: [
+          factory({
+            contractName: "MyService",
+            implementationName: "myService",
+            registrationKey: "myService",
+          }),
+          factory({
+            contractName: "MyService",
+            implementationName: "yourService",
+            registrationKey: "yourService",
+          }),
+        ],
+      });
+      const config: IocConfig = {
+        discovery: { scanDirs: "src" },
+        registrations: {
+          MyService: {
+            yourService: { default: true },
+          },
+        },
+      };
+      const [plan] = buildRegistrationPlan(map, config);
+      assert.strictEqual(plan.defaultImplementationName, "yourService");
+    });
+
+    it("should honor default: true when it is inherited on the override object (not an own property)", () => {
+      const map = toContractMap({
+        MyService: [
+          factory({
+            contractName: "MyService",
+            implementationName: "myService",
+            registrationKey: "myService",
+          }),
+          factory({
+            contractName: "MyService",
+            implementationName: "yourService",
+            registrationKey: "yourService",
+          }),
+        ],
+      });
+      const inheritedDefault = Object.create({ default: true as const });
+      const config: IocConfig = {
+        discovery: { scanDirs: "src" },
+        registrations: {
+          MyService: {
+            yourService: inheritedDefault,
+          },
+        },
+      };
+      const [plan] = buildRegistrationPlan(map, config);
+      assert.strictEqual(plan.defaultImplementationName, "yourService");
+    });
+  });
+
   describe("When config sets default on two implementations for one contract", () => {
     it("should throw", () => {
       const map = toContractMap({
@@ -367,7 +424,7 @@ describe("buildRegistrationPlan", () => {
         ],
       });
       const config: IocConfig = {
-        discovery: { rootDir: "src" },
+        discovery: { scanDirs: "src" },
         registrations: {
           MediaStorage: {
             a: { default: true },
@@ -394,7 +451,7 @@ describe("buildRegistrationPlan", () => {
         ],
       });
       const config: IocConfig = {
-        discovery: { rootDir: "src" },
+        discovery: { scanDirs: "src" },
         registrations: {
           MediaStorage: {
             notDiscovered: { lifetime: "transient" },
@@ -454,7 +511,7 @@ describe("buildRegistrationPlan", () => {
         ],
       });
       const config: IocConfig = {
-        discovery: { rootDir: "src" },
+        discovery: { scanDirs: "src" },
         registrations: {
           MediaStorage: {
             b: { name: "aKey" },
@@ -494,7 +551,7 @@ describe("buildRegistrationPlan", () => {
         ],
       });
       const config: IocConfig = {
-        discovery: { rootDir: "src" },
+        discovery: { scanDirs: "src" },
         registrations: {},
       };
       assert.throws(
@@ -528,7 +585,7 @@ describe("buildRegistrationPlan", () => {
         ],
       });
       const config: IocConfig = {
-        discovery: { rootDir: "src" },
+        discovery: { scanDirs: "src" },
         registrations: {},
       };
       assert.throws(
@@ -551,7 +608,7 @@ describe("buildRegistrationPlan", () => {
         ],
       });
       const config: IocConfig = {
-        discovery: { rootDir: "src" },
+        discovery: { scanDirs: "src" },
         registrations: {
           CacheClient: {
             preferredCache: { name: "blah" },
@@ -581,7 +638,7 @@ describe("buildRegistrationPlan", () => {
         ],
       });
       const config: IocConfig = {
-        discovery: { rootDir: "src" },
+        discovery: { scanDirs: "src" },
         registrations: {
           Knex: {
             [IOC_CONTRACT_CONFIG_KEY]: { accessKey: "database" },
@@ -612,7 +669,7 @@ describe("buildRegistrationPlan", () => {
         ],
       });
       const config: IocConfig = {
-        discovery: { rootDir: "src" },
+        discovery: { scanDirs: "src" },
         registrations: {
           Knex: {
             [IOC_CONTRACT_CONFIG_KEY]: { accessKey: "database" },
@@ -645,7 +702,7 @@ describe("buildRegistrationPlan", () => {
         ],
       });
       const config: IocConfig = {
-        discovery: { rootDir: "src" },
+        discovery: { scanDirs: "src" },
         registrations: {
           Knex: {
             [IOC_CONTRACT_CONFIG_KEY]: { accessKey: "database" },
@@ -681,7 +738,7 @@ describe("buildRegistrationPlan", () => {
         ],
       });
       const config: IocConfig = {
-        discovery: { rootDir: "src" },
+        discovery: { scanDirs: "src" },
         registrations: {
           Foo: { [IOC_CONTRACT_CONFIG_KEY]: { accessKey: "shared" } },
           Bar: { [IOC_CONTRACT_CONFIG_KEY]: { accessKey: "shared" } },

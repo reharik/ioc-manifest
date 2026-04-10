@@ -119,13 +119,35 @@ export const getImplOverrideForImplementation = (
   return raw;
 };
 
+/** How manifest import specifiers are built when {@link IocScanDirSpec.importPrefix} is set. */
+export type IocScanDirImportMode = "root" | "subpath";
+
+/**
+ * One discovery root with optional workspace/package import mapping.
+ * `importPrefix` + `importMode` control emitted `import` specifiers; omit both for normal relative imports from the generated dir.
+ */
+export type IocScanDirSpec = {
+  path: string;
+  /** Package or path alias (e.g. `@packages/my-package`). Requires `importMode` when set. */
+  importPrefix?: string;
+  /** Required when `importPrefix` is set. */
+  importMode?: IocScanDirImportMode;
+};
+
+/**
+ * - `string`: single directory (relative to package root unless absolute)
+ * - `string[]`: multiple directories
+ * - `IocScanDirSpec[]`: directories with optional `importPrefix` / `importMode` for manifest imports
+ */
+export type IocDiscoveryScanDirs = string | string[] | IocScanDirSpec[];
+
 export type IocConfig = {
   discovery: {
-    rootDir: string;
+    scanDirs: IocDiscoveryScanDirs;
     includes?: string[];
     excludes?: string[];
     factoryPrefix?: string;
-    /** Where generator output is written, relative to `rootDir` unless absolute. Default: "generated". */
+    /** Output directory relative to the package root unless absolute. Default: `"generated"`. */
     generatedDir?: string;
   };
   registrations?: Record<string, IocRegistrationsPerContract>;

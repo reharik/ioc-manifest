@@ -14,6 +14,7 @@ import {
   type IocConfig,
   type IocLifetime,
 } from "./iocConfig.js";
+import { parseDiscoveryScanDirs } from "./parseDiscoveryScanDirs.js";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -164,12 +165,10 @@ const validateIocConfig = (raw: unknown, sourceLabel: string): IocConfig => {
     throw new Error(`[ioc-config] ${sourceLabel} is missing discovery`);
   }
 
-  const rootDir = discovery.rootDir;
-  if (typeof rootDir !== "string" || rootDir.length === 0) {
-    throw new Error(
-      `[ioc-config] ${sourceLabel} discovery.rootDir must be a non-empty string`,
-    );
-  }
+  parseDiscoveryScanDirs(
+    discovery.scanDirs,
+    `${sourceLabel} discovery.scanDirs`,
+  );
 
   if (discovery.includes !== undefined) {
     validateStringArray(
@@ -216,7 +215,7 @@ const CONFIG_RELATIVE_SEARCH_PATHS = ["src/ioc.config.ts", "ioc.config.ts"] as c
 
 /**
  * IoC package root inferred from where `ioc.config` lives: if the config file is under a `src`
- * directory, the package root is the parent of that `src` (so `discovery.rootDir` stays relative
+ * directory, the package root is the parent of that `src` (so `discovery.scanDirs` entries stay relative
  * to the package, not `process.cwd()`). Otherwise the package root is the config file directory.
  */
 export const resolveProjectRootFromIocConfigPath = (

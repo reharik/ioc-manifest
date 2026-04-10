@@ -17,10 +17,15 @@ export {
   parseContractLevelConfig,
   type IocConfig,
   type IocContractMetadata,
+  type IocDiscoveryScanDirs,
   type IocLifetime,
   type IocOverride,
   type IocRegistrationsPerContract,
+  type IocScanDirImportMode,
+  type IocScanDirSpec,
 } from "./config/iocConfig.js";
+
+export { parseDiscoveryScanDirs } from "./config/parseDiscoveryScanDirs.js";
 
 export {
   loadIocConfig,
@@ -40,7 +45,14 @@ export {
   resolveManifestOptions,
 } from "./generator/manifestOptions.js";
 
-export type { ManifestRuntimePaths } from "./generator/manifestPaths.js";
+export {
+  computeManifestModuleSpecifier,
+  findResolvedScanDirForFile,
+  generatedExcludePatternForScanRoot,
+  resolveScanDirEntries,
+  type ManifestRuntimePaths,
+  type ResolvedScanDir,
+} from "./generator/manifestPaths.js";
 
 export {
   analyzeGroupPlan,

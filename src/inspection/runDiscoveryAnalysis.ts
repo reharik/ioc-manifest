@@ -63,16 +63,17 @@ const runDiscoveryFromResolution = async (
 ): Promise<DiscoveryAnalysisResult> => {
   const { config, options } = resolved;
   const {
-    paths: { projectRoot, srcDir, generatedDir },
+    paths: { projectRoot, scanDirs, generatedDir },
     includePatterns,
     excludePatterns,
     factoryExportPrefix,
   } = options;
 
   const files = await getDiscoveryTargetFiles(
-    srcDir,
+    scanDirs,
     includePatterns,
     excludePatterns,
+    generatedDir,
   );
   const program = createIocProgramForDiscovery(projectRoot, files);
   reportDiscoveryProgramDiagnostics(program, projectRoot, files);
@@ -82,7 +83,7 @@ const runDiscoveryFromResolution = async (
     program,
     projectRoot,
     factoryExportPrefix,
-    { srcDir, generatedDir },
+    { projectRoot, scanDirs, generatedDir },
     config ?? undefined,
     { collectFileRecords: true },
   );

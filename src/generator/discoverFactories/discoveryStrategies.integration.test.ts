@@ -73,7 +73,8 @@ describe("Discovery strategies (discoverFactories)", () => {
         projectRoot,
         "build",
         {
-          srcDir,
+          projectRoot,
+          scanDirs: [{ absPath: srcDir }],
           generatedDir,
         },
       );
@@ -95,7 +96,8 @@ describe("Discovery strategies (discoverFactories)", () => {
         projectRoot,
         "create",
         {
-          srcDir,
+          projectRoot,
+          scanDirs: [{ absPath: srcDir }],
           generatedDir,
         },
       );
@@ -115,7 +117,8 @@ describe("Discovery strategies (discoverFactories)", () => {
         projectRoot,
         "build",
         {
-          srcDir,
+          projectRoot,
+          scanDirs: [{ absPath: srcDir }],
           generatedDir,
         },
       );
@@ -141,7 +144,8 @@ describe("Discovery strategies (discoverFactories)", () => {
         projectRoot,
         "create",
         {
-          srcDir,
+          projectRoot,
+          scanDirs: [{ absPath: srcDir }],
           generatedDir,
         },
       );
@@ -164,7 +168,8 @@ describe("Discovery strategies (discoverFactories)", () => {
         projectRoot,
         "build",
         {
-          srcDir,
+          projectRoot,
+          scanDirs: [{ absPath: srcDir }],
           generatedDir,
         },
         undefined,
@@ -202,7 +207,8 @@ describe("Discovery strategies (discoverFactories)", () => {
         projectRoot,
         "build",
         {
-          srcDir,
+          projectRoot,
+          scanDirs: [{ absPath: srcDir }],
           generatedDir,
         },
       );

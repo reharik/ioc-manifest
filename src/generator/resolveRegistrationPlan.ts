@@ -69,11 +69,19 @@ const DEFAULT_LIFETIME: IocLifetime = "singleton";
 export const normalizeIocOverride = (
   override: IocOverride,
 ): Partial<DiscoveredFactory> => {
-  const { name, ...rest } = override;
+  const { name, lifetime, default: defaultFlag, ...rest } = override;
   const out: Partial<DiscoveredFactory> = { ...rest };
 
+  if (lifetime !== undefined) {
+    out.lifetime = lifetime;
+  }
   if (name !== undefined) {
     out.registrationKey = name;
+  }
+  if (Object.hasOwn(override, "default")) {
+    out.default = override.default;
+  } else if (override.default !== undefined) {
+    out.default = override.default;
   }
 
   return out;
@@ -91,9 +99,13 @@ const mergeDiscoveredWithOverride = (
 };
 
 /**
- * If the contract's config mentions `default` for any implementation, config owns default
- * selection for that contract: discovered `default` flags are ignored unless an override
- * explicitly sets `default` for that implementation.
+ * If the contract's config sets `default` for any implementation (own or inherited via
+ * `[[Get]]`), config owns default selection for that contract: discovered `default` flags are
+ * ignored unless an override sets `default` on that implementation after merge.
+ *
+ * Uses `Object.hasOwn` for explicit `default: undefined` (config still owns policy) and
+ * `override.default !== undefined` so inherited `default: true|false` from prototypes / helpers
+ * is not ignored.
  */
 const contractConfigSpecifiesDefault = (
   perContract: IocRegistrationsPerContract | undefined,
@@ -107,7 +119,8 @@ const contractConfigSpecifiesDefault = (
       key !== IOC_CONTRACT_CONFIG_KEY &&
       override !== undefined &&
       isIocImplementationOverride(override) &&
-      Object.hasOwn(override, "default"),
+      (Object.hasOwn(override, "default") ||
+        override.default !== undefined),
   );
 };
 

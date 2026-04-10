@@ -93,7 +93,7 @@ export const generateManifest = async (
     : base;
 
   const {
-    paths: { projectRoot, srcDir, generatedDir, manifestOutPath },
+    paths: { projectRoot, scanDirs, generatedDir, manifestOutPath },
     includePatterns,
     excludePatterns,
     factoryExportPrefix,
@@ -102,9 +102,10 @@ export const generateManifest = async (
   await fs.mkdir(generatedDir, { recursive: true });
 
   const files = await getDiscoveryTargetFiles(
-    srcDir,
+    scanDirs,
     includePatterns,
     excludePatterns,
+    generatedDir,
   );
   const program = createIocProgramForDiscovery(projectRoot, files);
   reportDiscoveryProgramDiagnostics(program, projectRoot, files);
@@ -114,7 +115,7 @@ export const generateManifest = async (
     program,
     projectRoot,
     factoryExportPrefix,
-    { srcDir, generatedDir },
+    { projectRoot, scanDirs, generatedDir },
     config,
   );
 

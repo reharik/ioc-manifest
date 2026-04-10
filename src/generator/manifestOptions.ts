@@ -1,20 +1,23 @@
 import path from "node:path";
 import type { IocConfig } from "../config/iocConfig.js";
-import type { ManifestRuntimePaths } from "./manifestPaths.js";
+import { parseDiscoveryScanDirs } from "../config/parseDiscoveryScanDirs.js";
+import {
+  resolveScanDirEntries,
+  type ManifestRuntimePaths,
+} from "./manifestPaths.js";
 
 /**
- * Default layout relative to a project root: `<root>/src`, generated under `<root>/src/generated/`.
- * Callers set `projectRoot` from cwd, explicit paths, or after locating `ioc.config.ts` (including
- * monorepo layouts via `resolveProjectRootFromIocConfigPath` in `loadIocConfig`).
+ * Default layout relative to a project root: scan `<root>/src`, emit under `<root>/generated/`
+ * (paths always anchored at `projectRoot`).
  */
 export const defaultManifestPathsFromProjectRoot = (
   projectRoot: string,
 ): ManifestRuntimePaths => {
-  const srcDir = path.join(projectRoot, "src");
-  const generatedDir = path.join(srcDir, "generated");
+  const scanDirs = resolveScanDirEntries(projectRoot, [{ path: "src" }]);
+  const generatedDir = path.join(projectRoot, "generated");
   return {
     projectRoot,
-    srcDir,
+    scanDirs,
     generatedDir,
     manifestOutPath: path.join(generatedDir, "ioc-manifest.ts"),
   };
@@ -50,8 +53,6 @@ export const DEFAULT_MANIFEST_OPTIONS: ManifestOptions = {
   factoryExportPrefix: "build",
 };
 
-const normalizeGlobPath = (p: string): string => p.replaceAll(path.sep, "/");
-
 export const resolveManifestOptions = (
   overrides?: Partial<Omit<ManifestOptions, "paths">> & {
     paths?: Partial<ManifestRuntimePaths>;
@@ -67,40 +68,34 @@ export const resolveManifestOptions = (
 });
 
 /**
- * Applies `ioc.config` `discovery` overrides. Always injects an exclude glob for the configured
- * output directory so the generator does not scan its own emitted `.ts` files (prevents feedback loops).
+ * Applies `ioc.config` `discovery` overrides. Per-scan-root excludes for the generated directory
+ * are applied inside {@link getDiscoveryTargetFiles} (ignore paths are relative to each scan `cwd`).
  */
 export const mergeManifestOptionsWithIocConfig = (
   base: ManifestOptions,
   config: IocConfig,
 ): ManifestOptions => {
   const { projectRoot } = base.paths;
-  const srcDir = path.resolve(projectRoot, config.discovery.rootDir);
+  const specs = parseDiscoveryScanDirs(
+    config.discovery.scanDirs,
+    "ioc.config discovery.scanDirs",
+  );
+  const scanDirs = resolveScanDirEntries(projectRoot, specs);
   const configuredGeneratedDir = config.discovery.generatedDir ?? "generated";
   const generatedDir = path.isAbsolute(configuredGeneratedDir)
     ? configuredGeneratedDir
-    : path.resolve(srcDir, configuredGeneratedDir);
+    : path.resolve(projectRoot, configuredGeneratedDir);
 
-  const generatedRelToSrc = path.relative(srcDir, generatedDir);
-  const generatedExclude =
-    generatedRelToSrc.length === 0
-      ? "**/*"
-      : `${normalizeGlobPath(generatedRelToSrc)}/**/*`;
-
-  const mergedExcludes = config.discovery.excludes ?? base.excludePatterns;
-  const excludePatterns = mergedExcludes.includes(generatedExclude)
-    ? mergedExcludes
-    : [...mergedExcludes, generatedExclude];
   return {
     ...base,
     paths: {
       projectRoot,
-      srcDir,
+      scanDirs,
       generatedDir,
       manifestOutPath: path.join(generatedDir, "ioc-manifest.ts"),
     },
     includePatterns: config.discovery.includes ?? base.includePatterns,
-    excludePatterns,
+    excludePatterns: config.discovery.excludes ?? base.excludePatterns,
     factoryExportPrefix: config.discovery.factoryPrefix ?? base.factoryExportPrefix,
   };
 };

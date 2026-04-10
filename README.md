@@ -81,7 +81,33 @@ container.resolve("httpClient"); // specific implementation
 container.resolve("myServices"); // array (if multiple implementations exist)
 ```
 
-You can override these via config.
+You can override registration keys, lifetimes, and which implementation backs the default slot via `ioc.config.ts` (see **Default implementation selection** below).
+
+---
+
+## Default implementation selection
+
+When a contract has **more than one** implementation, the generator and runtime pick the implementation for the **contract default slot** (the camel-cased contract key, e.g. `MyService` → `myService`) in this order:
+
+1. **Explicit `default: true`** — exactly one implementation may be marked default after merging discovery + `ioc.config` (factory metadata and/or `registrations[Contract][implementationName].default`).
+2. **Convention** — if no row is marked default, the implementation whose **registration key** equals that camel-cased contract name wins (for example an implementation registered as `myService` for contract `MyService`).
+3. **Single implementation** — if there is only one implementation, it is the default.
+
+If none of the above applies unambiguously, generation fails with a clear error.
+
+**Overriding convention with config:** If convention would choose `myService` (because its registration key matches the contract key) but you want another implementation as the default, set `default: true` on that implementation under `registrations`:
+
+```ts
+registrations: {
+  MyService: {
+    yourService: { default: true },
+  },
+}
+```
+
+Keys under `registrations[ContractName]` must match **discovered implementation names** (derived from the factory export name, e.g. `buildYourService` → `yourService`), not the contract type name.
+
+After changing defaults, **regenerate** the manifest so `ioc-manifest.ts` reflects the resolved default.
 
 ---
 
@@ -116,10 +142,11 @@ import { defineIocConfig } from "ioc-manifest";
 
 export default defineIocConfig({
   discovery: {
-    rootDir: "src",
+    scanDirs: "src",
     includes: ["**/*.{ts,tsx}"],
     excludes: ["**/*.test.ts", "generated/**/*"],
     factoryPrefix: "build",
+    generatedDir: "generated",
   },
 });
 ```
@@ -217,19 +244,19 @@ npx ioc inspect --discovery
 
 ### discovery
 
-| Field           | Description                    |
-| --------------- | ------------------------------ |
-| `rootDir`       | Root directory (usually `src`) |
-| `includes`      | Files to scan                  |
-| `excludes`      | Files to ignore                |
-| `factoryPrefix` | Prefix for factories (`build`) |
-| `generatedDir`  | Output directory               |
+| Field           | Description |
+| --------------- | ----------- |
+| `scanDirs`      | Directory or list of directories (or `{ path, importPrefix?, importMode? }[]`) to scan for factories, relative to the package root unless absolute |
+| `includes`      | Optional glob list of files to include (omit only if the built-in defaults match your repo) |
+| `excludes`      | Optional glob list of files to exclude |
+| `factoryPrefix` | Prefix for factory exports (default `build`) |
+| `generatedDir`  | Output directory for generated files (default `generated`) |
 
 ---
 
 ### registrations
 
-Override behavior per contract:
+Override behavior per **contract** (interface / type name) and per **implementation** (discovered name from the factory export):
 
 ```ts
 registrations: {
@@ -239,12 +266,24 @@ registrations: {
 }
 ```
 
-Supports:
+Per-implementation entries support:
 
-- `default`
-- `lifetime`
-- `name` (override registration key)
-- `$contract.accessKey` (override default slot)
+- **`default`** — when `true`, marks that implementation as the contract default (see **Default implementation selection**). At most one `default: true` per contract.
+- **`lifetime`** — `singleton`, `scoped`, or `transient`.
+- **`name`** — Awilix registration key for this implementation (overrides the key derived from the export name).
+
+Contract-level options use the reserved key **`$contract`**:
+
+```ts
+registrations: {
+  Knex: {
+    $contract: { accessKey: "database" },
+    pg: { default: true },
+  },
+}
+```
+
+- **`$contract.accessKey`** — cradle property name for the contract’s default slot when it should differ from the camel-cased contract name (e.g. singular `database` while the convention key stays `knex`).
 
 ---
 

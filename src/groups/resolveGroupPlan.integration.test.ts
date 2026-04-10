@@ -50,7 +50,7 @@ const runDiscoveryAndPlans = (): ResolvedContractRegistration[] => {
     program,
     projectRoot,
     "build",
-    { srcDir, generatedDir },
+    { projectRoot, scanDirs: [{ absPath: srcDir }], generatedDir },
     undefined,
   );
   return buildRegistrationPlan(contractMap, undefined);

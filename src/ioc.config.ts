@@ -2,7 +2,8 @@ import { defineIocConfig } from "./config/iocConfig.js";
 
 export default defineIocConfig({
   discovery: {
-    rootDir: "src",
+    scanDirs: "src",
+    generatedDir: "src/generated",
     includes: ["examples/**/*.{ts,tsx,js,mjs,cjs}"],
     excludes: [
       "**/*.d.ts",

@@ -6,7 +6,10 @@ import path from "node:path";
 import ts from "typescript";
 import type { IocConfig } from "../../config/iocConfig.js";
 import type { DiscoveredFactory } from "../types.js";
-import type { FactoryDiscoveryPaths } from "../manifestPaths.js";
+import {
+  resolveFactorySourceAbsPath,
+  type FactoryDiscoveryPaths,
+} from "../manifestPaths.js";
 import type {
   IocDiscoveryAnalysisFiles,
   IocDiscoveryFileRecord,
@@ -45,7 +48,11 @@ const enrichDependencyContracts = (
 
   for (const f of acceptedFactories) {
     const absPath = normalizePath(
-      path.join(discoveryPaths.srcDir, f.modulePath),
+      resolveFactorySourceAbsPath(
+        f.modulePath,
+        discoveryPaths.projectRoot,
+        discoveryPaths.scanDirs,
+      ),
     );
     const sourceFile = sourceFileByPath.get(absPath);
     if (!sourceFile) {
@@ -104,7 +111,8 @@ export const discoverFactories = (
       factoryPrefix,
       iocConfig,
       paths: {
-        srcDir: discoveryPaths.srcDir,
+        projectRoot,
+        scanDirs: discoveryPaths.scanDirs,
         generatedDir: discoveryPaths.generatedDir,
       },
     };

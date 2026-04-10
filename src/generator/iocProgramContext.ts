@@ -1,26 +1,40 @@
 /**
  * @fileoverview TypeScript program bootstrap for discovery: resolve `tsconfig.json`, collect root
- * files via fast-glob from `srcDir`, and surface compiler diagnostics that affect factory typing.
+ * files via fast-glob from each `scanDirs` entry, and surface compiler diagnostics that affect factory typing.
  */
 import path from "node:path";
 import ts from "typescript";
 import fg from "fast-glob";
+import {
+  generatedExcludePatternForScanRoot,
+  type ResolvedScanDir,
+} from "./manifestPaths.js";
 
 const normalizePath = (p: string): string => path.normalize(p);
 
-/** Absolute paths sorted lexically; `cwd` is `srcDir`, patterns come from merged manifest options. */
+/** Absolute paths sorted lexically; globs run per scan root with merged manifest options. */
 export const getDiscoveryTargetFiles = async (
-  srcDir: string,
+  scanDirs: ResolvedScanDir[],
   includePatterns: string[],
   excludePatterns: string[],
-): Promise<string[]> =>
-  (
-    await fg(includePatterns, {
-      cwd: srcDir,
-      absolute: true,
-      ignore: excludePatterns,
-    })
-  ).sort((a, b) => a.localeCompare(b));
+  generatedDir: string,
+): Promise<string[]> => {
+  const genAbs = path.normalize(generatedDir);
+  const hits = await Promise.all(
+    scanDirs.map(({ absPath }) =>
+      fg(includePatterns, {
+        cwd: absPath,
+        absolute: true,
+        ignore: [
+          ...excludePatterns,
+          generatedExcludePatternForScanRoot(absPath, genAbs),
+        ],
+      }),
+    ),
+  );
+  const unique = [...new Set(hits.flat().map((p) => normalizePath(p)))];
+  return unique.sort((a, b) => a.localeCompare(b));
+};
 
 /**
  * Loads the workspace `tsconfig.json` and creates a program over `rootNames` only (typically

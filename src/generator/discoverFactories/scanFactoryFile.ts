@@ -7,6 +7,10 @@ import {
   IocDiscoveryStatus,
   type IocDiscoveryOutcome,
 } from "./discoveryOutcomeTypes.js";
+import {
+  computeDiscoveryModulePath,
+  computeManifestModuleSpecifier,
+} from "../manifestPaths.js";
 import type {
   DiscoveredFactory,
   FactoryDiscoveryFileContext,
@@ -33,8 +37,6 @@ const intrinsicNames = new Set([
   "bigint",
   "symbol",
 ]);
-
-const toPosix = (value: string): string => value.replace(/\\/g, "/");
 
 const unwrapPromiseType = (checker: ts.TypeChecker, t: ts.Type): ts.Type => {
   const sym = t.getSymbol();
@@ -119,23 +121,8 @@ const getContractTypeDeclarationSourceFile = (
   return decl.getSourceFile();
 };
 
-const modulePathFromSrc = (absFile: string, srcDir: string): string =>
-  toPosix(path.relative(srcDir, absFile));
-
 const relProjectPath = (projectRoot: string, absPath: string): string =>
   path.relative(projectRoot, absPath).replace(/\\/g, "/");
-
-const relImportFromGeneratedDir = (
-  absFile: string,
-  generatedDir: string,
-): string => {
-  let rel = path.relative(generatedDir, absFile);
-  rel = toPosix(rel).replace(/\.[^.]+$/, "");
-  if (!rel.startsWith(".")) {
-    rel = "./" + rel;
-  }
-  return `${rel}.js`;
-};
 
 const isExportedNode = (node: ts.Node): boolean => {
   const modifiers = ts.canHaveModifiers(node)
@@ -303,10 +290,14 @@ export const scanFactoryFile = (
     projectRoot,
     factoryPrefix,
     iocConfig,
-    paths: { srcDir, generatedDir },
+    paths: { scanDirs, generatedDir },
   } = context;
 
-  const modulePath = modulePathFromSrc(absPath, srcDir);
+  const modulePath = computeDiscoveryModulePath(
+    absPath,
+    projectRoot,
+    scanDirs,
+  );
   const discovered: DiscoveredFactory[] = [];
   const outcomes: IocDiscoveryOutcome[] = [];
 
@@ -401,9 +392,10 @@ export const scanFactoryFile = (
       continue;
     }
 
-    const contractTypeRelImport = relImportFromGeneratedDir(
+    const contractTypeRelImport = computeManifestModuleSpecifier(
       contractDeclSource.fileName,
       generatedDir,
+      scanDirs,
     );
 
     if (!isContractInScope(contractName)) {
@@ -452,7 +444,7 @@ export const scanFactoryFile = (
       exportName,
       registrationKey,
       modulePath,
-      relImport: relImportFromGeneratedDir(absPath, generatedDir),
+      relImport: computeManifestModuleSpecifier(absPath, generatedDir, scanDirs),
       discoveredBy: match.matchedBy,
     });
 

@@ -20,6 +20,7 @@ import {
   mergeManifestOptionsWithIocConfig,
   resolveManifestOptions,
 } from "../generator/manifestOptions.js";
+import type { ResolvedScanDir } from "../generator/manifestPaths.js";
 import {
   buildDiscoveryReport,
   buildInspectionReport,
@@ -79,9 +80,18 @@ type GeneratedMainManifestModule = {
   iocManifest: IocGeneratedContainerManifest;
 };
 
-const logInspectContext = (cfgPath: string, resolvedRootDir: string): void => {
+const formatResolvedScanDir = (e: ResolvedScanDir): string => {
+  if (e.importPrefix !== undefined && e.importMode !== undefined) {
+    return `${e.absPath} → ${e.importPrefix} (${e.importMode})`;
+  }
+  return e.absPath;
+};
+
+const logInspectContext = (cfgPath: string, scanDirs: ResolvedScanDir[]): void => {
   console.error(`[ioc inspect] resolved config: ${cfgPath}`);
-  console.error(`[ioc inspect] resolved discovery rootDir: ${resolvedRootDir}`);
+  console.error(
+    `[ioc inspect] resolved discovery scanDirs: ${scanDirs.map(formatResolvedScanDir).join("; ")}`,
+  );
 };
 
 const loadGeneratedManifestModule = async (
@@ -100,7 +110,7 @@ const loadGeneratedManifestModule = async (
   const options = config
     ? mergeManifestOptionsWithIocConfig(base, config)
     : base;
-  logInspectContext(cfgPath, options.paths.srcDir);
+  logInspectContext(cfgPath, options.paths.scanDirs);
   const manifestPath = path.resolve(options.paths.manifestOutPath);
   const main = (await import(pathToFileURL(manifestPath).href)) as
     GeneratedMainManifestModule;
@@ -116,7 +126,7 @@ const main = async (): Promise<void> => {
       iocConfigPath: cli.iocConfigPath,
       searchStartDir: searchStart,
     });
-    logInspectContext(resolved.cfgPath, resolved.options.paths.srcDir);
+    logInspectContext(resolved.cfgPath, resolved.options.paths.scanDirs);
 
     const analysis = await runDiscoveryAnalysis({
       reuseResolution: resolved,
