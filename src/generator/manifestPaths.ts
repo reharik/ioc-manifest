@@ -140,7 +140,10 @@ export const generatedExcludePatternForScanRoot = (
   scanAbs: string,
   generatedAbs: string,
 ): string => {
-  const rel = path.relative(path.normalize(scanAbs), path.normalize(generatedAbs));
+  const rel = path.relative(
+    path.normalize(scanAbs),
+    path.normalize(generatedAbs),
+  );
   if (rel.length === 0 || rel === ".") {
     return "**/*";
   }

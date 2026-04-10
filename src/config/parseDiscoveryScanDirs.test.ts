@@ -34,7 +34,14 @@ describe("parseDiscoveryScanDirs", () => {
           ],
           "cfg",
         ),
-        [{ path: "src" }, { path: "../../packages/x", importPrefix: "@scope/x", importMode: "root" }],
+        [
+          { path: "src" },
+          {
+            path: "../../packages/x",
+            importPrefix: "@scope/x",
+            importMode: "root",
+          },
+        ],
       );
     });
   });
@@ -64,14 +71,14 @@ describe("parseDiscoveryScanDirs", () => {
   });
 
   describe("When an object has importMode without importPrefix", () => {
-    it("should throw a clear config error", () => {
+    it('should throw when importMode is "root"', () => {
       assert.throws(
         () =>
           parseDiscoveryScanDirs(
             [{ path: "src", importMode: "root" }] as never,
             "cfg",
           ),
-        /importMode cannot be set without importPrefix/,
+        /importMode cannot be set to "root" without importPrefix/,
       );
     });
   });

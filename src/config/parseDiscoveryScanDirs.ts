@@ -77,9 +77,9 @@ export const parseDiscoveryScanDirs = (
       }
       out.push({ path: p, importPrefix, importMode });
     } else {
-      if (importMode !== undefined) {
+      if (importMode === "root") {
         throw new Error(
-          `[ioc-config] ${sourceLabel} discovery.scanDirs[${i}].importMode cannot be set without importPrefix`,
+          `[ioc-config] ${sourceLabel} discovery.scanDirs[${i}].importMode cannot be set to "root" without importPrefix`,
         );
       }
       out.push({ path: p });
