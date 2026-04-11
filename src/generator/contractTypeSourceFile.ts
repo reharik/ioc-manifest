@@ -117,9 +117,10 @@ export const resolveContractTypeSourceFile = (
   program: ts.Program,
   generatedDir: string,
   contractTypeRelImport: string,
-  scanDirs: readonly ResolvedScanDir[],
+  scanDirs: readonly ResolvedScanDir[] | undefined,
   contractName?: string,
 ): ts.SourceFile | undefined => {
+  const entries = scanDirs ?? [];
   const withoutJs = contractTypeRelImport.replace(/\.js$/i, "");
   const isRelativeSpecifier =
     contractTypeRelImport.startsWith("./") ||
@@ -131,7 +132,7 @@ export const resolveContractTypeSourceFile = (
     return matchSourceFileByAbsoluteBase(program, baseAbs);
   }
 
-  const prefixed = scanDirs
+  const prefixed = entries
     .filter(
       (
         e,

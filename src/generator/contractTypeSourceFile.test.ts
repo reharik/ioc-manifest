@@ -98,6 +98,27 @@ describe("contractTypeSourceFile", () => {
       assert.strictEqual(path.normalize(hit.fileName), path.normalize(contractFile));
     });
 
+    it("should treat undefined scanDirs as empty when resolving non-relative specifiers", () => {
+      const pkgFixture = path.join(
+        __dirname,
+        "test-fixtures/scan-prefix-contract/pkg",
+      );
+      const contractFile = path.join(
+        pkgFixture,
+        "src/svc/readContract.ts",
+      );
+      const program = makeProgram([contractFile]);
+      const generatedDirUnused = path.join(pkgFixture, "dist/generated");
+      const hit = resolveContractTypeSourceFile(
+        program,
+        generatedDirUnused,
+        "@acme/lib/src/svc/readContract.js",
+        undefined,
+        "PackageOwnedReadContract",
+      );
+      assert.strictEqual(hit, undefined);
+    });
+
     it("should resolve app-local relative imports when generatedDir is under sourceRoot/src", () => {
       const projectRoot = path.join(__dirname, "test-fixtures/scan-prefix-contract");
       const srcRoot = path.join(projectRoot, "app/src");

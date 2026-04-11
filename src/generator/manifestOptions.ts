@@ -58,15 +58,23 @@ export const resolveManifestOptions = (
   overrides?: Partial<Omit<ManifestOptions, "paths">> & {
     paths?: Partial<ManifestRuntimePaths>;
   },
-): ManifestOptions => ({
-  includePatterns: overrides?.includePatterns ?? DEFAULT_INCLUDE_PATTERNS,
-  excludePatterns: overrides?.excludePatterns ?? DEFAULT_EXCLUDE_PATTERNS,
-  factoryExportPrefix: overrides?.factoryExportPrefix ?? "build",
-  paths: {
-    ...defaultManifestPathsFromProjectRoot(process.cwd()),
-    ...overrides?.paths,
-  },
-});
+): ManifestOptions => {
+  const defaults = defaultManifestPathsFromProjectRoot(process.cwd());
+  const pathOverrides = overrides?.paths;
+  return {
+    includePatterns: overrides?.includePatterns ?? DEFAULT_INCLUDE_PATTERNS,
+    excludePatterns: overrides?.excludePatterns ?? DEFAULT_EXCLUDE_PATTERNS,
+    factoryExportPrefix: overrides?.factoryExportPrefix ?? "build",
+    paths: {
+      ...defaults,
+      ...pathOverrides,
+      projectRoot: pathOverrides?.projectRoot ?? defaults.projectRoot,
+      scanDirs: pathOverrides?.scanDirs ?? defaults.scanDirs,
+      generatedDir: pathOverrides?.generatedDir ?? defaults.generatedDir,
+      manifestOutPath: pathOverrides?.manifestOutPath ?? defaults.manifestOutPath,
+    },
+  };
+};
 
 /**
  * Applies `ioc.config` `discovery` overrides. Per-scan-root excludes for the generated directory

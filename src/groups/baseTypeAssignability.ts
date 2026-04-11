@@ -67,7 +67,11 @@ export const getContractDeclaredType = (
   if (sym === undefined) {
     return undefined;
   }
-  return checker.getDeclaredTypeOfSymbol(sym);
+  const declared = checker.getDeclaredTypeOfSymbol(sym);
+  // Strip `null` / `undefined` from the declared contract type so group assignability matches the
+  // underlying contract shape (e.g. `Foo | undefined` vs `Foo`) without treating the optional form
+  // as a distinct assignability failure at the union level.
+  return checker.getNonNullableType(declared);
 };
 
 /**
