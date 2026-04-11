@@ -99,10 +99,12 @@ export const mergeManifestOptionsWithIocConfig = (
     ? configuredGeneratedDir
     : path.resolve(projectRoot, configuredGeneratedDir);
 
-  const workspacePackageImportBases = resolveWorkspacePackageImportBases(
+  const fromConfig = resolveWorkspacePackageImportBases(
     projectRoot,
     config.discovery.workspacePackageImportBases,
   );
+  const workspacePackageImportBases =
+    fromConfig ?? base.paths.workspacePackageImportBases;
 
   return {
     ...base,

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
@@ -6,6 +8,7 @@ import {
   emitBarePackageSpecifierFromNodeModulesPath,
   mapTypesPackageToRuntimePackage,
   normalizeEmittedModuleSpecifier,
+  resolveWorkspacePackageRoot,
 } from "./manifestPaths.js";
 
 describe("computeManifestModuleSpecifier", () => {
@@ -202,6 +205,24 @@ describe("mapTypesPackageToRuntimePackage", () => {
   describe("When the types package is unscoped", () => {
     it("should map @types/node to node", () => {
       assert.strictEqual(mapTypesPackageToRuntimePackage("@types/node"), "node");
+    });
+  });
+});
+
+describe("resolveWorkspacePackageRoot", () => {
+  describe("When projectRoot is an app package inside a monorepo", () => {
+    it("should resolve packages/ relative roots against an ancestor directory", () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ioc-ws-"));
+      const repoRoot = path.join(tmp, "repo");
+      const pkgSrc = path.join(repoRoot, "packages", "shared", "src");
+      fs.mkdirSync(pkgSrc, { recursive: true });
+      const appRoot = path.join(repoRoot, "apps", "web");
+      fs.mkdirSync(appRoot, { recursive: true });
+      const resolved = resolveWorkspacePackageRoot(
+        appRoot,
+        "packages/shared/src",
+      );
+      assert.strictEqual(path.normalize(resolved), path.normalize(pkgSrc));
     });
   });
 });

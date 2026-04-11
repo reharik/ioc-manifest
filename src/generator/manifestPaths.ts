@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import type {
   IocScanDirSpec,
@@ -7,6 +8,67 @@ import type {
 const toPosix = (value: string): string => value.replace(/\\/g, "/");
 
 const NODE_MODULES_MARKER = `${path.sep}node_modules${path.sep}`;
+
+const DEBUG_IMPORT_SPEC = process.env.IOC_DEBUG_WORKSPACE_IMPORT_SPECS === "1";
+
+const debugImportSpec = (message: string, detail?: Record<string, unknown>): void => {
+  if (DEBUG_IMPORT_SPEC) {
+    console.error(`[ioc][import-spec] ${message}`, detail ?? "");
+  }
+};
+
+/**
+ * Normalizes path; if it exists on disk, follows symlinks (realpath) so workspace roots match
+ * TypeScript's resolved declaration paths.
+ */
+const tryRealpathIfExists = (p: string): string => {
+  const normalized = path.normalize(p);
+  try {
+    if (fs.existsSync(normalized)) {
+      return fs.realpathSync.native(normalized);
+    }
+  } catch {
+    // keep normalized path
+  }
+  return normalized;
+};
+
+/**
+ * Resolves `root` from {@link IocWorkspacePackageImportBase} to an absolute directory.
+ *
+ * When `ioc.config.ts` lives in an app package (e.g. `apps/web`), {@link projectRoot} is that
+ * package, not the monorepo root. A path like `packages/foo/src` would incorrectly resolve to
+ * `apps/web/packages/foo/src`. If that path does not exist, this walks up ancestors of
+ * `projectRoot` until `path.join(ancestor, root)` exists — typically the repo root containing
+ * `packages/`.
+ */
+export const resolveWorkspacePackageRoot = (
+  projectRoot: string,
+  root: string,
+): string => {
+  const normalizedProjectRoot = path.normalize(projectRoot);
+  if (path.isAbsolute(root)) {
+    const n = path.normalize(root);
+    return tryRealpathIfExists(n);
+  }
+  const direct = path.resolve(normalizedProjectRoot, root);
+  if (fs.existsSync(direct)) {
+    return tryRealpathIfExists(direct);
+  }
+  let dir = normalizedProjectRoot;
+  for (let i = 0; i < 16; i += 1) {
+    const candidate = path.resolve(dir, root);
+    if (fs.existsSync(candidate)) {
+      return tryRealpathIfExists(candidate);
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+  return direct;
+};
 
 /** After resolving `path` against the package root. */
 export type ResolvedScanDir = {
@@ -190,12 +252,12 @@ const matchWorkspacePackageImportBase = (
   absFile: string,
   bases: readonly ResolvedWorkspacePackageImportBase[],
 ): ResolvedWorkspacePackageImportBase | undefined => {
-  const normFile = path.normalize(absFile);
+  const normFile = tryRealpathIfExists(absFile);
   let best: ResolvedWorkspacePackageImportBase | undefined;
   let bestRootLen = -1;
 
   for (const b of bases) {
-    const root = path.normalize(b.absRoot);
+    const root = tryRealpathIfExists(b.absRoot);
     const rel = path.relative(root, normFile);
     if (!rel.startsWith("..") && !path.isAbsolute(rel)) {
       if (root.length > bestRootLen) {
@@ -260,35 +322,88 @@ export const computeManifestModuleSpecifier = (
 ): string => {
   const absNormalized = path.normalize(absFile);
   const preferred = options?.preferredModuleSpecifier;
+  const workspaceBases = options?.workspacePackageImportBases;
+
+  if (DEBUG_IMPORT_SPEC) {
+    debugImportSpec("computeManifestModuleSpecifier", {
+      contractDeclarationFile: absNormalized,
+      generatedDir: path.normalize(generatedDir),
+      preferredModuleSpecifier: preferred ?? null,
+      workspaceBasesCount: workspaceBases?.length ?? 0,
+      workspaceAbsRoots: workspaceBases?.map((b) => b.absRoot) ?? [],
+    });
+  }
+
   if (preferred !== undefined && isBarePackageModuleSpecifier(preferred)) {
-    return normalizeEmittedModuleSpecifier(preferred);
+    const out = normalizeEmittedModuleSpecifier(preferred);
+    if (DEBUG_IMPORT_SPEC) {
+      debugImportSpec("branch: preferred bare specifier", { out });
+    }
+    return out;
   }
 
   const fromNode = emitBarePackageSpecifierFromNodeModulesPath(absNormalized);
   if (fromNode !== undefined) {
-    return normalizeEmittedModuleSpecifier(fromNode);
+    const out = normalizeEmittedModuleSpecifier(fromNode);
+    if (DEBUG_IMPORT_SPEC) {
+      debugImportSpec("branch: node_modules package name", { fromNode, out });
+    }
+    return out;
   }
 
-  const workspaceBases = options?.workspacePackageImportBases;
   if (workspaceBases !== undefined && workspaceBases.length > 0) {
     const hit = matchWorkspacePackageImportBase(absNormalized, workspaceBases);
     if (hit !== undefined) {
-      return normalizeEmittedModuleSpecifier(hit.importBase);
+      const out = normalizeEmittedModuleSpecifier(hit.importBase);
+      if (DEBUG_IMPORT_SPEC) {
+        debugImportSpec("branch: workspacePackageImportBases", {
+          matchedImportBase: hit.importBase,
+          matchedAbsRoot: hit.absRoot,
+          out,
+        });
+      }
+      return out;
     }
+    if (DEBUG_IMPORT_SPEC) {
+      debugImportSpec(
+        "workspacePackageImportBases: no match (declaration file not under any configured absRoot after realpath)",
+        {
+          declarationFile: tryRealpathIfExists(absNormalized),
+          triedRoots: workspaceBases.map((b) => ({
+            absRoot: b.absRoot,
+            realpathRoot: tryRealpathIfExists(b.absRoot),
+          })),
+        },
+      );
+    }
+  } else if (DEBUG_IMPORT_SPEC) {
+    debugImportSpec("workspacePackageImportBases: none passed (undefined or empty)");
   }
 
   const entry = findResolvedScanDirForFile(absFile, scanDirs);
   if (entry?.importPrefix !== undefined && entry.importMode !== undefined) {
     if (entry.importMode === "root") {
-      return normalizeEmittedModuleSpecifier(entry.importPrefix);
+      const out = normalizeEmittedModuleSpecifier(entry.importPrefix);
+      if (DEBUG_IMPORT_SPEC) {
+        debugImportSpec("branch: scanDir importPrefix root", { out });
+      }
+      return out;
     }
     const rel = path.relative(entry.absPath, path.normalize(absFile));
     const posix = toPosix(rel).replace(/\.[^.]+$/, "");
-    return normalizeEmittedModuleSpecifier(`${entry.importPrefix}/${posix}.js`);
+    const out = normalizeEmittedModuleSpecifier(`${entry.importPrefix}/${posix}.js`);
+    if (DEBUG_IMPORT_SPEC) {
+      debugImportSpec("branch: scanDir importPrefix subpath", { out });
+    }
+    return out;
   }
-  return normalizeEmittedModuleSpecifier(
+  const out = normalizeEmittedModuleSpecifier(
     relativeImportFromGeneratedDir(absFile, generatedDir),
   );
+  if (DEBUG_IMPORT_SPEC) {
+    debugImportSpec("branch: relative from generatedDir (fallback)", { out });
+  }
+  return out;
 };
 
 export const resolveWorkspacePackageImportBases = (
@@ -310,9 +425,7 @@ export const resolveWorkspacePackageImportBases = (
       );
     }
     return {
-      absRoot: path.isAbsolute(s.root)
-        ? path.normalize(s.root)
-        : path.resolve(projectRoot, s.root),
+      absRoot: resolveWorkspacePackageRoot(projectRoot, s.root),
       importBase: s.importBase,
     };
   });

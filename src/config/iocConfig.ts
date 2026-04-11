@@ -127,7 +127,12 @@ export type IocScanDirImportMode = "root" | "subpath";
  * (e.g. `{ root: "packages/lib/src", importBase: "@acme/lib" }`).
  */
 export type IocWorkspacePackageImportBase = {
-  /** Directory root (relative to the project root unless absolute). */
+  /**
+   * Directory root (relative to the IoC package root from {@link resolveProjectRootFromIocConfigPath}
+   * unless absolute). If that path does not exist — e.g. `packages/foo` lives at the monorepo root
+   * but `ioc.config.ts` is under `apps/web` — the resolver walks up ancestors until it finds an
+   * existing directory (see {@link resolveWorkspacePackageRoot}).
+   */
   root: string;
   /** Bare module specifier for imports (no file extensions). */
   importBase: string;
@@ -164,6 +169,9 @@ export type IocConfig = {
      * When a contract type resolves to a file under `root`, emit `importBase` instead of a long
      * relative path. Longest matching `root` wins. Checked before `scanDirs` importPrefix/subpath
      * mapping so public entrypoints can win over deep subpath emission.
+     *
+     * Roots are resolved against the IoC package directory (parent of `src` when the config lives
+     * under `src/`). Monorepo `packages/…` paths are found by walking up to the repo root when needed.
      */
     workspacePackageImportBases?: IocWorkspacePackageImportBase[];
   };

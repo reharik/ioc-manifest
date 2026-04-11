@@ -55,6 +55,7 @@ export {
   normalizeEmittedModuleSpecifier,
   resolveScanDirEntries,
   resolveWorkspacePackageImportBases,
+  resolveWorkspacePackageRoot,
   type ComputeManifestModuleSpecifierOptions,
   type ManifestRuntimePaths,
   type ResolvedScanDir,
