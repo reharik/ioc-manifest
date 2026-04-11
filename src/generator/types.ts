@@ -9,7 +9,10 @@ import type { FactoryDiscoveryPaths } from "./manifestPaths.js";
  */
 export type DiscoveredFactory = {
   contractName: string;
-  /** Relative import from the generated manifest dir to the contract type's declaration module. */
+  /**
+   * Module specifier for generated type-only imports: relative to the generated dir, a bare
+   * package name (e.g. `knex`), or a workspace alias — not a path through `node_modules`.
+   */
   contractTypeRelImport: string;
   implementationName: string;
   exportName: string;

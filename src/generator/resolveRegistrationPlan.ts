@@ -39,8 +39,8 @@ export type ResolvedImplementationEntry = {
 export type ResolvedContractRegistration = {
   contractName: string;
   /**
-   * Type-only import path for the contract symbol (from discovery; same for all implementations).
-   * Independent of which implementation is the runtime default.
+   * Type-only import specifier for the contract symbol (from discovery; same for all implementations).
+   * May be relative, bare (npm), or a workspace alias — independent of which implementation is default.
    */
   contractTypeRelImport: string;
   /**

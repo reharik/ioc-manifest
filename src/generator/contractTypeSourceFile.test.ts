@@ -141,5 +141,22 @@ describe("contractTypeSourceFile", () => {
       assert.ok(hit !== undefined);
       assert.strictEqual(path.normalize(hit.fileName), path.normalize(controllerFile));
     });
+
+    it("should resolve a bare package specifier to the declaration module in the program", () => {
+      const fixture = path.join(__dirname, "test-fixtures/bare-import/buildCompilerOptions.ts");
+      const program = makeProgram([fixture]);
+      const hit = resolveContractTypeSourceFile(
+        program,
+        generatedDir,
+        "typescript",
+        [],
+        "CompilerOptions",
+      );
+      assert.ok(hit !== undefined);
+      assert.match(
+        hit.fileName.replace(/\\/g, "/"),
+        /node_modules\/typescript\//,
+      );
+    });
   });
 });

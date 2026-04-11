@@ -66,6 +66,71 @@ const implementationNameFromFactoryExport = (
   return rest.charAt(0).toLowerCase() + rest.slice(1);
 };
 
+const walkToImportDeclaration = (
+  decl: ts.Node,
+): ts.ImportDeclaration | undefined => {
+  let node: ts.Node | undefined = decl;
+  while (node !== undefined) {
+    if (ts.isImportDeclaration(node)) {
+      return node;
+    }
+    node = node.parent;
+  }
+  return undefined;
+};
+
+/**
+ * When the factory's return type comes from a bare import (e.g. `knex`, `@koa/router`), recover
+ * that module specifier so generated imports do not walk through `node_modules` paths.
+ */
+const tryRecoverPreferredModuleSpecifier = (
+  checker: ts.TypeChecker,
+  returnType: ts.Type,
+  factorySourceFile: ts.SourceFile,
+): string | undefined => {
+  const t0 = unwrapPromiseType(checker, returnType);
+  const t = checker.getApparentType(t0);
+
+  if (t.isUnion()) {
+    return undefined;
+  }
+
+  const trySymbol = (sym: ts.Symbol | undefined): string | undefined => {
+    if (sym === undefined) {
+      return undefined;
+    }
+    const decls = sym.declarations ?? [];
+    for (const decl of decls) {
+      if (decl.getSourceFile() !== factorySourceFile) {
+        continue;
+      }
+      const imp = walkToImportDeclaration(decl);
+      if (imp !== undefined && ts.isStringLiteralLike(imp.moduleSpecifier)) {
+        return imp.moduleSpecifier.text;
+      }
+    }
+    return undefined;
+  };
+
+  const fromAlias = trySymbol(t.aliasSymbol);
+  if (fromAlias !== undefined) {
+    return fromAlias;
+  }
+  const sym = t.getSymbol();
+  const fromSym = trySymbol(sym);
+  if (fromSym !== undefined) {
+    return fromSym;
+  }
+  if (sym !== undefined && sym.flags & ts.SymbolFlags.Alias) {
+    const aliased = checker.getAliasedSymbol(sym);
+    const fromAliased = trySymbol(aliased);
+    if (fromAliased !== undefined) {
+      return fromAliased;
+    }
+  }
+  return undefined;
+};
+
 const contractNameFromReturnType = (
   checker: ts.TypeChecker,
   returnType: ts.Type,
@@ -396,6 +461,14 @@ export const scanFactoryFile = (
       contractDeclSource.fileName,
       generatedDir,
       scanDirs,
+      {
+        preferredModuleSpecifier: tryRecoverPreferredModuleSpecifier(
+          checker,
+          returnType,
+          sourceFile,
+        ),
+        workspacePackageImportBases: context.paths.workspacePackageImportBases,
+      },
     );
 
     if (!isContractInScope(contractName)) {

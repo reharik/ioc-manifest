@@ -123,6 +123,17 @@ export const getImplOverrideForImplementation = (
 export type IocScanDirImportMode = "root" | "subpath";
 
 /**
+ * Maps a workspace source root to the public import specifier used in generated type-only imports
+ * (e.g. `{ root: "packages/lib/src", importBase: "@acme/lib" }`).
+ */
+export type IocWorkspacePackageImportBase = {
+  /** Directory root (relative to the project root unless absolute). */
+  root: string;
+  /** Bare module specifier for imports (no file extensions). */
+  importBase: string;
+};
+
+/**
  * One discovery root with optional workspace/package import mapping.
  * `importPrefix` + `importMode` control emitted `import` specifiers; omit both for normal relative imports from the generated dir.
  */
@@ -149,6 +160,12 @@ export type IocConfig = {
     factoryPrefix?: string;
     /** Output directory relative to the package root unless absolute. Default: `"generated"`. */
     generatedDir?: string;
+    /**
+     * When a contract type resolves to a file under `root`, emit `importBase` instead of a long
+     * relative path. Longest matching `root` wins. Checked before `scanDirs` importPrefix/subpath
+     * mapping so public entrypoints can win over deep subpath emission.
+     */
+    workspacePackageImportBases?: IocWorkspacePackageImportBase[];
   };
   registrations?: Record<string, IocRegistrationsPerContract>;
   /**

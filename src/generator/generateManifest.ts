@@ -93,7 +93,13 @@ export const generateManifest = async (
     : base;
 
   const {
-    paths: { projectRoot, scanDirs, generatedDir, manifestOutPath },
+    paths: {
+      projectRoot,
+      scanDirs,
+      generatedDir,
+      manifestOutPath,
+      workspacePackageImportBases,
+    },
     includePatterns,
     excludePatterns,
     factoryExportPrefix,
@@ -115,7 +121,7 @@ export const generateManifest = async (
     program,
     projectRoot,
     factoryExportPrefix,
-    { projectRoot, scanDirs, generatedDir },
+    { projectRoot, scanDirs, generatedDir, workspacePackageImportBases },
     config,
   );
 

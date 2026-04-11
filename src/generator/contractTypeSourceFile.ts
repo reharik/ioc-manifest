@@ -164,7 +164,61 @@ export const resolveContractTypeSourceFile = (
     }
   }
 
+  const bareResolved = tryResolveBarePackageSpecifierToSourceFile(
+    program,
+    contractTypeRelImport,
+    generatedDir,
+  );
+  if (bareResolved !== undefined) {
+    return bareResolved;
+  }
+
   return undefined;
+};
+
+const looksLikeBarePackageSpecifier = (spec: string): boolean => {
+  const s = spec.replace(/\.js$/i, "");
+  if (s.length === 0) {
+    return false;
+  }
+  if (s.startsWith(".") || s.startsWith("/")) {
+    return false;
+  }
+  if (path.isAbsolute(s)) {
+    return false;
+  }
+  if (s.includes("node_modules")) {
+    return false;
+  }
+  return true;
+};
+
+/**
+ * Resolves a stored bare package specifier (e.g. `knex`, `@scope/pkg`) to a program source file
+ * so default-vs-named import emission can inspect the declaration module.
+ */
+const tryResolveBarePackageSpecifierToSourceFile = (
+  program: ts.Program,
+  moduleSpecifier: string,
+  generatedDir: string,
+): ts.SourceFile | undefined => {
+  const trimmed = moduleSpecifier.replace(/\.js$/i, "");
+  if (!looksLikeBarePackageSpecifier(trimmed)) {
+    return undefined;
+  }
+  const containingFile = path.join(generatedDir, "ioc-registry.types.ts");
+  const host = ts.createCompilerHost(program.getCompilerOptions());
+  const resolved = ts.resolveModuleName(
+    trimmed,
+    containingFile,
+    program.getCompilerOptions(),
+    host,
+  );
+  const fileName = resolved.resolvedModule?.resolvedFileName;
+  if (fileName === undefined) {
+    return undefined;
+  }
+  return program.getSourceFile(fileName);
 };
 
 const hasExplicitNamedExportOfContract = (

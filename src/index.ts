@@ -23,6 +23,7 @@ export {
   type IocRegistrationsPerContract,
   type IocScanDirImportMode,
   type IocScanDirSpec,
+  type IocWorkspacePackageImportBase,
 } from "./config/iocConfig.js";
 
 export { parseDiscoveryScanDirs } from "./config/parseDiscoveryScanDirs.js";
@@ -47,11 +48,17 @@ export {
 
 export {
   computeManifestModuleSpecifier,
+  emitBarePackageSpecifierFromNodeModulesPath,
   findResolvedScanDirForFile,
   generatedExcludePatternForScanRoot,
+  mapTypesPackageToRuntimePackage,
+  normalizeEmittedModuleSpecifier,
   resolveScanDirEntries,
+  resolveWorkspacePackageImportBases,
+  type ComputeManifestModuleSpecifierOptions,
   type ManifestRuntimePaths,
   type ResolvedScanDir,
+  type ResolvedWorkspacePackageImportBase,
 } from "./generator/manifestPaths.js";
 
 export {
