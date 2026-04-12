@@ -47,17 +47,18 @@ export const resolveWorkspacePackageRoot = (
   root: string,
 ): string => {
   const normalizedProjectRoot = path.normalize(projectRoot);
-  if (path.isAbsolute(root)) {
-    const n = path.normalize(root);
+  const rootTrimmed = root.trim().replace(/^\.(?:\/|\\)+/, "");
+  if (path.isAbsolute(rootTrimmed)) {
+    const n = path.normalize(rootTrimmed);
     return tryRealpathIfExists(n);
   }
-  const direct = path.resolve(normalizedProjectRoot, root);
+  const direct = path.resolve(normalizedProjectRoot, rootTrimmed);
   if (fs.existsSync(direct)) {
     return tryRealpathIfExists(direct);
   }
   let dir = normalizedProjectRoot;
   for (let i = 0; i < 16; i += 1) {
-    const candidate = path.resolve(dir, root);
+    const candidate = path.resolve(dir, rootTrimmed);
     if (fs.existsSync(candidate)) {
       return tryRealpathIfExists(candidate);
     }
@@ -110,6 +111,11 @@ export type ComputeManifestModuleSpecifierOptions = {
    */
   preferredModuleSpecifier?: string;
   workspacePackageImportBases?: readonly ResolvedWorkspacePackageImportBase[];
+  /**
+   * IoC package root (same as manifest `projectRoot`). Used when TypeScript gives a relative
+   * `SourceFile.fileName` for the contract declaration so workspace matching still works.
+   */
+  projectRoot?: string;
 };
 
 const normalizeGlobPath = (p: string): string => p.replaceAll(path.sep, "/");
@@ -308,11 +314,26 @@ export const normalizeEmittedModuleSpecifier = (spec: string): string => {
   return s;
 };
 
+const toAbsoluteContractDeclarationPath = (
+  raw: string,
+  projectRoot: string | undefined,
+): string => {
+  const n = path.normalize(raw);
+  if (path.isAbsolute(n)) {
+    return n;
+  }
+  if (projectRoot !== undefined && projectRoot.length > 0) {
+    return path.normalize(path.resolve(projectRoot, n));
+  }
+  return path.normalize(path.resolve(n));
+};
+
 /**
  * ESM import specifier for a source file as emitted next to `generatedDir` (relative path, package root, or subpath).
  *
- * Resolution order: optional recovered bare import → `node_modules` package name → configured
- * workspace import bases → scan dir `importPrefix` / `importMode` → relative path from `generatedDir`.
+ * Resolution order: optional recovered bare import → configured workspace import bases (before
+ * `node_modules`, so symlinked workspace packages resolve to `importBase`) → `node_modules`
+ * package name → scan dir `importPrefix` / `importMode` → relative path from `generatedDir`.
  */
 export const computeManifestModuleSpecifier = (
   absFile: string,
@@ -320,13 +341,18 @@ export const computeManifestModuleSpecifier = (
   scanDirs: readonly ResolvedScanDir[],
   options?: ComputeManifestModuleSpecifierOptions,
 ): string => {
-  const absNormalized = path.normalize(absFile);
+  const resolvedAbs = toAbsoluteContractDeclarationPath(
+    absFile,
+    options?.projectRoot,
+  );
   const preferred = options?.preferredModuleSpecifier;
   const workspaceBases = options?.workspacePackageImportBases;
 
   if (DEBUG_IMPORT_SPEC) {
     debugImportSpec("computeManifestModuleSpecifier", {
-      contractDeclarationFile: absNormalized,
+      contractDeclarationFileRaw: path.normalize(absFile),
+      contractDeclarationFileResolved: resolvedAbs,
+      projectRoot: options?.projectRoot ?? null,
       generatedDir: path.normalize(generatedDir),
       preferredModuleSpecifier: preferred ?? null,
       workspaceBasesCount: workspaceBases?.length ?? 0,
@@ -342,17 +368,8 @@ export const computeManifestModuleSpecifier = (
     return out;
   }
 
-  const fromNode = emitBarePackageSpecifierFromNodeModulesPath(absNormalized);
-  if (fromNode !== undefined) {
-    const out = normalizeEmittedModuleSpecifier(fromNode);
-    if (DEBUG_IMPORT_SPEC) {
-      debugImportSpec("branch: node_modules package name", { fromNode, out });
-    }
-    return out;
-  }
-
   if (workspaceBases !== undefined && workspaceBases.length > 0) {
-    const hit = matchWorkspacePackageImportBase(absNormalized, workspaceBases);
+    const hit = matchWorkspacePackageImportBase(resolvedAbs, workspaceBases);
     if (hit !== undefined) {
       const out = normalizeEmittedModuleSpecifier(hit.importBase);
       if (DEBUG_IMPORT_SPEC) {
@@ -368,7 +385,7 @@ export const computeManifestModuleSpecifier = (
       debugImportSpec(
         "workspacePackageImportBases: no match (declaration file not under any configured absRoot after realpath)",
         {
-          declarationFile: tryRealpathIfExists(absNormalized),
+          declarationFile: tryRealpathIfExists(resolvedAbs),
           triedRoots: workspaceBases.map((b) => ({
             absRoot: b.absRoot,
             realpathRoot: tryRealpathIfExists(b.absRoot),
@@ -380,7 +397,16 @@ export const computeManifestModuleSpecifier = (
     debugImportSpec("workspacePackageImportBases: none passed (undefined or empty)");
   }
 
-  const entry = findResolvedScanDirForFile(absFile, scanDirs);
+  const fromNode = emitBarePackageSpecifierFromNodeModulesPath(resolvedAbs);
+  if (fromNode !== undefined) {
+    const out = normalizeEmittedModuleSpecifier(fromNode);
+    if (DEBUG_IMPORT_SPEC) {
+      debugImportSpec("branch: node_modules package name", { fromNode, out });
+    }
+    return out;
+  }
+
+  const entry = findResolvedScanDirForFile(resolvedAbs, scanDirs);
   if (entry?.importPrefix !== undefined && entry.importMode !== undefined) {
     if (entry.importMode === "root") {
       const out = normalizeEmittedModuleSpecifier(entry.importPrefix);
@@ -389,7 +415,7 @@ export const computeManifestModuleSpecifier = (
       }
       return out;
     }
-    const rel = path.relative(entry.absPath, path.normalize(absFile));
+    const rel = path.relative(entry.absPath, resolvedAbs);
     const posix = toPosix(rel).replace(/\.[^.]+$/, "");
     const out = normalizeEmittedModuleSpecifier(`${entry.importPrefix}/${posix}.js`);
     if (DEBUG_IMPORT_SPEC) {
@@ -398,7 +424,7 @@ export const computeManifestModuleSpecifier = (
     return out;
   }
   const out = normalizeEmittedModuleSpecifier(
-    relativeImportFromGeneratedDir(absFile, generatedDir),
+    relativeImportFromGeneratedDir(resolvedAbs, generatedDir),
   );
   if (DEBUG_IMPORT_SPEC) {
     debugImportSpec("branch: relative from generatedDir (fallback)", { out });

@@ -468,6 +468,7 @@ export const scanFactoryFile = (
           sourceFile,
         ),
         workspacePackageImportBases: context.paths.workspacePackageImportBases,
+        projectRoot: context.projectRoot,
       },
     );
 
@@ -517,7 +518,9 @@ export const scanFactoryFile = (
       exportName,
       registrationKey,
       modulePath,
-      relImport: computeManifestModuleSpecifier(absPath, generatedDir, scanDirs),
+      relImport: computeManifestModuleSpecifier(absPath, generatedDir, scanDirs, {
+        projectRoot: context.projectRoot,
+      }),
       discoveredBy: match.matchedBy,
     });
 

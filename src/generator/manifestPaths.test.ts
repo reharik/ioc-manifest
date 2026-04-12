@@ -100,6 +100,27 @@ describe("computeManifestModuleSpecifier", () => {
     });
   });
 
+  describe("When the declaration path is relative to projectRoot", () => {
+    it("should resolve it before workspace matching", () => {
+      const projectRoot = path.join(path.sep, "proj", "app");
+      const fileRel = path.join("src", "logger", "core.ts");
+      const generatedDir = path.join(projectRoot, "generated");
+      const workspacePackageImportBases = [
+        {
+          absRoot: path.join(projectRoot, "src"),
+          importBase: "@pkg/logger",
+        },
+      ];
+      assert.strictEqual(
+        computeManifestModuleSpecifier(fileRel, generatedDir, [], {
+          projectRoot,
+          workspacePackageImportBases,
+        }),
+        "@pkg/logger",
+      );
+    });
+  });
+
   describe("When the file is under a configured workspacePackageImportBases root", () => {
     it("should emit the configured importBase instead of a long relative path", () => {
       const projectRoot = path.join(path.sep, "proj", "app");
