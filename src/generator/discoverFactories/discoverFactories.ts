@@ -20,7 +20,9 @@ import { inferDependencyContractNames } from "./inferFactoryDependencyContracts.
 
 const normalizePath = (p: string): string => path.normalize(p);
 
-const buildSourceFileIndex = (program: ts.Program): Map<string, ts.SourceFile> => {
+const buildSourceFileIndex = (
+  program: ts.Program,
+): Map<string, ts.SourceFile> => {
   const index = new Map<string, ts.SourceFile>();
   for (const sf of program.getSourceFiles()) {
     index.set(normalizePath(sf.fileName), sf);
@@ -114,6 +116,7 @@ export const discoverFactories = (
         projectRoot,
         scanDirs: discoveryPaths.scanDirs,
         generatedDir: discoveryPaths.generatedDir,
+        workspacePackageImportBases: discoveryPaths.workspacePackageImportBases,
       },
     };
 
