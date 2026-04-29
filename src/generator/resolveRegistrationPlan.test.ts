@@ -1,4 +1,5 @@
 import assert from "node:assert";
+import path from "node:path";
 import { describe, it } from "node:test";
 import type { IocConfig } from "../config/iocConfig.js";
 import { IOC_CONTRACT_CONFIG_KEY } from "../config/iocConfig.js";
@@ -748,6 +749,86 @@ describe("buildRegistrationPlan", () => {
         () => buildRegistrationPlan(map, config),
         /\$contract\.accessKey must be unique across contracts/,
       );
+    });
+  });
+
+  describe("When discovery-root scope applies", () => {
+    it("should set lifetime and lifetimeSource from the matching scan root", () => {
+      const projectRoot = path.join("/tmp", "ioc-root-scope", "proj");
+      const scanAbs = path.join(projectRoot, "src");
+      const map = toContractMap({
+        Demo: [
+          factory({
+            contractName: "Demo",
+            implementationName: "demo",
+            modulePath: "features/x.ts",
+          }),
+        ],
+      });
+      const [plan] = buildRegistrationPlan(map, undefined, {
+        projectRoot,
+        scanDirs: [{ absPath: scanAbs, scope: "scoped" }],
+      });
+      const impl = plan.implementations[0];
+      assert.ok(impl);
+      assert.strictEqual(impl.lifetime, "scoped");
+      assert.strictEqual(impl.lifetimeSource, "discovery-root");
+    });
+  });
+
+  describe("When factory config sets lifetime alongside discovery-root scope", () => {
+    it("should prefer factory-config lifetime over discovery-root scope", () => {
+      const projectRoot = path.join("/tmp", "ioc-override-scope", "proj");
+      const scanAbs = path.join(projectRoot, "src");
+      const map = toContractMap({
+        Demo: [
+          factory({
+            contractName: "Demo",
+            implementationName: "demo",
+            modulePath: "x.ts",
+          }),
+        ],
+      });
+      const config: IocConfig = {
+        discovery: { scanDirs: "src" },
+        registrations: {
+          Demo: {
+            demo: { lifetime: "transient" },
+          },
+        },
+      };
+      const [plan] = buildRegistrationPlan(map, config, {
+        projectRoot,
+        scanDirs: [{ absPath: scanAbs, scope: "scoped" }],
+      });
+      const impl = plan.implementations[0];
+      assert.ok(impl);
+      assert.strictEqual(impl.lifetime, "transient");
+      assert.strictEqual(impl.lifetimeSource, "factory-config");
+    });
+  });
+
+  describe("When discovery-root has no scope but lifetime context is passed", () => {
+    it("should keep singleton default with lifetimeSource default", () => {
+      const projectRoot = path.join("/tmp", "ioc-no-root-scope", "proj");
+      const scanAbs = path.join(projectRoot, "src");
+      const map = toContractMap({
+        Demo: [
+          factory({
+            contractName: "Demo",
+            implementationName: "demo",
+            modulePath: "x.ts",
+          }),
+        ],
+      });
+      const [plan] = buildRegistrationPlan(map, undefined, {
+        projectRoot,
+        scanDirs: [{ absPath: scanAbs }],
+      });
+      const impl = plan.implementations[0];
+      assert.ok(impl);
+      assert.strictEqual(impl.lifetime, "singleton");
+      assert.strictEqual(impl.lifetimeSource, "default");
     });
   });
 });

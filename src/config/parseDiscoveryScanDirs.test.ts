@@ -101,4 +101,21 @@ describe("parseDiscoveryScanDirs", () => {
       assert.throws(() => parseDiscoveryScanDirs([], "cfg"), /non-empty/);
     });
   });
+
+  describe("When an object sets scope", () => {
+    it("should preserve a valid scope value", () => {
+      assert.deepStrictEqual(
+        parseDiscoveryScanDirs([{ path: "src", scope: "scoped" }], "cfg"),
+        [{ path: "src", scope: "scoped" }],
+      );
+    });
+
+    it("should throw when scope is invalid", () => {
+      assert.throws(
+        () =>
+          parseDiscoveryScanDirs([{ path: "src", scope: "bogus" }] as never, "cfg"),
+        /\.scope must be singleton/,
+      );
+    });
+  });
 });

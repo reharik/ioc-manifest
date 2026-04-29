@@ -34,20 +34,32 @@ const packageName =
   typeof packageJson.name === "string" && packageJson.name.length > 0
     ? packageJson.name
     : "ioc-manifest";
-const prettierCliPath = path.join(
-  path.dirname(require.resolve("prettier/package.json")),
-  "bin",
-  "prettier.cjs",
-);
+
+const resolvePrettierCliPath = (): string | undefined => {
+  try {
+    return path.join(
+      path.dirname(require.resolve("prettier/package.json")),
+      "bin",
+      "prettier.cjs",
+    );
+  } catch {
+    return undefined;
+  }
+};
 
 /**
- * Format via the local `prettier` dependency (not `npx`), so generation works regardless of cwd
- * or npm/npx resolution when using alternate `--config` paths.
+ * Format via the consumer's `prettier` dependency when available.
+ * If prettier is not installed, generation still succeeds — files are just unformatted.
  */
 const formatGeneratedFileWithPrettier = (
   filePath: string,
   projectRoot: string,
 ): void => {
+  const prettierCliPath = resolvePrettierCliPath();
+  if (prettierCliPath === undefined) {
+    return;
+  }
+
   try {
     execFileSync(process.execPath, [prettierCliPath, "--write", filePath], {
       cwd: projectRoot,
@@ -76,7 +88,10 @@ export const generateManifest = async (
   const searchStart = path.resolve(
     overrides?.paths?.projectRoot ?? process.cwd(),
   );
-  const configPath = resolveIocConfigPath(searchStart, overrides?.iocConfigPath);
+  const configPath = resolveIocConfigPath(
+    searchStart,
+    overrides?.iocConfigPath,
+  );
   const config = await tryLoadIocConfig(configPath);
   const resolvedProjectRoot = config
     ? resolveProjectRootFromIocConfigPath(configPath)
@@ -125,7 +140,10 @@ export const generateManifest = async (
     config,
   );
 
-  const plans = buildRegistrationPlan(contractMap, config);
+  const plans = buildRegistrationPlan(contractMap, config, {
+    projectRoot,
+    scanDirs,
+  });
   const groupResult = buildGroupPlan(config?.groups, plans, {
     program,
     generatedDir,

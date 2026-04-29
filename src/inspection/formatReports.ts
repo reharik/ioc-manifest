@@ -2,6 +2,7 @@
  * @fileoverview Plain-text rendering of inspection/discovery reports for terminal output (`ioc` CLI).
  */
 import type { DiscoveryReport, InspectionReport } from "./reports.js";
+import type { ResolvedContractRegistration } from "../generator/resolveRegistrationPlan.js";
 import type { ManifestValidationIssue } from "./validateManifest.js";
 
 const shouldColorize = (): boolean => {
@@ -141,6 +142,32 @@ export const formatDiscoveryReport = (
     }
 
     lines.push("");
+  }
+
+  return lines.join("\n").trimEnd();
+};
+
+/** Resolved lifetime + source line per implementation (from registration plan; used with `ioc inspect --discovery`). */
+export const formatRegistrationLifetimeInspect = (
+  plan: readonly ResolvedContractRegistration[],
+): string => {
+  const contracts = [...plan].sort((a, b) =>
+    a.contractName.localeCompare(b.contractName),
+  );
+  const lines: string[] = ["Resolved registration lifetimes:"];
+
+  for (const c of contracts) {
+    lines.push(`  ${c.contractName}`);
+    const impls = [...c.implementations].sort((a, b) =>
+      a.implementationName.localeCompare(b.implementationName),
+    );
+    for (const impl of impls) {
+      lines.push(`    - ${impl.implementationName}`);
+      lines.push(`      lifetime: ${impl.lifetime}`);
+      if (impl.lifetimeSource !== undefined) {
+        lines.push(`      lifetimeSource: ${impl.lifetimeSource}`);
+      }
+    }
   }
 
   return lines.join("\n").trimEnd();

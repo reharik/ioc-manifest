@@ -1,5 +1,7 @@
 import path from "node:path";
 import type { IocConfig } from "../config/iocConfig.js";
+import type { ResolvedContractRegistration } from "../generator/resolveRegistrationPlan.js";
+import { buildRegistrationPlan } from "../generator/resolveRegistrationPlan.js";
 import type { DiscoveredFactory } from "../generator/types.js";
 import {
   resolveIocConfigPath,
@@ -24,6 +26,8 @@ export type DiscoveryAnalysisResult = {
   readonly discoveryFiles: IocDiscoveryAnalysisFiles;
   readonly contractMap: Map<string, Map<string, DiscoveredFactory>>;
   readonly acceptedFactories: readonly DiscoveredFactory[];
+  /** Resolved lifetimes (includes `lifetimeSource` when built with scanDirs context). */
+  readonly registrationPlan: readonly ResolvedContractRegistration[];
 };
 
 export type DiscoveryManifestResolution = {
@@ -88,10 +92,17 @@ const runDiscoveryFromResolution = async (
     { collectFileRecords: true },
   );
 
+  const registrationPlan = buildRegistrationPlan(
+    contractMap,
+    config,
+    { projectRoot, scanDirs },
+  );
+
   return {
     discoveryFiles,
     contractMap,
     acceptedFactories,
+    registrationPlan,
   };
 };
 

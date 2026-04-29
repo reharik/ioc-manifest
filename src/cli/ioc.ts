@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * @fileoverview `ioc` CLI: inspects a **generated** manifest on disk (`iocManifest` export).
+ * @fileoverview `ioc` CLI: generates and inspects Awilix manifests.
  *
+ * - `ioc generate` — runs the full generation pipeline (discover, plan, emit).
  * - `ioc inspect` — human-readable contract / implementation summary + manifest validation.
  * - `ioc inspect --discovery` — re-runs source discovery (no manifest read) for drift analysis.
  *
@@ -10,6 +11,8 @@
  */
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { IOC_CLI_HELP_TEXT, parseIocCliArgv } from "./parseIocCli.js";
+import { generateManifest } from "../generator/generateManifest.js";
 import {
   resolveIocConfigPath,
   resolveProjectRootFromIocConfigPath,
@@ -26,68 +29,32 @@ import {
   buildInspectionReport,
   formatDiscoveryReport,
   formatInspectionReport,
+  formatRegistrationLifetimeInspect,
 } from "../inspection/index.js";
 import {
   resolveDiscoveryManifestContext,
   runDiscoveryAnalysis,
 } from "../inspection/runDiscoveryAnalysis.js";
 
-type ParsedCli = {
-  command: "inspect";
-  iocConfigPath?: string;
-  projectDir?: string;
-  discovery: boolean;
-};
-
-const parseArgs = (argv: string[]): ParsedCli => {
-  const args = argv.slice(2);
-  if (args.length === 0) {
-    throw new Error(
-      "Usage: ioc inspect [--discovery] [--config <path>] [--project <path>]",
-    );
-  }
-  const command = args[0];
-  if (command !== "inspect") {
-    throw new Error(`Unknown command ${JSON.stringify(command)}. Use inspect.`);
-  }
-  let iocConfigPath: string | undefined;
-  let projectDir: string | undefined;
-  let discovery = false;
-  for (let i = 1; i < args.length; i += 1) {
-    const a = args[i];
-    if (a === "--discovery") {
-      discovery = true;
-      continue;
-    }
-    if ((a === "--config" || a === "-c") && args[i + 1]) {
-      iocConfigPath = args[i + 1];
-      i += 1;
-      continue;
-    }
-    if (a === "--project" && args[i + 1]) {
-      projectDir = args[i + 1];
-      i += 1;
-      continue;
-    }
-    if (a.startsWith("-")) {
-      throw new Error(`Unknown flag ${JSON.stringify(a)}`);
-    }
-  }
-  return { command, iocConfigPath, projectDir, discovery };
-};
-
 type GeneratedMainManifestModule = {
   iocManifest: IocGeneratedContainerManifest;
 };
 
 const formatResolvedScanDir = (e: ResolvedScanDir): string => {
-  if (e.importPrefix !== undefined && e.importMode !== undefined) {
-    return `${e.absPath} → ${e.importPrefix} (${e.importMode})`;
+  let base = e.absPath;
+  if (e.scope !== undefined) {
+    base = `${base} [scope=${e.scope}]`;
   }
-  return e.absPath;
+  if (e.importPrefix !== undefined && e.importMode !== undefined) {
+    return `${base} → ${e.importPrefix} (${e.importMode})`;
+  }
+  return base;
 };
 
-const logInspectContext = (cfgPath: string, scanDirs: ResolvedScanDir[]): void => {
+const logInspectContext = (
+  cfgPath: string,
+  scanDirs: ResolvedScanDir[],
+): void => {
   console.error(`[ioc inspect] resolved config: ${cfgPath}`);
   console.error(
     `[ioc inspect] resolved discovery scanDirs: ${scanDirs.map(formatResolvedScanDir).join("; ")}`,
@@ -112,13 +79,32 @@ const loadGeneratedManifestModule = async (
     : base;
   logInspectContext(cfgPath, options.paths.scanDirs);
   const manifestPath = path.resolve(options.paths.manifestOutPath);
-  const main = (await import(pathToFileURL(manifestPath).href)) as
-    GeneratedMainManifestModule;
+  const main = (await import(
+    pathToFileURL(manifestPath).href
+  )) as GeneratedMainManifestModule;
   return main;
 };
 
 const main = async (): Promise<void> => {
-  const cli = parseArgs(process.argv);
+  const parsed = parseIocCliArgv(process.argv);
+  if (parsed.kind === "help") {
+    console.log(IOC_CLI_HELP_TEXT.trimEnd());
+    return;
+  }
+
+  if (parsed.kind === "generate") {
+    const cli = parsed.options;
+    await generateManifest({
+      iocConfigPath: cli.iocConfigPath,
+      paths:
+        cli.projectDir !== undefined
+          ? { projectRoot: path.resolve(cli.projectDir) }
+          : undefined,
+    });
+    return;
+  }
+
+  const cli = parsed.options;
   const searchStart = path.resolve(cli.projectDir ?? process.cwd());
 
   if (cli.discovery) {
@@ -133,6 +119,8 @@ const main = async (): Promise<void> => {
     });
     const report = buildDiscoveryReport(analysis);
     console.log(formatDiscoveryReport(report));
+    console.log("");
+    console.log(formatRegistrationLifetimeInspect(analysis.registrationPlan));
     return;
   }
 
@@ -146,6 +134,10 @@ const main = async (): Promise<void> => {
 };
 
 main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : error);
+  if (process.env.IOC_DEBUG === "1") {
+    console.error(error);
+  } else {
+    console.error(error instanceof Error ? error.message : error);
+  }
   process.exit(1);
 });

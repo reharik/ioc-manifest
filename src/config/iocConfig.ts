@@ -18,9 +18,8 @@ export type IocContractMetadata = {
 };
 
 /**
- * Per-implementation overrides keyed by contract name, then discovered implementation name.
+ * Per-implementation overrides in `ioc.config` only (never read from factory modules).
  * `name` sets the Awilix registration key (maps to internal `registrationKey`).
- * Other fields align with {@link DiscoveredFactory} so new override keys can match the planning model.
  */
 export type IocOverride = {
   /** Awilix/container registration key; applied as `registrationKey` during planning. */
@@ -148,6 +147,11 @@ export type IocScanDirSpec = {
   importPrefix?: string;
   /** Required when `importPrefix` is set. */
   importMode?: IocScanDirImportMode;
+  /**
+   * Default Awilix registration lifetime for factories discovered under this root (unless overridden
+   * by `registrations[Contract][implementation]`).
+   */
+  scope?: IocLifetime;
 };
 
 /**

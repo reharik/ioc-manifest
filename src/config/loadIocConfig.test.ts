@@ -4,9 +4,89 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
+  loadIocConfig,
   resolveIocConfigPath,
   resolveProjectRootFromIocConfigPath,
 } from "./loadIocConfig.js";
+
+describe("loadIocConfig", () => {
+  describe("When the exported object has an unknown top-level key", () => {
+    it("should throw with ioc-config prefix", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-loadcfg-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" }, notAllowed: true };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /unknown property .*notAllowed/,
+      );
+    });
+  });
+
+  describe("When discovery has unknown property", () => {
+    it("should throw with ioc-config prefix", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-disc-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src", typo: 1 } };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /discovery.*unknown property .*typo/,
+      );
+    });
+  });
+
+  describe("When workspacePackageImportBases entry has extra keys", () => {
+    it("should throw", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-ws-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src", workspacePackageImportBases: [
+          { root: "packages/a", importBase: "@a/a", extra: 1 }
+        ] } };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /unknown property .*extra/,
+      );
+    });
+  });
+
+  describe("When registration override has unknown property", () => {
+    it("should throw", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-reg-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" }, registrations: {
+          Foo: { bar: { lifetime: "singleton", foo: 1 } }
+        } };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /unknown property .*foo/,
+      );
+    });
+  });
+
+  describe("When the config is valid minimal shape", () => {
+    it("should return discovery settings", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-ok-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" } };`,
+      );
+      const c = await loadIocConfig(cfg);
+      assert.equal(c.discovery.scanDirs, "src");
+    });
+  });
+});
 
 describe("resolveProjectRootFromIocConfigPath", () => {
   describe("When config lives under src/", () => {

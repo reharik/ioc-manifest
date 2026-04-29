@@ -1,11 +1,33 @@
 {
   "name": "ioc-manifest",
-  "version": "0.2.1",
-  "private": true,
+  "version": "0.3.1",
+  "description": "Build-time factory discovery and codegen: generates a typed Awilix (PROXY) registration manifest from TypeScript sources with ioc.config as the single policy surface.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/reharik/ioc-manifest.git"
+  },
+  "bugs": {
+    "url": "https://github.com/reharik/ioc-manifest/issues"
+  },
+  "homepage": "https://github.com/reharik/ioc-manifest#readme",
+  "keywords": [
+    "awilix",
+    "dependency-injection",
+    "ioc",
+    "typescript",
+    "codegen",
+    "manifest",
+    "proxy",
+    "container",
+    "di"
+  ],
   "type": "module",
   "files": [
     "bin",
-    "dist"
+    "dist",
+    "LICENSE",
+    "README.md"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -18,23 +40,37 @@
   "bin": {
     "ioc": "./bin/ioc.cjs"
   },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "clean:dist": "rm -rf dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "npm run clean:dist && tsc -p tsconfig.json",
     "prepare": "npm run build",
-    "prepublishOnly": "npm run build",
-    "test": "node --import tsx --test src/config/loadIocConfig.test.ts src/config/parseDiscoveryScanDirs.test.ts src/core/defaultImplementationSelection.test.ts src/core/resolveRegistrationKey.test.ts src/groups/baseTypeAssignability.test.ts src/groups/resolveGroupPlan.test.ts src/groups/resolveGroupPlan.integration.test.ts src/generator/iocProgramContext.test.ts src/generator/manifestOptions.test.ts src/generator/manifestPaths.test.ts src/generator/resolveRegistrationPlan.test.ts src/generator/contractTypeImport.integration.test.ts src/generator/contractTypeSourceFile.test.ts src/generator/discoverFactories/discoveryStrategies.integration.test.ts src/generator/discoverFactories/inferFactoryDependencyContracts.test.ts src/generator/generatedTypes.integration.test.ts src/generator/writeManifest.test.ts src/inspection/formatReports.test.ts src/inspection/reports.test.ts src/runtime/bootstrap.test.ts src/runtime/bootstrap.integration.test.ts src/runtime/iocResolutionError.test.ts",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build && npm pack --dry-run",
+    "publish:dry-run": "npm run build && npm pack --dry-run",
+    "test": "node --import tsx --test src/cli/parseIocCli.test.ts src/config/loadIocConfig.test.ts src/config/parseDiscoveryScanDirs.test.ts src/core/defaultImplementationSelection.test.ts src/core/resolveRegistrationKey.test.ts src/groups/baseTypeAssignability.test.ts src/groups/resolveGroupPlan.test.ts src/groups/resolveGroupPlan.integration.test.ts src/generator/iocProgramContext.test.ts src/generator/manifestOptions.test.ts src/generator/manifestPaths.test.ts src/generator/resolveRegistrationPlan.test.ts src/generator/resolveDiscoveryRootLifetime.test.ts src/generator/contractTypeImport.integration.test.ts src/generator/contractTypeSourceFile.test.ts src/generator/discoverFactories/discoveryStrategies.integration.test.ts src/generator/discoverFactories/inferFactoryDependencyContracts.test.ts src/generator/generatedTypes.integration.test.ts src/generator/writeManifest.test.ts src/inspection/formatReports.test.ts src/inspection/reports.test.ts src/runtime/bootstrap.test.ts src/runtime/bootstrap.integration.test.ts src/runtime/iocResolutionError.test.ts",
     "gen:manifest": "tsx src/generator/gen-manifest.ts",
     "pack:dev": "npm run build && npm pack --silent"
   },
   "dependencies": {
     "awilix": "^12.0.5",
-    "fast-glob": "^3.3.3",
-    "prettier": "^3.4.2",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "fast-glob": "^3.3.3"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0",
+    "prettier": "^3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "prettier": {
+      "optional": true
+    }
   },
   "devDependencies": {
-    "@types/node": "^22.10.0"
+    "@types/node": "^22.10.0",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.0.0"
   }
 }

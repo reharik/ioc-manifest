@@ -19,6 +19,66 @@ import { parseDiscoveryScanDirs } from "./parseDiscoveryScanDirs.js";
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const TOP_LEVEL_KEYS = new Set(["discovery", "registrations", "groups"]);
+
+const DISCOVERY_KEYS = new Set([
+  "scanDirs",
+  "includes",
+  "excludes",
+  "factoryPrefix",
+  "generatedDir",
+  "workspacePackageImportBases",
+]);
+
+const IMPL_OVERRIDE_KEYS = new Set(["name", "lifetime", "default"]);
+
+const assertOnlyKeys = (
+  record: Record<string, unknown>,
+  allowed: Set<string>,
+  pathLabel: string,
+): void => {
+  for (const k of Object.keys(record)) {
+    if (!allowed.has(k)) {
+      throw new Error(
+        `[ioc-config] ${pathLabel} has unknown property ${JSON.stringify(k)}`,
+      );
+    }
+  }
+};
+
+const validateWorkspacePackageImportBases = (
+  value: unknown,
+  pathLabel: string,
+): void => {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!Array.isArray(value)) {
+    throw new Error(`[ioc-config] ${pathLabel} must be an array when set`);
+  }
+
+  for (let i = 0; i < value.length; i += 1) {
+    const el = value[i];
+    if (!isRecord(el)) {
+      throw new Error(`[ioc-config] ${pathLabel}[${i}] must be an object`);
+    }
+    assertOnlyKeys(el, new Set(["root", "importBase"]), `${pathLabel}[${i}]`);
+    const root = el.root;
+    if (typeof root !== "string" || root.length === 0) {
+      throw new Error(
+        `[ioc-config] ${pathLabel}[${i}].root must be a non-empty string`,
+      );
+    }
+    const importBase = el.importBase;
+    if (typeof importBase !== "string" || importBase.length === 0) {
+      throw new Error(
+        `[ioc-config] ${pathLabel}[${i}].importBase must be a non-empty string`,
+      );
+    }
+  }
+};
+
 const GROUP_KINDS = new Set(["collection", "object"]);
 const IOC_LIFETIMES = new Set(["singleton", "scoped", "transient"]);
 
@@ -128,10 +188,18 @@ const validateRegistrationsShape = (
         continue;
       }
 
-      if (override.name !== undefined && typeof override.name !== "string") {
-        throw new Error(
-          `[ioc-config] ${sourceLabel} registrations["${contractName}"]["${implementationName}"].name must be a string when set`,
-        );
+      assertOnlyKeys(
+        override,
+        IMPL_OVERRIDE_KEYS,
+        `${sourceLabel} registrations["${contractName}"]["${implementationName}"]`,
+      );
+
+      if (override.name !== undefined) {
+        if (typeof override.name !== "string" || override.name.length === 0) {
+          throw new Error(
+            `[ioc-config] ${sourceLabel} registrations["${contractName}"]["${implementationName}"].name must be a non-empty string when set`,
+          );
+        }
       }
 
       if (
@@ -160,10 +228,14 @@ const validateIocConfig = (raw: unknown, sourceLabel: string): IocConfig => {
     throw new Error(`[ioc-config] ${sourceLabel} must export an object`);
   }
 
+  assertOnlyKeys(raw, TOP_LEVEL_KEYS, sourceLabel);
+
   const discovery = raw.discovery;
   if (!isRecord(discovery)) {
     throw new Error(`[ioc-config] ${sourceLabel} is missing discovery`);
   }
+
+  assertOnlyKeys(discovery, DISCOVERY_KEYS, `${sourceLabel} discovery`);
 
   parseDiscoveryScanDirs(
     discovery.scanDirs,
@@ -191,6 +263,11 @@ const validateIocConfig = (raw: unknown, sourceLabel: string): IocConfig => {
   validateOptionalNonEmptyString(
     discovery.generatedDir,
     `${sourceLabel} discovery.generatedDir`,
+  );
+
+  validateWorkspacePackageImportBases(
+    discovery.workspacePackageImportBases,
+    `${sourceLabel} discovery.workspacePackageImportBases`,
   );
 
   validateRegistrationsShape(raw.registrations, sourceLabel);

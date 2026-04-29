@@ -14,12 +14,28 @@ import {
   isIocImplementationOverride,
 } from "../config/iocConfig.js";
 import type { IocConfigOverrideField } from "../core/manifest.js";
+import {
+  resolveDiscoveryRootDefaultLifetime,
+  resolveFactorySourceAbsPath,
+  type ResolvedScanDir,
+} from "./manifestPaths.js";
 import { selectDefaultImplementationName } from "../core/defaultImplementationSelection.js";
 import type { DiscoveredFactory } from "./types.js";
 import {
   contractNameToCollectionRegistrationKey,
   contractNameToDefaultRegistrationKey,
 } from "./naming.js";
+
+/** Where resolved registration lifetime came from (inspect/debug only). `discovery-root` = `discovery.scanDirs[].scope`. */
+export type IocRegistrationLifetimeSource =
+  | "factory-config"
+  | "discovery-root"
+  | "default";
+
+export type RegistrationPlanLifetimeContext = {
+  projectRoot: string;
+  scanDirs: readonly ResolvedScanDir[];
+};
 
 export type ResolvedImplementationEntry = {
   /** Stable implementation id from discovery (factory export / resolver map key). */
@@ -30,6 +46,8 @@ export type ResolvedImplementationEntry = {
   modulePath: string;
   relImport: string;
   lifetime: IocLifetime;
+  /** Present when {@link buildRegistrationPlan} received a lifetime context (e.g. codegen / inspect --discovery). */
+  lifetimeSource?: IocRegistrationLifetimeSource;
   discoveredBy?: "naming";
   /** Fields present on the matching `ioc.config` registration override for this implementation. */
   configOverridesApplied?: readonly IocConfigOverrideField[];
@@ -63,8 +81,8 @@ export type ResolvedContractRegistration = {
 const DEFAULT_LIFETIME: IocLifetime = "singleton";
 
 /**
- * Maps config-only `name` into the internal `registrationKey` field; spreads the rest so
- * future override keys that match {@link DiscoveredFactory} merge without extra wiring.
+ * Maps config-only `name` into the internal `registrationKey` field; applies `lifetime` / `default`
+ * so merged {@link DiscoveredFactory} rows reflect `ioc.config` policy only (factory sources stay plain).
  */
 export const normalizeIocOverride = (
   override: IocOverride,
@@ -149,7 +167,7 @@ const selectDefaultImplementationKey = (
 
   if (withDefault.length > 1) {
     throw new Error(
-      `[ioc] Contract ${JSON.stringify(contractName)} has multiple implementations marked default: true after applying ioc.config overrides: ${listImplFactories(withDefault)}. Mark exactly one with default: true in source or in registrations[${JSON.stringify(contractName)}][implementationName], or reduce to a single implementation.`,
+      `[ioc] Contract ${JSON.stringify(contractName)} has multiple implementations marked default: true after applying ioc.config overrides: ${listImplFactories(withDefault)}. Mark exactly one with default: true under registrations[${JSON.stringify(contractName)}][implementationName], or reduce to a single implementation.`,
     );
   }
 
@@ -170,6 +188,51 @@ const resolveLifetime = (factory: DiscoveredFactory): IocLifetime => {
   }
 
   return DEFAULT_LIFETIME;
+};
+
+/**
+ * Resolve Awilix lifetime for one implementation. Single precedence chain (no duplicate fallbacks):
+ *
+ * 1. `registrations[Contract][implementation].lifetime` → source `factory-config` in inspect output (means **ioc.config**, not factory source)
+ * 2. Else discovery-root `discovery.scanDirs[].scope` for the factory file → source `discovery-root`
+ * 3. Else {@link resolveLifetime} (existing behavior: merged factory lifetime or `singleton`) → source `default`
+ */
+const resolvePlanLifetime = (
+  factory: DiscoveredFactory,
+  implOverride: IocOverride | undefined,
+  lifetimeContext: RegistrationPlanLifetimeContext | undefined,
+): { lifetime: IocLifetime; lifetimeSource?: IocRegistrationLifetimeSource } => {
+  if (implOverride?.lifetime !== undefined) {
+    return {
+      lifetime: implOverride.lifetime,
+      ...(lifetimeContext !== undefined
+        ? { lifetimeSource: "factory-config" as const }
+        : {}),
+    };
+  }
+
+  if (lifetimeContext !== undefined) {
+    const absPath = resolveFactorySourceAbsPath(
+      factory.modulePath,
+      lifetimeContext.projectRoot,
+      lifetimeContext.scanDirs,
+    );
+    const fromRootScope = resolveDiscoveryRootDefaultLifetime(
+      absPath,
+      lifetimeContext.scanDirs,
+    );
+    if (fromRootScope !== undefined) {
+      return {
+        lifetime: fromRootScope,
+        lifetimeSource: "discovery-root",
+      };
+    }
+  }
+
+  return {
+    lifetime: resolveLifetime(factory),
+    ...(lifetimeContext !== undefined ? { lifetimeSource: "default" as const } : {}),
+  };
 };
 
 const assertUniqueContractTypeRelImport = (
@@ -485,6 +548,7 @@ const validateIocConfigSemantics = (
 export const buildRegistrationPlan = (
   contractMap: Map<string, Map<string, DiscoveredFactory>>,
   config?: IocConfig,
+  lifetimeContext?: RegistrationPlanLifetimeContext,
 ): ResolvedContractRegistration[] => {
   const mergedByContract = validateIocConfigSemantics(contractMap, config);
 
@@ -551,13 +615,20 @@ export const buildRegistrationPlan = (
           configOverridesApplied.push("accessKey");
         }
 
+        const { lifetime, lifetimeSource } = resolvePlanLifetime(
+          factory,
+          implOverride,
+          lifetimeContext,
+        );
+
         return {
           implementationName,
           exportName: factory.exportName,
           modulePath: factory.modulePath,
           relImport: factory.relImport,
           registrationKey: factory.registrationKey,
-          lifetime: resolveLifetime(factory),
+          lifetime,
+          ...(lifetimeSource !== undefined ? { lifetimeSource } : {}),
           ...(factory.discoveredBy !== undefined
             ? { discoveredBy: factory.discoveredBy }
             : {}),

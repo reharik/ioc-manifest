@@ -27,6 +27,10 @@ const parseCliArgs = (argv: string[]): CliArgs => {
 const cliArgs = parseCliArgs(process.argv);
 
 generateManifest({ iocConfigPath: cliArgs.iocConfigPath }).catch((error: unknown) => {
-  console.error(error);
+  if (process.env.IOC_DEBUG === "1") {
+    console.error(error);
+  } else {
+    console.error(error instanceof Error ? error.message : error);
+  }
   process.exit(1);
 });

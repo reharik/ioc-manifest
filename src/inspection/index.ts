@@ -21,6 +21,7 @@ export {
 export {
   formatDiscoveryReport,
   formatInspectionReport,
+  formatRegistrationLifetimeInspect,
   type FormatDiscoveryReportOptions,
 } from "./formatReports.js";
 

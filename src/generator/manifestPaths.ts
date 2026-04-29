@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type {
+  IocLifetime,
   IocScanDirSpec,
   IocWorkspacePackageImportBase,
 } from "../config/iocConfig.js";
@@ -71,11 +72,12 @@ export const resolveWorkspacePackageRoot = (
   return direct;
 };
 
-/** After resolving `path` against the package root. */
+/** After resolving `path` against the package root. Optional `scope` is default registration lifetime for factories under this root. */
 export type ResolvedScanDir = {
   absPath: string;
   importPrefix?: string;
   importMode?: "root" | "subpath";
+  scope?: IocLifetime;
 };
 
 /** Resolved workspace root + import base (absolute root, longest match wins). */
@@ -128,14 +130,18 @@ export const resolveScanDirEntries = (
     const absPath = path.isAbsolute(s.path)
       ? path.normalize(s.path)
       : path.resolve(projectRoot, s.path);
+    const base = {
+      absPath,
+      ...(s.scope !== undefined ? { scope: s.scope } : {}),
+    };
     if (s.importPrefix !== undefined && s.importMode !== undefined) {
       return {
-        absPath,
+        ...base,
         importPrefix: s.importPrefix,
         importMode: s.importMode,
       };
     }
-    return { absPath };
+    return base;
   });
 
 export const findResolvedScanDirForFile = (
@@ -158,6 +164,66 @@ export const findResolvedScanDirForFile = (
   }
 
   return best;
+};
+
+/**
+ * Default registration lifetime from the most specific `discovery.scanDirs` root containing the
+ * factory file. Throws when multiple roots tie for specificity with different paths or conflicting
+ * `scope` on duplicate entries.
+ */
+export const resolveDiscoveryRootDefaultLifetime = (
+  factoryAbsPath: string,
+  scanDirs: readonly ResolvedScanDir[],
+): IocLifetime | undefined => {
+  const normFile = path.normalize(factoryAbsPath);
+  const containing = scanDirs.filter((e) => {
+    const root = path.normalize(e.absPath);
+    const rel = path.relative(root, normFile);
+    return !rel.startsWith("..") && !path.isAbsolute(rel);
+  });
+
+  if (containing.length === 0) {
+    return undefined;
+  }
+
+  const maxLen = Math.max(
+    ...containing.map((e) => path.normalize(e.absPath).length),
+  );
+  const longest = containing.filter(
+    (e) => path.normalize(e.absPath).length === maxLen,
+  );
+
+  const uniqueRoots = [
+    ...new Set(longest.map((e) => path.normalize(e.absPath))),
+  ];
+  if (uniqueRoots.length > 1) {
+    throw new Error(
+      `[ioc-config] Factory module ${JSON.stringify(
+        normFile,
+      )} is contained in multiple discovery.scanDirs roots with equal specificity (${uniqueRoots.join(
+        ", ",
+      )}). Set discovery-root scope only when each factory maps to a single winning root, or use registrations[Contract][implementation].lifetime to disambiguate.`,
+    );
+  }
+
+  const definedScopes = longest
+    .map((e) => e.scope)
+    .filter((s): s is IocLifetime => s !== undefined);
+
+  if (definedScopes.length === 0) {
+    return undefined;
+  }
+
+  const distinct = [...new Set(definedScopes)];
+  if (distinct.length > 1) {
+    throw new Error(
+      `[ioc-config] discovery.scanDirs lists duplicate entries for root ${JSON.stringify(
+        uniqueRoots[0],
+      )} with conflicting scope values (${distinct.join(", ")}).`,
+    );
+  }
+
+  return distinct[0];
 };
 
 const useSingleLocalScanRoot = (entries: readonly ResolvedScanDir[]): boolean =>

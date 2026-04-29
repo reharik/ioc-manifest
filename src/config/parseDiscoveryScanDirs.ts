@@ -1,4 +1,9 @@
-import type { IocScanDirSpec } from "./iocConfig.js";
+import type { IocLifetime, IocScanDirSpec } from "./iocConfig.js";
+
+const IOC_LIFETIMES = new Set<IocLifetime>(["singleton", "scoped", "transient"]);
+
+const isIocLifetime = (value: unknown): value is IocLifetime =>
+  typeof value === "string" && IOC_LIFETIMES.has(value as IocLifetime);
 
 /**
  * Validates and normalizes authoring `scanDirs` into a list of specs (single string → one spec).
@@ -23,7 +28,7 @@ export const parseDiscoveryScanDirs = (
   }
 
   const out: IocScanDirSpec[] = [];
-  const allowedKeys = new Set(["path", "importPrefix", "importMode"]);
+  const allowedKeys = new Set(["path", "importPrefix", "importMode", "scope"]);
 
   for (let i = 0; i < raw.length; i += 1) {
     const el = raw[i];
@@ -69,20 +74,41 @@ export const parseDiscoveryScanDirs = (
     }
 
     const importMode = rec.importMode;
+
+    const scopeRaw = rec.scope;
+
+    let scope: IocLifetime | undefined;
+    if (scopeRaw !== undefined) {
+      if (!isIocLifetime(scopeRaw)) {
+        throw new Error(
+          `[ioc-config] ${sourceLabel} discovery.scanDirs[${i}].scope must be singleton | scoped | transient when set`,
+        );
+      }
+      scope = scopeRaw;
+    }
+
     if (importPrefix !== undefined) {
       if (importMode !== "root" && importMode !== "subpath") {
         throw new Error(
           `[ioc-config] ${sourceLabel} discovery.scanDirs[${i}].importMode must be "root" or "subpath" when importPrefix is set`,
         );
       }
-      out.push({ path: p, importPrefix, importMode });
+      out.push({
+        path: p,
+        importPrefix,
+        importMode,
+        ...(scope !== undefined ? { scope } : {}),
+      });
     } else {
       if (importMode === "root") {
         throw new Error(
           `[ioc-config] ${sourceLabel} discovery.scanDirs[${i}].importMode cannot be set to "root" without importPrefix`,
         );
       }
-      out.push({ path: p });
+      out.push({
+        path: p,
+        ...(scope !== undefined ? { scope } : {}),
+      });
     }
   }
 
