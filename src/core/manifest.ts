@@ -24,7 +24,7 @@ export type ModuleFactoryManifestMetadata = {
   relImport: string;
   /** Contract / interface or type alias name the factory returns. */
   contractName: string;
-  /** Derived from export: strip `build` prefix and lowercase first character (or resolver metadata). */
+  /** Derived from export: strip `definedPrefix` prefix and lowercase first character (or resolver metadata). */
   implementationName: string;
   /** Awilix lifetime for this registration. */
   lifetime: IocImplementationLifetime;

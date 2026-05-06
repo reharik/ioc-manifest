@@ -34,6 +34,19 @@ describe("resolveRegistrationKeyForFactory", () => {
         "albumService",
       );
     });
+
+    it("should derive from the configured factory prefix", () => {
+      assert.strictEqual(
+        resolveRegistrationKeyForFactory(
+          "build__MyService",
+          undefined,
+          "Foo",
+          ctx(),
+          "build__",
+        ),
+        "myService",
+      );
+    });
   });
 
   describe("When a registration key cannot be determined", () => {

@@ -499,6 +499,7 @@ export const scanFactoryFile = (
           contractName,
           exportName,
         },
+        factoryPrefix,
       );
     } catch {
       outcomes.push({
