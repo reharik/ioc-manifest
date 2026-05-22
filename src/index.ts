@@ -4,7 +4,7 @@
  *
  * Typical flow: define IoC config (`defineIocConfig` / `ioc.config.ts`), run
  * `generateManifest()` (or the `gen:manifest` script), import the emitted manifest module,
- * then call `registerIocFromManifest(container, iocManifest)` from the runtime entry.
+ * then call `registerIocFromManifest(container, [iocManifest])` from the runtime entry.
  */
 export * from "./core/index.js";
 
