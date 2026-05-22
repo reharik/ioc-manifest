@@ -112,11 +112,29 @@ describe("parseIocCliArgv", () => {
     });
   });
 
+  describe("When the argv is valid validate", () => {
+    it("should parse bare validate", () => {
+      const r = parseIocCliArgv([...nodeStub(), "validate"]);
+      assert.deepEqual(r, {
+        kind: "validate",
+        options: { json: false },
+      });
+    });
+
+    it("should parse validate --json", () => {
+      const r = parseIocCliArgv([...nodeStub(), "validate", "--json"]);
+      assert.deepEqual(r, {
+        kind: "validate",
+        options: { json: true },
+      });
+    });
+  });
+
   describe("When argv is invalid", () => {
     it("should reject unknown commands", () => {
       assert.throws(
         () => parseIocCliArgv([...nodeStub(), "frobnicate"]),
-        /Supported: inspect|\nUsage:/,
+        /Supported:.*validate|\nUsage:/,
       );
     });
 
@@ -132,6 +150,11 @@ describe("parseIocCliArgv", () => {
     it("should document inspect and discovery", () => {
       assert.ok(IOC_CLI_HELP_TEXT.includes("inspect"));
       assert.ok(IOC_CLI_HELP_TEXT.includes("--discovery"));
+    });
+
+    it("should document validate and --json", () => {
+      assert.ok(IOC_CLI_HELP_TEXT.includes("validate"));
+      assert.ok(IOC_CLI_HELP_TEXT.includes("--json"));
     });
   });
 });
