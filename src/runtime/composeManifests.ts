@@ -238,6 +238,32 @@ const cloneMetaWithModuleIndex = (
   moduleIndex,
 });
 
+const orderOwnersByOriginalIndex = <T extends { readonly originalIndex: number }>(
+  a: T,
+  b: T,
+): readonly [T, T] =>
+  a.originalIndex <= b.originalIndex ? [a, b] : [b, a];
+
+const throwRegistrationKeyConflict = (
+  key: string,
+  first: KeyOwner & { kind: "implementation" },
+  second: KeyOwner & { kind: "implementation" },
+): never => {
+  const [a, b] = orderOwnersByOriginalIndex(first, second);
+  throw new Error(formatConflictingRegistrationKeyError(key, a, b));
+};
+
+const throwGroupRootKeyConflict = (
+  key: string,
+  first: KeyOwner & { kind: "groupRoot" },
+  second: KeyOwner & { kind: "groupRoot" },
+): never => {
+  const [a, b] = orderOwnersByOriginalIndex(first, second);
+  throw new Error(
+    formatConflictingGroupRootKeyError(key, a.originalIndex, b.originalIndex),
+  );
+};
+
 /**
  * Merges deduplicated manifests (caller should validate schema versions first).
  * Returns a single manifest with `manifestSchemaVersion: 1`.
@@ -262,22 +288,18 @@ export const composeManifests = (
         const existing = keyOwners.get(key);
         if (existing !== undefined) {
           if (existing.kind === "groupRoot") {
-            throw new Error(
-              formatConflictingGroupRootKeyError(
-                key,
-                existing.originalIndex,
-                originalIndex,
-              ),
-            );
-          }
-          throw new Error(
-            formatConflictingRegistrationKeyError(key, existing, {
+            throwGroupRootKeyConflict(key, existing, {
+              kind: "groupRoot",
+              originalIndex,
+            });
+          } else {
+            throwRegistrationKeyConflict(key, existing, {
               kind: "implementation",
               originalIndex,
               contractName,
               implementationName,
-            }),
-          );
+            });
+          }
         }
         keyOwners.set(key, {
           kind: "implementation",
@@ -304,22 +326,18 @@ export const composeManifests = (
       const existing = keyOwners.get(groupKey);
       if (existing !== undefined) {
         if (existing.kind === "groupRoot") {
-          throw new Error(
-            formatConflictingGroupRootKeyError(
-              groupKey,
-              existing.originalIndex,
-              originalIndex,
-            ),
-          );
-        }
-        throw new Error(
-          formatConflictingRegistrationKeyError(groupKey, existing, {
+          throwGroupRootKeyConflict(groupKey, existing, {
+            kind: "groupRoot",
+            originalIndex,
+          });
+        } else {
+          throwRegistrationKeyConflict(groupKey, existing, {
             kind: "implementation",
             originalIndex,
             contractName: "(group root)",
             implementationName: "(group root)",
-          }),
-        );
+          });
+        }
       }
       keyOwners.set(groupKey, { kind: "groupRoot", originalIndex });
       mergedGroupRoots[groupKey] = manifest[groupKey] as IocGroupNodeManifest;

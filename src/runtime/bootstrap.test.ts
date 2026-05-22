@@ -6,6 +6,7 @@ import type {
   IocGroupsManifest,
   IocModuleNamespace,
 } from "../core/manifest.js";
+import { MANIFEST_SCHEMA_VERSION } from "../schemaVersion.js";
 import { registerIocFromManifest } from "./bootstrap.js";
 import { isIocResolutionError } from "./iocResolutionError.js";
 
@@ -87,10 +88,13 @@ describe("registerIocFromManifest", () => {
       >({
         injectionMode: "PROXY",
       });
-      registerIocFromManifest(container, {
+      registerIocFromManifest(container, [
+        {
+          manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
         contracts: manifest,
         moduleImports,
-      });
+        },
+      ]);
 
       const zeroArg = container.resolve("zeroArg");
       const svc = container.resolve("svc");
@@ -127,10 +131,13 @@ describe("registerIocFromManifest", () => {
         sqliteKnex: { driver: string };
         database: { driver: string };
       }>({ injectionMode: "PROXY" });
-      registerIocFromManifest(container, {
+      registerIocFromManifest(container, [
+        {
+          manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
         contracts: manifest,
         moduleImports,
-      });
+        },
+      ]);
       const viaAccess = container.resolve("database") as { driver: string };
       const viaReg = container.resolve("sqliteKnex") as { driver: string };
       assert.strictEqual(viaAccess.driver, "sqlite");
@@ -178,10 +185,13 @@ describe("registerIocFromManifest", () => {
           svc: { tag: string };
           svcs: { tag: string }[];
         }>({ injectionMode: "PROXY" });
-        registerIocFromManifest(container, {
+        registerIocFromManifest(container, [
+        {
+          manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
           contracts: manifest,
           moduleImports,
-        });
+          },
+        ]);
         const svcs = container.resolve("svcs") as { tag: string }[];
         assert.ok(Array.isArray(svcs));
         assert.strictEqual(svcs.length, 2);
@@ -229,10 +239,13 @@ describe("registerIocFromManifest", () => {
       ];
 
       const container = createContainer<TestCradle>({ injectionMode: "PROXY" });
-      registerIocFromManifest(container, {
+      registerIocFromManifest(container, [
+        {
+          manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
         contracts: manifest,
         moduleImports,
-      });
+        },
+      ]);
       const first = container.resolve("counterServices") as CounterService[];
       const second = container.resolve("counterServices") as CounterService[];
       assert.notStrictEqual(first, second);
@@ -274,7 +287,13 @@ describe("registerIocFromManifest", () => {
       ];
 
       const root = createContainer<TestCradle>({ injectionMode: "PROXY" });
-      registerIocFromManifest(root, { contracts: manifest, moduleImports });
+      registerIocFromManifest(root, [
+        {
+          manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
+          contracts: manifest,
+          moduleImports,
+        },
+      ]);
       const scopeA = root.createScope();
       const scopeB = root.createScope();
       const aFirst = scopeA.resolve("counterServices");
@@ -318,7 +337,13 @@ describe("registerIocFromManifest", () => {
       ];
 
       const root = createContainer<TestCradle>({ injectionMode: "PROXY" });
-      registerIocFromManifest(root, { contracts: manifest, moduleImports });
+      registerIocFromManifest(root, [
+        {
+          manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
+          contracts: manifest,
+          moduleImports,
+        },
+      ]);
       const scopeA = root.createScope();
       const scopeB = root.createScope();
       const a = scopeA.resolve("counterServices");
@@ -363,10 +388,13 @@ describe("registerIocFromManifest", () => {
       const container = createContainer<{ svc: { kind: string } }>({
         injectionMode: "PROXY",
       });
-      registerIocFromManifest(container, {
+      registerIocFromManifest(container, [
+        {
+          manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
         contracts: manifest,
         moduleImports,
-      });
+        },
+      ]);
       const resolved = container.resolve("svc");
       assert.strictEqual(resolved.kind, "beta");
     });
@@ -418,10 +446,13 @@ describe("registerIocFromManifest", () => {
       const container = createContainer<{ widget: { kind: string } }>({
         injectionMode: "PROXY",
       });
-      registerIocFromManifest(container, {
+      registerIocFromManifest(container, [
+        {
+          manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
         contracts: manifest,
         moduleImports,
-      });
+        },
+      ]);
       const resolved = container.resolve("widget");
       assert.strictEqual(resolved.kind, "conventional");
     });
@@ -464,10 +495,13 @@ describe("registerIocFromManifest", () => {
       });
       assert.throws(
         () =>
-          registerIocFromManifest(container, {
+          registerIocFromManifest(container, [
+        {
+          manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
             contracts: manifest,
             moduleImports,
-          }),
+            },
+          ]),
         /Multiple implementations for contract/,
       );
     });
@@ -482,10 +516,13 @@ describe("registerIocFromManifest", () => {
         createManifestForSingleContract("singleton");
       assert.throws(
         () =>
-          registerIocFromManifest(missingModuleContainer, {
+          registerIocFromManifest(missingModuleContainer, [
+            {
+              manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
             contracts: missingModuleManifest,
             moduleImports: [],
-          }),
+            },
+          ]),
         /iocModuleImports\[0\] is missing/,
       );
 
@@ -494,10 +531,13 @@ describe("registerIocFromManifest", () => {
       });
       assert.throws(
         () =>
-          registerIocFromManifest(badExportContainer, {
+          registerIocFromManifest(badExportContainer, [
+            {
+              manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
             contracts: missingModuleManifest,
             moduleImports: [{ buildSvc: "not-a-function" }],
-          }),
+            },
+          ]),
         /has no callable factory export/,
       );
     });
@@ -538,10 +578,13 @@ describe("registerIocFromManifest", () => {
       const container = createContainer<{ root: unknown }>({
         injectionMode: "PROXY",
       });
-      registerIocFromManifest(container, {
+      registerIocFromManifest(container, [
+        {
+          manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
         contracts: manifest,
         moduleImports,
-      });
+        },
+      ]);
 
       assert.throws(
         () => container.resolve("root"),
@@ -600,10 +643,13 @@ describe("registerIocFromManifest", () => {
         levelA: unknown;
         levelB: unknown;
       }>({ injectionMode: "PROXY" });
-      registerIocFromManifest(container, {
+      registerIocFromManifest(container, [
+        {
+          manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
         contracts: manifest,
         moduleImports,
-      });
+        },
+      ]);
 
       assert.throws(
         () => container.resolve("root"),
@@ -665,10 +711,13 @@ describe("registerIocFromManifest", () => {
         levelA: unknown;
         levelB: unknown;
       }>({ injectionMode: "PROXY" });
-      registerIocFromManifest(container, {
+      registerIocFromManifest(container, [
+        {
+          manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
         contracts: manifest,
         moduleImports,
-      });
+        },
+      ]);
 
       assert.throws(
         () => container.resolve("root"),
@@ -744,11 +793,14 @@ describe("registerIocFromManifest", () => {
           implB: { tag: string };
           pair: { tag: string }[];
         }>({ injectionMode: "PROXY" });
-        registerIocFromManifest(container, {
+        registerIocFromManifest(container, [
+        {
+          manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
           contracts: manifest,
           moduleImports,
           ...groups,
-        });
+          },
+        ]);
         const pair = container.resolve("pair");
         assert.deepStrictEqual(
           pair.map((x) => x.tag),
@@ -802,11 +854,14 @@ describe("registerIocFromManifest", () => {
           implB: { tag: string };
           byKey: { a: { tag: string }; b: { tag: string } };
         }>({ injectionMode: "PROXY" });
-        registerIocFromManifest(container, {
+        registerIocFromManifest(container, [
+        {
+          manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
           contracts: manifest,
           moduleImports,
           ...groups,
-        });
+          },
+        ]);
         const byKey = container.resolve("byKey");
         assert.strictEqual(byKey.a.tag, "a");
         assert.strictEqual(byKey.b.tag, "b");

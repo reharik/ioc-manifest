@@ -1,0 +1,336 @@
+import assert from "node:assert";
+import { describe, it } from "node:test";
+import type {
+  IocContractManifest,
+  IocModuleNamespace,
+  IocRegisterableManifest,
+} from "../core/manifest.js";
+import { MANIFEST_SCHEMA_VERSION } from "../schemaVersion.js";
+import {
+  composeManifests,
+  formatConflictingGroupRootKeyError,
+  formatConflictingRegistrationKeyError,
+  formatManifestSchemaVersionMismatchError,
+  prepareManifestsForRegistration,
+  validateManifestSchemaVersions,
+} from "./composeManifests.js";
+
+const baseManifest = (
+  contracts: IocContractManifest,
+  moduleImports: readonly IocModuleNamespace[] = [],
+  extras: Record<string, unknown> = {},
+): IocRegisterableManifest => ({
+  manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
+  moduleImports,
+  contracts,
+  ...extras,
+});
+
+describe("composeManifests", () => {
+  describe("When manifest schema version does not match runtime", () => {
+    it("should throw listing every mismatch with original input indices", () => {
+      const valid = baseManifest({});
+      const bad = {
+        ...baseManifest({}),
+        manifestSchemaVersion: 2 as unknown as typeof MANIFEST_SCHEMA_VERSION,
+      };
+      assert.throws(
+        () => prepareManifestsForRegistration([valid, bad, bad]),
+        (err: unknown) => {
+          assert.ok(err instanceof Error);
+          assert.match(err.message, /Manifest schema version mismatch/);
+          assert.match(err.message, /Runtime expects: 1/);
+          assert.match(err.message, /Got: 2 from manifest at index 1/);
+          assert.match(err.message, /Got: 2 from manifest at index 2/);
+          assert.doesNotMatch(err.message, /index 0/);
+          return true;
+        },
+      );
+    });
+
+    it("should format schema mismatch errors without registering", () => {
+      const msg = formatManifestSchemaVersionMismatchError([
+        { version: 99, originalIndex: 3 },
+      ]);
+      assert.match(msg, /Got: 99 from manifest at index 3/);
+    });
+  });
+
+  describe("When two manifests contribute different implementations of the same contract", () => {
+    it("should merge implementations and preserve distinct registration keys", () => {
+      const factoryA = (): { tag: string } => ({ tag: "a" });
+      const factoryB = (): { tag: string } => ({ tag: "b" });
+      const manifestA = baseManifest(
+        {
+          MediaStorage: {
+            s3: {
+              exportName: "buildS3",
+              registrationKey: "s3MediaStorage",
+              modulePath: "a.ts",
+              relImport: "../a.js",
+              contractName: "MediaStorage",
+              implementationName: "s3",
+              lifetime: "singleton",
+              moduleIndex: 0,
+            },
+          },
+        },
+        [{ buildS3: factoryA }],
+      );
+      const manifestB = baseManifest(
+        {
+          MediaStorage: {
+            mock: {
+              exportName: "buildMock",
+              registrationKey: "mockMediaStorage",
+              modulePath: "b.ts",
+              relImport: "../b.js",
+              contractName: "MediaStorage",
+              implementationName: "mock",
+              lifetime: "singleton",
+              moduleIndex: 0,
+            },
+          },
+        },
+        [{ buildMock: factoryB }],
+      );
+
+      const composed = composeManifests([manifestA, manifestB]);
+      const mediaImpls = Object.keys(composed.contracts.MediaStorage ?? {});
+      assert.deepEqual(mediaImpls.sort(), ["mock", "s3"]);
+    });
+  });
+
+  describe("When two manifests register the same Awilix key", () => {
+    it("should throw with original indices and contract metadata", () => {
+      const manifestA = baseManifest({
+        AlbumRepository: {
+          albumRepository: {
+            exportName: "buildA",
+            registrationKey: "albumRepository",
+            modulePath: "a.ts",
+            relImport: "../a.js",
+            contractName: "AlbumRepository",
+            implementationName: "albumRepository",
+            lifetime: "singleton",
+            moduleIndex: 0,
+          },
+        },
+      });
+      const manifestB = baseManifest({
+        OtherContract: {
+          other: {
+            exportName: "buildB",
+            registrationKey: "albumRepository",
+            modulePath: "b.ts",
+            relImport: "../b.js",
+            contractName: "OtherContract",
+            implementationName: "other",
+            lifetime: "singleton",
+            moduleIndex: 0,
+          },
+        },
+      });
+
+      assert.throws(
+        () => composeManifests([manifestB, manifestA]),
+        (err: unknown) => {
+          assert.ok(err instanceof Error);
+          const expected = formatConflictingRegistrationKeyError(
+            "albumRepository",
+            {
+              kind: "implementation",
+              originalIndex: 0,
+              contractName: "OtherContract",
+              implementationName: "other",
+            },
+            {
+              kind: "implementation",
+              originalIndex: 1,
+              contractName: "AlbumRepository",
+              implementationName: "albumRepository",
+            },
+          );
+          assert.strictEqual(err.message, expected);
+          return true;
+        },
+      );
+    });
+  });
+
+  describe("When two manifests declare the same group root key", () => {
+    it("should throw the group-root conflict message with original indices", () => {
+      const groupNode = [
+        {
+          contractName: "Widget",
+          registrationKey: "widget",
+        },
+      ];
+      const manifestA = baseManifest({}, [], { myGroup: groupNode });
+      const manifestB = baseManifest({}, [], { myGroup: groupNode });
+
+      assert.throws(
+        () => composeManifests([manifestA, manifestB]),
+        (err: unknown) => {
+          assert.ok(err instanceof Error);
+          assert.strictEqual(
+            err.message,
+            formatConflictingGroupRootKeyError("myGroup", 0, 1),
+          );
+          return true;
+        },
+      );
+    });
+  });
+
+  describe("When manifest array order differs", () => {
+    it("should produce identical composed contracts for [a,b] and [b,a]", () => {
+      const manifestA = baseManifest({
+        Foo: {
+          a: {
+            exportName: "buildA",
+            registrationKey: "fooA",
+            modulePath: "a.ts",
+            relImport: "../a.js",
+            contractName: "Foo",
+            implementationName: "a",
+            lifetime: "singleton",
+            moduleIndex: 0,
+            default: true,
+          },
+        },
+      });
+      const manifestB = baseManifest({
+        Bar: {
+          b: {
+            exportName: "buildB",
+            registrationKey: "barB",
+            modulePath: "b.ts",
+            relImport: "../b.js",
+            contractName: "Bar",
+            implementationName: "b",
+            lifetime: "singleton",
+            moduleIndex: 0,
+          },
+        },
+      });
+
+      const ab = composeManifests([manifestA, manifestB]);
+      const ba = composeManifests([manifestB, manifestA]);
+      assert.deepStrictEqual(ab.contracts, ba.contracts);
+      assert.strictEqual(ab.moduleImports.length, ba.moduleImports.length);
+    });
+
+    it("should throw the same conflict for [a,b] and [b,a] with indices matching caller order", () => {
+      const manifestA = baseManifest({
+        X: {
+          x: {
+            exportName: "buildX",
+            registrationKey: "dup",
+            modulePath: "a.ts",
+            relImport: "../a.js",
+            contractName: "X",
+            implementationName: "x",
+            lifetime: "singleton",
+            moduleIndex: 0,
+          },
+        },
+      });
+      const manifestB = baseManifest({
+        Y: {
+          y: {
+            exportName: "buildY",
+            registrationKey: "dup",
+            modulePath: "b.ts",
+            relImport: "../b.js",
+            contractName: "Y",
+            implementationName: "y",
+            lifetime: "singleton",
+            moduleIndex: 0,
+          },
+        },
+      });
+
+      const messageAb = assert.throws(() =>
+        composeManifests([manifestA, manifestB]),
+      );
+      const messageBa = assert.throws(() =>
+        composeManifests([manifestB, manifestA]),
+      );
+      assert.match(messageAb.message, /Conflicting registration key "dup"/);
+      assert.match(messageBa.message, /Conflicting registration key "dup"/);
+      assert.match(messageAb.message, /manifest at index 0/);
+      assert.match(messageAb.message, /manifest at index 1/);
+      assert.match(messageBa.message, /manifest at index 0/);
+      assert.match(messageBa.message, /manifest at index 1/);
+      assert.notStrictEqual(messageAb.message, messageBa.message);
+    });
+  });
+
+  describe("When duplicate manifest references appear in the input array", () => {
+    it("should deduplicate by reference without changing composition", () => {
+      const manifest = baseManifest({
+        Only: {
+          only: {
+            exportName: "buildOnly",
+            registrationKey: "onlyKey",
+            modulePath: "o.ts",
+            relImport: "../o.js",
+            contractName: "Only",
+            implementationName: "only",
+            lifetime: "singleton",
+            moduleIndex: 0,
+          },
+        },
+      });
+      const once = composeManifests([manifest]);
+      const twice = composeManifests([manifest, manifest]);
+      assert.deepStrictEqual(once.contracts, twice.contracts);
+    });
+  });
+
+  describe("When validateManifestSchemaVersions runs on indexed manifests", () => {
+    it("should use original indices after internal sort would reorder manifests", () => {
+      const lowFingerprint = baseManifest({
+        Zzz: {
+          z: {
+            exportName: "buildZ",
+            registrationKey: "zzz",
+            modulePath: "z.ts",
+            relImport: "../z.js",
+            contractName: "Zzz",
+            implementationName: "z",
+            lifetime: "singleton",
+            moduleIndex: 0,
+          },
+        },
+      });
+      const bad = {
+        ...baseManifest({
+          Aaa: {
+            a: {
+              exportName: "buildA",
+              registrationKey: "aaa",
+              modulePath: "a.ts",
+              relImport: "../a.js",
+              contractName: "Aaa",
+              implementationName: "a",
+              lifetime: "singleton",
+              moduleIndex: 0,
+            },
+          },
+        }),
+        manifestSchemaVersion: 9 as unknown as typeof MANIFEST_SCHEMA_VERSION,
+      };
+
+      assert.throws(
+        () =>
+          validateManifestSchemaVersions([
+            { manifest: lowFingerprint, originalIndex: 0 },
+            { manifest: bad, originalIndex: 1 },
+          ]),
+        /Got: 9 from manifest at index 1/,
+      );
+    });
+  });
+});
