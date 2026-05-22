@@ -23,6 +23,7 @@ import {
   ManifestOptions,
   resolveManifestOptions,
 } from "./manifestOptions.js";
+import { analyzeDemandSupply } from "./analyzeDemandSupply/index.js";
 import { buildRegistrationPlan } from "./resolveRegistrationPlan.js";
 import { writeManifest } from "./writeManifest.js";
 import type { ManifestRuntimePaths } from "./manifestPaths.js";
@@ -144,6 +145,14 @@ export const generateManifest = async (
     scanDirs,
   });
 
+  const demandSupply = analyzeDemandSupply(acceptedFactories, {
+    program,
+    projectRoot,
+    scanDirs,
+    generatedDir,
+    groupsManifest: groupResult?.manifest,
+  });
+
   await writeManifest(
     acceptedFactories,
     plans,
@@ -151,6 +160,7 @@ export const generateManifest = async (
     manifestOutPath,
     packageName,
     {
+      demandSupply,
       registryTypesBuildContext: {
         program,
         generatedDir,

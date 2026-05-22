@@ -10,6 +10,7 @@ import {
   cradleTypeImportUsesDefaultExport,
   resolveContractTypeSourceFile,
 } from "./contractTypeSourceFile.js";
+import type { DemandSupplyAnalysisResult } from "./analyzeDemandSupply/index.js";
 import type { DiscoveredFactory } from "./types.js";
 import type { ResolvedContractRegistration } from "./resolveRegistrationPlan.js";
 import type {
@@ -27,6 +28,7 @@ export type IocRegistryTypesBuildContext = {
 };
 
 export type WriteManifestOptions = {
+  demandSupply: DemandSupplyAnalysisResult;
   registryTypesBuildContext?: IocRegistryTypesBuildContext;
 };
 
@@ -390,98 +392,141 @@ ${moduleArrayLines.join("\n")}
 `;
 };
 
+const addTypeImport = (
+  grouped: Map<string, { named: Set<string>; defaults: Set<string> }>,
+  relImport: string,
+  typeName: string,
+  useDefaultImport: boolean,
+): void => {
+  let bucket = grouped.get(relImport);
+  if (bucket === undefined) {
+    bucket = { named: new Set(), defaults: new Set() };
+    grouped.set(relImport, bucket);
+  }
+  if (useDefaultImport) {
+    bucket.defaults.add(typeName);
+  } else {
+    bucket.named.add(typeName);
+  }
+};
+
+const buildImportLinesFromBuckets = (
+  grouped: Map<string, { named: Set<string>; defaults: Set<string> }>,
+): string[] => {
+  const importLines: string[] = [];
+  for (const [relImport, bucket] of Array.from(grouped.entries()).sort(
+    ([a], [b]) => a.localeCompare(b),
+  )) {
+    const defaultNames = Array.from(bucket.defaults).sort((x, y) =>
+      x.localeCompare(y),
+    );
+    const namedNames = Array.from(bucket.named).sort((x, y) =>
+      x.localeCompare(y),
+    );
+
+    for (const defaultName of defaultNames) {
+      importLines.push(`import type ${defaultName} from "${relImport}";`);
+    }
+    if (namedNames.length > 0) {
+      importLines.push(
+        `import type { ${namedNames.join(", ")} } from "${relImport}";`,
+      );
+    }
+  }
+  return importLines;
+};
+
 const buildCradleTypeSource = (
   plans: ResolvedContractRegistration[],
   groupsManifest: IocGroupsManifest | undefined,
+  demandSupply: DemandSupplyAnalysisResult,
   registryTypesBuildContext?: IocRegistryTypesBuildContext,
 ): string => {
-  const importLines: string[] = [];
+  const grouped = new Map<
+    string,
+    { named: Set<string>; defaults: Set<string> }
+  >();
 
-  if (registryTypesBuildContext === undefined) {
-    const typeImports = new Map<string, Set<string>>();
+  for (const entry of demandSupply.entries) {
+    addTypeImport(
+      grouped,
+      entry.typeRef.relImport,
+      entry.typeRef.typeName,
+      entry.typeRef.useDefaultImport,
+    );
+  }
 
-    for (const plan of plans) {
-      const importPath = plan.contractTypeRelImport;
-      const set = typeImports.get(importPath) ?? new Set<string>();
-      set.add(plan.contractName);
-      typeImports.set(importPath, set);
-    }
-
-    for (const [relImport, names] of Array.from(typeImports.entries()).sort(
-      ([a], [b]) => a.localeCompare(b),
-    )) {
-      const sorted = Array.from(names).sort((x, y) => x.localeCompare(y));
-      importLines.push(
-        `import type { ${sorted.join(", ")} } from "${relImport}";`,
-      );
-    }
-  } else {
+  if (registryTypesBuildContext !== undefined) {
     const { program, generatedDir, scanDirs } = registryTypesBuildContext;
-    const grouped = new Map<
-      string,
-      { named: Set<string>; defaults: Set<string> }
-    >();
 
     for (const plan of plans) {
-      const relImport = plan.contractTypeRelImport;
-      let bucket = grouped.get(relImport);
-      if (bucket === undefined) {
-        bucket = { named: new Set(), defaults: new Set() };
-        grouped.set(relImport, bucket);
-      }
-
       const sourceFile = resolveContractTypeSourceFile(
         program,
         generatedDir,
-        relImport,
+        plan.contractTypeRelImport,
         scanDirs,
         plan.contractName,
       );
       const useDefault =
         sourceFile !== undefined &&
         cradleTypeImportUsesDefaultExport(sourceFile, plan.contractName);
-
-      if (useDefault) {
-        bucket.defaults.add(plan.contractName);
-      } else {
-        bucket.named.add(plan.contractName);
-      }
+      addTypeImport(
+        grouped,
+        plan.contractTypeRelImport,
+        plan.contractName,
+        useDefault,
+      );
     }
-
-    for (const [relImport, bucket] of Array.from(grouped.entries()).sort(
-      ([a], [b]) => a.localeCompare(b),
-    )) {
-      const defaultNames = Array.from(bucket.defaults).sort((x, y) =>
-        x.localeCompare(y),
+  } else {
+    for (const plan of plans) {
+      addTypeImport(
+        grouped,
+        plan.contractTypeRelImport,
+        plan.contractName,
+        false,
       );
-      const namedNames = Array.from(bucket.named).sort((x, y) =>
-        x.localeCompare(y),
-      );
-
-      for (const defaultName of defaultNames) {
-        importLines.push(`import type ${defaultName} from "${relImport}";`);
-      }
-      if (namedNames.length > 0) {
-        importLines.push(
-          `import type { ${namedNames.join(", ")} } from "${relImport}";`,
-        );
-      }
     }
   }
 
-  const propertyLines: string[] = [];
+  const importLines = buildImportLinesFromBuckets(grouped);
+
+  const demandSupplyKeys = new Set(demandSupply.entries.map((e) => e.key));
+  const cradleProperties: { key: string; line: string }[] = [];
+
+  for (const entry of demandSupply.entries) {
+    const comment =
+      entry.classification === "local"
+        ? "// locally supplied"
+        : "// externally provided";
+    cradleProperties.push({
+      key: entry.key,
+      line: `  ${tsIdentifierOrQuoted(entry.key)}: ${entry.typeRef.typeName}; ${comment}`,
+    });
+  }
+
   const sortedPlans = [...plans].sort((a, b) =>
     a.contractName.localeCompare(b.contractName),
   );
 
   for (const plan of sortedPlans) {
     const typeName = plan.contractName;
-    propertyLines.push(`  ${plan.accessKey}: ${typeName};`);
+    if (!demandSupplyKeys.has(plan.accessKey)) {
+      cradleProperties.push({
+        key: plan.accessKey,
+        line: `  ${plan.accessKey}: ${typeName}; // locally supplied`,
+      });
+      demandSupplyKeys.add(plan.accessKey);
+    }
 
-    if (plan.collectionKey !== undefined) {
-      propertyLines.push(
-        `  ${plan.collectionKey}: ReadonlyArray<${typeName}>;`,
-      );
+    if (
+      plan.collectionKey !== undefined &&
+      !demandSupplyKeys.has(plan.collectionKey)
+    ) {
+      cradleProperties.push({
+        key: plan.collectionKey,
+        line: `  ${plan.collectionKey}: ReadonlyArray<${typeName}>; // locally supplied`,
+      });
+      demandSupplyKeys.add(plan.collectionKey);
     }
   }
 
@@ -524,23 +569,29 @@ const buildCradleTypeSource = (
     );
 
     for (const key of groupRootKeys) {
+      if (demandSupplyKeys.has(key)) {
+        continue;
+      }
       const node = groupsManifest[key]!;
-      propertyLines.push(
-        `  ${tsIdentifierOrQuoted(key)}: ${appendGroupNodeType(node, "")};`,
-      );
+      cradleProperties.push({
+        key,
+        line: `  ${tsIdentifierOrQuoted(key)}: ${appendGroupNodeType(node, "")}; // locally supplied`,
+      });
+      demandSupplyKeys.add(key);
     }
   }
+
+  cradleProperties.sort((a, b) => a.key.localeCompare(b.key));
+  const propertyLines = cradleProperties.map((p) => p.line);
 
   const header = `/* AUTO-GENERATED. DO NOT EDIT.
 Re-run \`npm run gen:manifest\` after changing factories or IoC config.
 */
 `;
 
-  return `${header}${importLines.length > 0 ? importLines.join("\n") + "\n\n" : ""}export interface IocGeneratedTypes {
+  return `${header}${importLines.length > 0 ? importLines.join("\n") + "\n\n" : ""}export interface IocGeneratedCradle {
 ${propertyLines.join("\n")}
 }
-
-export type IocGeneratedCradle = IocGeneratedTypes;
 `;
 };
 
@@ -616,10 +667,17 @@ export const writeManifest = async (
     path.dirname(manifestOutPath),
     "ioc-registry.types.ts",
   );
+  if (options?.demandSupply === undefined) {
+    throw new Error(
+      "[ioc] internal error: demandSupply analysis is required for registry type generation",
+    );
+  }
+
   const typesSource = buildCradleTypeSource(
     plans,
     iocGroupsManifest,
-    options?.registryTypesBuildContext,
+    options.demandSupply,
+    options.registryTypesBuildContext,
   );
   await replaceFileFromTemp(typesPath, typesSource);
 };
