@@ -9,8 +9,10 @@
     "setup": "node scripts/setup.mjs",
     "gen": "node scripts/gen.mjs",
     "typecheck": "tsc -p packages/app/tsconfig.json",
+    "validate": "node ../../dist/cli/ioc.js validate -c ./packages/app/src/ioc.config.ts",
     "start": "tsx packages/app/src/bootstrap.ts",
-    "typecheck:broken-expect-fail": "node scripts/expect-broken-typecheck.mjs"
+    "typecheck:broken-expect-fail": "node scripts/expect-broken-typecheck.mjs",
+    "validate:broken-expect-fail": "node scripts/expect-validate-broken.mjs"
   },
   "devDependencies": {
     "tsx": "^4.19.2",
