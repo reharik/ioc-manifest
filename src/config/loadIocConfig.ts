@@ -15,7 +15,10 @@ import {
   type IocLifetime,
 } from "./iocConfig.js";
 import { parseDiscoveryScanDirs } from "./parseDiscoveryScanDirs.js";
-import { isAppMode } from "./iocMode.js";
+import {
+  findPackageIdentifierCollisions,
+  formatPackageIdentifierCollisionError,
+} from "./packageIdentifier.js";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -37,7 +40,7 @@ const DISCOVERY_KEYS = new Set([
   "generatedDir",
 ]);
 
-const IMPL_OVERRIDE_KEYS = new Set(["name", "lifetime", "default"]);
+const IMPL_OVERRIDE_KEYS = new Set(["name", "lifetime", "default", "source"]);
 
 const assertOnlyKeys = (
   record: Record<string, unknown>,
@@ -215,6 +218,65 @@ const validateComposedManifestsSelfReference = (
   }
 };
 
+const validateRegistrationsSourceOverrides = (
+  registrations: Record<string, unknown> | undefined,
+  sourceLabel: string,
+  composedManifests: readonly string[] | undefined,
+  inAppMode: boolean,
+): void => {
+  if (registrations === undefined) {
+    return;
+  }
+
+  const composedSet =
+    composedManifests !== undefined
+      ? new Set(composedManifests)
+      : new Set<string>();
+
+  for (const [contractName, perImplementation] of Object.entries(
+    registrations,
+  )) {
+    if (!isRecord(perImplementation)) {
+      continue;
+    }
+    for (const [implementationName, override] of Object.entries(
+      perImplementation,
+    )) {
+      if (implementationName === IOC_CONTRACT_CONFIG_KEY) {
+        continue;
+      }
+      if (!isRecord(override) || !("source" in override)) {
+        continue;
+      }
+
+      const path = `${sourceLabel} registrations[${JSON.stringify(contractName)}][${JSON.stringify(implementationName)}].source`;
+
+      if (!inAppMode) {
+        throw new Error(
+          `[ioc-config] ${path} is only valid when composedManifests is set (app mode)`,
+        );
+      }
+
+      const source = override.source;
+      if (typeof source !== "string" || source.length === 0) {
+        throw new Error(
+          `[ioc-config] ${path} must be "local" or a package name listed in composedManifests when set`,
+        );
+      }
+
+      if (source === "local") {
+        continue;
+      }
+
+      if (!composedSet.has(source)) {
+        throw new Error(
+          `[ioc-config] ${path} references ${JSON.stringify(source)}, which is not listed in composedManifests`,
+        );
+      }
+    }
+  }
+};
+
 const validateRegistrationsShape = (
   registrations: unknown,
   sourceLabel: string,
@@ -285,6 +347,14 @@ const validateRegistrationsShape = (
         throw new Error(
           `[ioc-config] ${sourceLabel} registrations["${contractName}"]["${implementationName}"].default must be a boolean when set`,
         );
+      }
+
+      if (override.source !== undefined) {
+        if (typeof override.source !== "string" || override.source.length === 0) {
+          throw new Error(
+            `[ioc-config] ${sourceLabel} registrations["${contractName}"]["${implementationName}"].source must be a non-empty string when set`,
+          );
+        }
       }
     }
   }
@@ -358,6 +428,15 @@ const validateIocConfig = async (
 
   validateRegistrationsShape(raw.registrations, sourceLabel);
 
+  const inAppMode =
+    composedManifests !== undefined && composedManifests.length > 0;
+  validateRegistrationsSourceOverrides(
+    raw.registrations,
+    sourceLabel,
+    composedManifests,
+    inAppMode,
+  );
+
   if (raw.groups !== undefined) {
     validateGroupsShape(raw.groups, `${sourceLabel} groups`);
   }
@@ -376,6 +455,13 @@ const validateIocConfig = async (
       localPackageName,
       sourceLabel,
     );
+
+    const collisions = findPackageIdentifierCollisions(composedManifests);
+    if (collisions.length > 0) {
+      throw new Error(
+        formatPackageIdentifierCollisionError(sourceLabel, collisions[0]!),
+      );
+    }
   }
 
   return config;
