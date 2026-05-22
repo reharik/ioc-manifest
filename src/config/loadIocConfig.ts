@@ -30,6 +30,7 @@ const TOP_LEVEL_KEYS = new Set([
   "packageName",
   "registrations",
   "groups",
+  "groupBaseTypeAliases",
 ]);
 
 const DISCOVERY_KEYS = new Set([
@@ -61,6 +62,43 @@ const IOC_LIFETIMES = new Set(["singleton", "scoped", "transient"]);
 
 const isIocLifetime = (value: unknown): value is IocLifetime =>
   typeof value === "string" && IOC_LIFETIMES.has(value);
+
+const validateGroupBaseTypeAliasesShape = (
+  value: unknown,
+  pathLabel: string,
+): void => {
+  if (!isRecord(value)) {
+    throw new Error(`[ioc-config] ${pathLabel} must be an object when set`);
+  }
+
+  for (const [groupName, ids] of Object.entries(value)) {
+    const entryPath = `${pathLabel}.${JSON.stringify(groupName)}`;
+    if (!Array.isArray(ids)) {
+      throw new Error(`[ioc-config] ${entryPath} must be a string array`);
+    }
+    if (ids.length < 2) {
+      throw new Error(
+        `[ioc-config] ${entryPath} must contain at least 2 canonical identifier strings`,
+      );
+    }
+    for (let i = 0; i < ids.length; i++) {
+      if (typeof ids[i] !== "string" || ids[i]!.length === 0) {
+        throw new Error(
+          `[ioc-config] ${entryPath}[${i}] must be a non-empty string`,
+        );
+      }
+    }
+    const seen = new Set<string>();
+    for (const id of ids) {
+      if (seen.has(id)) {
+        console.warn(
+          `[ioc-config] warning: ${entryPath} contains duplicate entry ${JSON.stringify(id)}`,
+        );
+      }
+      seen.add(id);
+    }
+  }
+};
 
 const validateGroupsShape = (value: unknown, pathLabel: string): void => {
   if (!isRecord(value)) {
@@ -438,6 +476,18 @@ const validateIocConfig = async (
 
   if (raw.groups !== undefined) {
     validateGroupsShape(raw.groups, `${sourceLabel} groups`);
+  }
+
+  if (raw.groupBaseTypeAliases !== undefined) {
+    if (!inAppMode) {
+      throw new Error(
+        `[ioc-config] ${sourceLabel} groupBaseTypeAliases is only valid in app mode (when composedManifests is set)`,
+      );
+    }
+    validateGroupBaseTypeAliasesShape(
+      raw.groupBaseTypeAliases,
+      `${sourceLabel} groupBaseTypeAliases`,
+    );
   }
 
   const config = raw as IocConfig;

@@ -170,6 +170,11 @@ export type IocConfig = {
    * See {@link IocGroupsConfig}.
    */
   groups?: IocGroupsConfig;
+  /**
+   * App mode only. Declares equivalence sets of canonical base-type identifiers for a group name
+   * when diamond-dependency hoisting produces mismatched ids (§14.4.1).
+   */
+  groupBaseTypeAliases?: Record<string, string[]>;
 };
 
 export const defineIocConfig = (config: IocConfig): IocConfig => config;
