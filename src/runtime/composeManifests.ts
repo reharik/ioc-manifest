@@ -435,21 +435,73 @@ const mergeCollectionMembers = (
   );
 };
 
+const findImplementationOwner = (
+  registrationKey: string,
+  contracts: IocContractManifest,
+): (KeyOwner & { kind: "implementation" }) | undefined => {
+  for (const [contractName, impls] of Object.entries(contracts)) {
+    for (const [implementationName, meta] of Object.entries(impls)) {
+      if (meta.registrationKey === registrationKey) {
+        return {
+          kind: "implementation",
+          originalIndex: -1,
+          contractName,
+          implementationName,
+        };
+      }
+    }
+  }
+  return undefined;
+};
+
 const mergeObjectGroupMembers = (
   groupName: string,
   a: IocGroupObjectManifest,
   b: IocGroupObjectManifest,
   indexA: number,
   indexB: number,
+  contracts: IocContractManifest,
+  overrides: ComposedRegistrationOverrides | undefined,
+  indexForSource: ((source: string) => number) | undefined,
 ): IocGroupObjectManifest => {
   const merged: IocGroupObjectManifest = { ...a };
-  for (const [key, leaf] of Object.entries(b)) {
-    if (merged[key] !== undefined) {
+  for (const [key, incomingLeaf] of Object.entries(b)) {
+    const existingLeaf = merged[key];
+    if (existingLeaf === undefined) {
+      merged[key] = incomingLeaf;
+      continue;
+    }
+
+    const ownerA = findImplementationOwner(existingLeaf.registrationKey, contracts);
+    const ownerB = findImplementationOwner(incomingLeaf.registrationKey, contracts);
+    if (ownerA === undefined || ownerB === undefined) {
       throw new Error(
         formatObjectGroupKeyCollisionError(groupName, key, indexA, indexB),
       );
     }
-    merged[key] = leaf;
+
+    const ownerAIndexed: KeyOwner & { kind: "implementation" } = {
+      ...ownerA,
+      originalIndex: indexA,
+    };
+    const ownerBIndexed: KeyOwner & { kind: "implementation" } = {
+      ...ownerB,
+      originalIndex: indexB,
+    };
+
+    const winnerIndex = resolveSourceOverrideWinnerIndex(
+      ownerAIndexed,
+      ownerBIndexed,
+      overrides,
+      indexForSource,
+    );
+    if (winnerIndex === undefined) {
+      throw new Error(
+        formatObjectGroupKeyCollisionError(groupName, key, indexA, indexB),
+      );
+    }
+
+    merged[key] = winnerIndex === indexA ? existingLeaf : incomingLeaf;
   }
   return merged;
 };
@@ -461,6 +513,9 @@ const mergeGroupRootManifests = (
   indexA: number,
   indexB: number,
   aliasSets: Readonly<Record<string, readonly string[]>> | undefined,
+  contracts: IocContractManifest,
+  overrides: ComposedRegistrationOverrides | undefined,
+  indexForSource: ((source: string) => number) | undefined,
 ): IocGroupRootManifest => {
   if (existing.kind !== incoming.kind) {
     throw new Error(
@@ -517,6 +572,9 @@ const mergeGroupRootManifests = (
       incoming.members as IocGroupObjectManifest,
       indexA,
       indexB,
+      contracts,
+      overrides,
+      indexForSource,
     ),
   };
 };
@@ -611,6 +669,9 @@ export const composeManifests = (
             firstIndex,
             originalIndex,
             aliasSets,
+            mergedContracts,
+            overrides,
+            indexForSource,
           );
         } else {
           throwRegistrationKeyConflict(groupKey, existingOwner, {
