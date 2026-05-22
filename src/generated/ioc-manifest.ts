@@ -27,6 +27,8 @@ type IocManifestGroupRoots = {
 };
 
 export const iocManifest = {
+  manifestSchemaVersion: 1,
+
   moduleImports: [
     ioc_examples_a_single_implementation,
     ioc_examples_b_multiple_implementations,
