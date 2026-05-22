@@ -87,12 +87,14 @@ const buildExternalsAssertionLines = (
   specs: readonly ComposedPackageSpec[],
 ): string[] => {
   const appCradle = "AppCradle";
-  const lines: string[] = [];
+  const lines: string[] = ["type _IocExpect<T extends true> = T;"];
   for (const spec of specs) {
     const cap = capitalizeIdentifier(spec.identifier);
+    const satisfied = `_${cap}ExternalsSatisfied`;
     lines.push(
-      `type _${cap}ExternalsSatisfied =`,
+      `type ${satisfied} =`,
       `  ${cap}Externals extends Pick<${appCradle}, keyof ${cap}Externals> ? true : never;`,
+      `type _${cap}ExternalsAssert = _IocExpect<${satisfied}>;`,
     );
   }
   return lines;

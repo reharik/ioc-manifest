@@ -8,6 +8,7 @@ import type {
 } from "../core/manifest.js";
 import { MANIFEST_SCHEMA_VERSION } from "../schemaVersion.js";
 import { registerIocFromManifest } from "./bootstrap.js";
+import type { ComposedRegistrationOverrides } from "./composedOverrides.js";
 import { isIocResolutionError } from "./iocResolutionError.js";
 
 type CounterService = { counter: number };
@@ -866,6 +867,62 @@ describe("registerIocFromManifest", () => {
         assert.strictEqual(byKey.a.tag, "a");
         assert.strictEqual(byKey.b.tag, "b");
       });
+    });
+  });
+
+  describe("When composedRegistrationOverrides select default and source", () => {
+    it("should register using the overridden default implementation", () => {
+      const manifestA = {
+        manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
+        moduleImports: [{ buildS3: (): { tag: string } => ({ tag: "s3" }) }],
+        contracts: {
+          MediaStorage: {
+            s3: {
+              exportName: "buildS3",
+              registrationKey: "s3MediaStorage",
+              modulePath: "a.ts",
+              relImport: "../a.js",
+              contractName: "MediaStorage",
+              implementationName: "s3",
+              lifetime: "singleton" as const,
+              moduleIndex: 0,
+              default: true,
+            },
+          },
+        },
+      };
+      const manifestB = {
+        manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
+        moduleImports: [{ buildMock: (): { tag: string } => ({ tag: "mock" }) }],
+        contracts: {
+          MediaStorage: {
+            mock: {
+              exportName: "buildMock",
+              registrationKey: "mockMediaStorage",
+              modulePath: "b.ts",
+              relImport: "../b.js",
+              contractName: "MediaStorage",
+              implementationName: "mock",
+              lifetime: "singleton" as const,
+              moduleIndex: 0,
+              default: true,
+            },
+          },
+        },
+      };
+      const overrides: ComposedRegistrationOverrides = {
+        contracts: {
+          MediaStorage: { defaultImplementation: "mock" },
+        },
+      };
+      const container = createContainer<{
+        s3MediaStorage: { tag: string };
+        mockMediaStorage: { tag: string };
+        mediaStorage: { tag: string };
+        mediaStorages: { tag: string }[];
+      }>({ injectionMode: "PROXY" });
+      registerIocFromManifest(container, [manifestA, manifestB], overrides);
+      assert.strictEqual(container.resolve("mediaStorage").tag, "mock");
     });
   });
 });

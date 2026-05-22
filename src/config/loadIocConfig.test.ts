@@ -86,6 +86,103 @@ describe("loadIocConfig", () => {
       assert.equal(c.discovery.scanDirs, "src");
     });
   });
+
+  describe("When composedManifests includes a duplicate package", () => {
+    it("should reject the config", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-dup-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" }, composedManifests: ["@a/pkg", "@a/pkg"] };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /composedManifests contains duplicate entry/,
+      );
+    });
+  });
+
+  describe("When composedManifests includes the local package name", () => {
+    it("should reject self-composition", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-self-"));
+      writeFileSync(
+        path.join(root, "package.json"),
+        JSON.stringify({ name: "@test/app" }),
+      );
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" }, composedManifests: ["@test/app"] };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /cannot include this package's own name/,
+      );
+    });
+  });
+
+  describe("When manifestExportPath is set in app mode", () => {
+    it("should reject the config", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-mep-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" }, composedManifests: ["@a/pkg"], manifestExportPath: "./out" };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /manifestExportPath is only valid in library mode/,
+      );
+    });
+  });
+
+  describe("When source is set without composedManifests", () => {
+    it("should reject the config", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-src-lib-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" }, registrations: {
+          AlbumRepository: { albumRepository: { source: "local" } }
+        } };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /source.*only valid when composedManifests is set/,
+      );
+    });
+  });
+
+  describe("When source references a package not in composedManifests", () => {
+    it("should reject the config", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-src-miss-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" }, composedManifests: ["@a/pkg"],
+          registrations: { AlbumRepository: { albumRepository: { source: "@b/other" } } } };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /not listed in composedManifests/,
+      );
+    });
+  });
+
+  describe("When package.json has no name and composedManifests is set", () => {
+    it("should require packageName in config", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-noname-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" }, composedManifests: ["@a/pkg"] };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /Unable to determine local package name/,
+      );
+    });
+  });
 });
 
 describe("resolveProjectRootFromIocConfigPath", () => {

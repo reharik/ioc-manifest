@@ -30,12 +30,29 @@ describe("composeManifests", () => {
   describe("When manifest schema version does not match runtime", () => {
     it("should throw listing every mismatch with original input indices", () => {
       const valid = baseManifest({});
-      const bad = {
+      const badAt1 = {
         ...baseManifest({}),
         manifestSchemaVersion: 2 as unknown as typeof MANIFEST_SCHEMA_VERSION,
       };
+      const badAt2 = {
+        ...baseManifest({
+          Other: {
+            o: {
+              exportName: "buildO",
+              registrationKey: "other",
+              modulePath: "o.ts",
+              relImport: "../o.js",
+              contractName: "Other",
+              implementationName: "o",
+              lifetime: "singleton",
+              moduleIndex: 0,
+            },
+          },
+        }),
+        manifestSchemaVersion: 2 as unknown as typeof MANIFEST_SCHEMA_VERSION,
+      };
       assert.throws(
-        () => prepareManifestsForRegistration([valid, bad, bad]),
+        () => prepareManifestsForRegistration([valid, badAt1, badAt2]),
         (err: unknown) => {
           assert.ok(err instanceof Error);
           assert.match(err.message, /Manifest schema version mismatch/);
@@ -98,6 +115,95 @@ describe("composeManifests", () => {
       const composed = composeManifests([manifestA, manifestB]);
       const mediaImpls = Object.keys(composed.contracts.MediaStorage ?? {});
       assert.deepEqual(mediaImpls.sort(), ["mock", "s3"]);
+    });
+  });
+
+  describe("When sourceOverride selects local for a conflicting registration key", () => {
+    it("should keep the local manifest implementation and drop the other", () => {
+      const local = baseManifest({
+        AlbumRepository: {
+          albumRepository: {
+            exportName: "buildLocal",
+            registrationKey: "albumRepository",
+            modulePath: "local.ts",
+            relImport: "../local.js",
+            contractName: "AlbumRepository",
+            implementationName: "albumRepository",
+            lifetime: "singleton",
+            moduleIndex: 0,
+          },
+        },
+      });
+      const remote = baseManifest({
+        OtherContract: {
+          other: {
+            exportName: "buildRemote",
+            registrationKey: "albumRepository",
+            modulePath: "remote.ts",
+            relImport: "../remote.js",
+            contractName: "OtherContract",
+            implementationName: "other",
+            lifetime: "singleton",
+            moduleIndex: 0,
+          },
+        },
+      });
+
+      const composed = composeManifests([local, remote], {
+        composedPackageNames: ["@test/remote-pkg"],
+        contracts: {
+          AlbumRepository: {
+            sourceOverride: { albumRepository: "local" },
+          },
+        },
+      });
+
+      assert.ok(composed.contracts.AlbumRepository?.albumRepository);
+      assert.equal(composed.contracts.OtherContract, undefined);
+    });
+  });
+
+  describe("When defaultImplementation override is set across manifests", () => {
+    it("should apply the app default without throwing a cross-manifest default conflict", () => {
+      const manifestA = baseManifest({
+        MediaStorage: {
+          s3: {
+            exportName: "buildS3",
+            registrationKey: "s3MediaStorage",
+            modulePath: "a.ts",
+            relImport: "../a.js",
+            contractName: "MediaStorage",
+            implementationName: "s3",
+            lifetime: "singleton",
+            moduleIndex: 0,
+            default: true,
+          },
+        },
+      });
+      const manifestB = baseManifest({
+        MediaStorage: {
+          mock: {
+            exportName: "buildMock",
+            registrationKey: "mockMediaStorage",
+            modulePath: "b.ts",
+            relImport: "../b.js",
+            contractName: "MediaStorage",
+            implementationName: "mock",
+            lifetime: "singleton",
+            moduleIndex: 0,
+            default: true,
+          },
+        },
+      });
+
+      const composed = composeManifests([manifestA, manifestB], {
+        contracts: {
+          MediaStorage: { defaultImplementation: "mock" },
+        },
+      });
+
+      assert.strictEqual(composed.contracts.MediaStorage?.mock?.default, true);
+      assert.equal(composed.contracts.MediaStorage?.s3?.default, undefined);
     });
   });
 
@@ -251,10 +357,20 @@ describe("composeManifests", () => {
         },
       });
 
-      const messageAb = assert.throws(() =>
+      const expectConflict = (fn: () => void): Error => {
+        try {
+          fn();
+        } catch (err: unknown) {
+          assert.ok(err instanceof Error);
+          return err;
+        }
+        assert.fail("expected composeManifests to throw");
+      };
+
+      const messageAb = expectConflict(() =>
         composeManifests([manifestA, manifestB]),
       );
-      const messageBa = assert.throws(() =>
+      const messageBa = expectConflict(() =>
         composeManifests([manifestB, manifestA]),
       );
       assert.match(messageAb.message, /Conflicting registration key "dup"/);

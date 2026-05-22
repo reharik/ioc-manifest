@@ -87,7 +87,13 @@ const DEFAULT_LIFETIME: IocLifetime = "singleton";
 export const normalizeIocOverride = (
   override: IocOverride,
 ): Partial<DiscoveredFactory> => {
-  const { name, lifetime, default: defaultFlag, ...rest } = override;
+  const {
+    name,
+    lifetime,
+    default: defaultFlag,
+    source: _source,
+    ...rest
+  } = override;
   const out: Partial<DiscoveredFactory> = { ...rest };
 
   if (lifetime !== undefined) {

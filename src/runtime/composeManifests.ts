@@ -173,6 +173,7 @@ const findDefaultDeclarationInManifest = (
 const applyCrossManifestDefaultPolicy = (
   mergedContracts: IocContractManifest,
   contributingManifests: readonly IndexedManifest[],
+  overrides: ComposedRegistrationOverrides | undefined,
 ): void => {
   const contractNames = new Set<string>();
   for (const { manifest } of contributingManifests) {
@@ -184,6 +185,12 @@ const applyCrossManifestDefaultPolicy = (
   for (const contractName of [...contractNames].sort((a, b) =>
     a.localeCompare(b),
   )) {
+    if (
+      overrides?.contracts?.[contractName]?.defaultImplementation !== undefined
+    ) {
+      continue;
+    }
+
     const declaring: {
       originalIndex: number;
       implementationName: string;
@@ -472,7 +479,7 @@ export const composeManifests = (
   }
 
   applyAppDefaultOverrides(mergedContracts, overrides);
-  applyCrossManifestDefaultPolicy(mergedContracts, sorted);
+  applyCrossManifestDefaultPolicy(mergedContracts, sorted, overrides);
 
   return {
     manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,

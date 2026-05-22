@@ -144,7 +144,6 @@ const readPackageJsonName = async (
 
 const resolveLocalPackageName = async (
   raw: Record<string, unknown>,
-  sourceLabel: string,
   projectRoot: string,
 ): Promise<string | undefined> => {
   const fromPackageJson = await readPackageJsonName(projectRoot);
@@ -431,7 +430,7 @@ const validateIocConfig = async (
   const inAppMode =
     composedManifests !== undefined && composedManifests.length > 0;
   validateRegistrationsSourceOverrides(
-    raw.registrations,
+    isRecord(raw.registrations) ? raw.registrations : undefined,
     sourceLabel,
     composedManifests,
     inAppMode,
@@ -445,11 +444,7 @@ const validateIocConfig = async (
 
   if (composedManifests !== undefined && composedManifests.length > 0) {
     const projectRoot = resolveProjectRootFromIocConfigPath(sourceLabel);
-    const localPackageName = await resolveLocalPackageName(
-      raw,
-      sourceLabel,
-      projectRoot,
-    );
+    const localPackageName = await resolveLocalPackageName(raw, projectRoot);
     validateComposedManifestsSelfReference(
       composedManifests,
       localPackageName,

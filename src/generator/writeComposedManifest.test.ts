@@ -28,9 +28,10 @@ describe("buildComposedManifestSource", () => {
       assert.match(source, /export const composedManifests = \[localManifest, mediaCoreManifest, infraManifest\] as const;/);
       assert.match(source, /export type AppCradle = LocalCradle & MediaCoreCradle & InfraCradle;/);
       assert.match(source, /type _MediaCoreExternalsSatisfied/);
-      assert.match(source, /type _InfraExternalsSatisfied/);
+      assert.match(source, /type _MediaCoreExternalsAssert = _IocExpect/);
+      assert.match(source, /type _InfraExternalsAssert = _IocExpect/);
       assert.match(source, /defaultImplementation: "mockMediaStorage"/);
-      assert.match(source, /albumRepository: "local"/);
+      assert.match(source, /"albumRepository": "local"/);
       assert.match(source, /as const satisfies ComposedRegistrationOverrides/);
     });
   });

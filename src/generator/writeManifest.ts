@@ -609,25 +609,6 @@ ${propertyLines.join("\n")}
 `;
 };
 
-const replaceFileFromTemp = async (
-  targetPath: string,
-  contents: string,
-): Promise<void> => {
-  const tempPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
-
-  try {
-    await fs.writeFile(tempPath, contents, "utf8");
-    await fs.rename(tempPath, targetPath);
-  } catch (error) {
-    try {
-      await fs.unlink(tempPath);
-    } catch {
-      // Best effort cleanup; keep original failure context.
-    }
-    throw error;
-  }
-};
-
 export type ManifestArtifactSources = {
   readonly mainSource: string;
   readonly typesSource: string;
