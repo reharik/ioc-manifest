@@ -1,0 +1,16 @@
+{
+  "name": "@example/app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@example/lib-storage": "*",
+    "@example/lib-services": "*",
+    "awilix": "^12.0.5",
+    "ioc-manifest": "file:../../../.."
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.0.0"
+  }
+}
