@@ -14,6 +14,7 @@ import {
   isIocImplementationOverride,
 } from "../config/iocConfig.js";
 import type { IocConfigOverrideField } from "../core/manifest.js";
+import { isAppMode } from "../config/iocMode.js";
 import {
   resolveDiscoveryRootDefaultLifetime,
   resolveFactorySourceAbsPath,
@@ -296,6 +297,10 @@ export const validateConfigContractsExist = (
   contractNames: Set<string>,
 ): void => {
   if (config?.registrations === undefined) {
+    return;
+  }
+
+  if (config !== undefined && isAppMode(config)) {
     return;
   }
 
