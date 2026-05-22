@@ -281,7 +281,7 @@ Group declarations are **additive across manifests**. A group named `discountStr
 
 ### 8.1 Base type identity
 
-Two packages declaring a group on the same base type must reference the same canonical source for that type. Codegen records each manifest's resolved source for the base type (e.g. `@packages/contracts#DiscountStrategy`). At composition, the library matches base types by this canonical identifier.
+Two packages declaring a group on the same base type must reference the same canonical source for that type. Codegen records each manifest's resolved source for the base type as an opaque identifier (`<absolute-declaration-path>:<TypeName>`, e.g. `/…/packages/contracts/src/DiscountStrategy.ts:DiscountStrategy`). At composition, the library matches base types by this canonical identifier.
 
 Two manifests declaring a group with the same name but different canonical base types → composition error.
 
@@ -477,7 +477,7 @@ A package may want to declare `cache?: Cache` — an external it can function wi
 
 A package may evolve its manifest's shape over time. If a host composes a manifest from a package built against an older `ioc-manifest` version, behavior is undefined.
 
-Day-one decision: every emitted manifest carries a `manifestSchemaVersion: 1` field. `registerIocFromManifest` reads this field and refuses composition if any manifest declares an incompatible version, with a clear error naming the manifest and its version. The runtime check is cheap; the cost of _not_ including the field from day one (an impossible-without-breaking-change addition later) is unacceptable.
+Day-one decision: every emitted manifest carries a `manifestSchemaVersion` field (currently `2`; group roots use the `IocGroupRootManifest` wrapper). `registerIocFromManifest` reads this field and refuses composition if any manifest declares an incompatible version, with a clear error naming the manifest and its version. The runtime check is cheap; the cost of _not_ including the field from day one (an impossible-without-breaking-change addition later) is unacceptable.
 
 Compatibility policy is forward-only for the same major version: a v1 runtime accepts v1 manifests, refuses v2. A v2 runtime accepts both v1 and v2 unless v1 is explicitly deprecated. Cross-major composition requires the host to upgrade.
 
