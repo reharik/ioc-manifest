@@ -9,7 +9,10 @@ import { MANIFEST_SCHEMA_VERSION } from "../schemaVersion.js";
 import {
   composeManifests,
   formatConflictingRegistrationKeyError,
+  formatGroupBaseTypeMismatchError,
+  formatGroupKindMismatchError,
   formatManifestSchemaVersionMismatchError,
+  formatObjectGroupKeyCollisionError,
   prepareManifestsForRegistration,
   validateManifestSchemaVersions,
 } from "./composeManifests.js";
@@ -293,6 +296,257 @@ describe("composeManifests", () => {
       assert.deepStrictEqual(
         merged.members.map((m) => m.registrationKey),
         ["widgetA", "widgetB"],
+      );
+    });
+  });
+
+  describe("When two manifests declare the same group with mismatched kinds", () => {
+    it("should throw a kind mismatch error", () => {
+      const collectionRoot = {
+        kind: "collection" as const,
+        baseType: "Base",
+        baseTypeId: "/a.ts:Base",
+        members: [],
+      };
+      const objectRoot = {
+        kind: "object" as const,
+        baseType: "Base",
+        baseTypeId: "/a.ts:Base",
+        members: {},
+      };
+      assert.throws(
+        () =>
+          composeManifests([
+            baseManifest({}, [], { g: collectionRoot }),
+            baseManifest({}, [], { g: objectRoot }),
+          ]),
+        (err: unknown) => {
+          assert.ok(err instanceof Error);
+          assert.strictEqual(
+            err.message,
+            formatGroupKindMismatchError("g", 0, "collection", 1, "object"),
+          );
+          return true;
+        },
+      );
+    });
+  });
+
+  describe("When two manifests declare the same group with mismatched base type ids", () => {
+    it("should throw with remediation hint for groupBaseTypeAliases", () => {
+      const rootA = {
+        kind: "collection" as const,
+        baseType: "Base",
+        baseTypeId: "/a.ts:Base",
+        members: [],
+      };
+      const rootB = {
+        kind: "collection" as const,
+        baseType: "Base",
+        baseTypeId: "/b.ts:Base",
+        members: [],
+      };
+      assert.throws(
+        () =>
+          composeManifests([
+            baseManifest({}, [], { strategies: rootA }),
+            baseManifest({}, [], { strategies: rootB }),
+          ]),
+        (err: unknown) => {
+          assert.ok(err instanceof Error);
+          assert.strictEqual(
+            err.message,
+            formatGroupBaseTypeMismatchError(
+              "strategies",
+              0,
+              "Base",
+              "/a.ts:Base",
+              1,
+              "Base",
+              "/b.ts:Base",
+            ),
+          );
+          assert.match(err.message, /groupBaseTypeAliases/);
+          return true;
+        },
+      );
+    });
+  });
+
+  describe("When groupBaseTypeAliases declares equivalent ids", () => {
+    it("should merge groups that would otherwise mismatch", () => {
+      const rootA = {
+        kind: "collection" as const,
+        baseType: "Base",
+        baseTypeId: "/a.ts:Base",
+        members: [{ contractName: "A", registrationKey: "implA" }],
+      };
+      const rootB = {
+        kind: "collection" as const,
+        baseType: "Base",
+        baseTypeId: "/b.ts:Base",
+        members: [{ contractName: "B", registrationKey: "implB" }],
+      };
+      const composed = composeManifests(
+        [
+          baseManifest({}, [], { strategies: rootA }),
+          baseManifest({}, [], { strategies: rootB }),
+        ],
+        {
+          groups: {
+            baseTypeAliases: {
+              strategies: ["/a.ts:Base", "/b.ts:Base"],
+            },
+          },
+        },
+      );
+      const merged = composed.strategies as {
+        members: { registrationKey: string }[];
+      };
+      assert.deepStrictEqual(
+        merged.members.map((m) => m.registrationKey),
+        ["implA", "implB"],
+      );
+    });
+  });
+
+  describe("When object group keys collide across manifests", () => {
+    it("should resolve via source override on the conflicting implementations", () => {
+      const objectA = {
+        kind: "object" as const,
+        baseType: "Svc",
+        baseTypeId: "/svc.ts:Svc",
+        members: {
+          userReadService: {
+            contractName: "UserRead",
+            registrationKey: "userReadLocal",
+          },
+        },
+      };
+      const objectB = {
+        kind: "object" as const,
+        baseType: "Svc",
+        baseTypeId: "/svc.ts:Svc",
+        members: {
+          userReadService: {
+            contractName: "UserReadRemote",
+            registrationKey: "userReadRemote",
+          },
+        },
+      };
+      const manifestA = baseManifest(
+        {
+          UserRead: {
+            userReadLocal: {
+              exportName: "buildLocal",
+              registrationKey: "userReadLocal",
+              modulePath: "a.ts",
+              relImport: "../a.js",
+              contractName: "UserRead",
+              implementationName: "userReadLocal",
+              lifetime: "singleton",
+              moduleIndex: 0,
+            },
+          },
+        },
+        [],
+        { readServices: objectA },
+      );
+      const manifestB = baseManifest(
+        {
+          UserReadRemote: {
+            userReadRemote: {
+              exportName: "buildRemote",
+              registrationKey: "userReadRemote",
+              modulePath: "b.ts",
+              relImport: "../b.js",
+              contractName: "UserReadRemote",
+              implementationName: "userReadRemote",
+              lifetime: "singleton",
+              moduleIndex: 0,
+            },
+          },
+        },
+        [],
+        { readServices: objectB },
+      );
+      const composed = composeManifests([manifestA, manifestB], {
+        composedPackageNames: ["@remote/pkg"],
+        contracts: {
+          UserRead: { sourceOverride: { userReadLocal: "local" } },
+        },
+      });
+      const readServices = composed.readServices as {
+        members: Record<string, { registrationKey: string }>;
+      };
+      assert.strictEqual(
+        readServices.members.userReadService?.registrationKey,
+        "userReadLocal",
+      );
+    });
+
+    it("should error when source override is not configured", () => {
+      const objectRoot = {
+        kind: "object" as const,
+        baseType: "Svc",
+        baseTypeId: "/svc.ts:Svc",
+        members: {
+          dup: { contractName: "A", registrationKey: "regA" },
+        },
+      };
+      const manifestA = baseManifest(
+        {
+          A: {
+            a: {
+              exportName: "buildA",
+              registrationKey: "regA",
+              modulePath: "a.ts",
+              relImport: "../a.js",
+              contractName: "A",
+              implementationName: "a",
+              lifetime: "singleton",
+              moduleIndex: 0,
+            },
+          },
+        },
+        [],
+        { g: objectRoot },
+      );
+      const manifestB = baseManifest(
+        {
+          B: {
+            b: {
+              exportName: "buildB",
+              registrationKey: "regB",
+              modulePath: "b.ts",
+              relImport: "../b.js",
+              contractName: "B",
+              implementationName: "b",
+              lifetime: "singleton",
+              moduleIndex: 0,
+            },
+          },
+        },
+        [],
+        {
+          g: {
+            ...objectRoot,
+            members: {
+              dup: { contractName: "B", registrationKey: "regB" },
+            },
+          },
+        },
+      );
+      assert.throws(
+        () => composeManifests([manifestA, manifestB]),
+        (err: unknown) => {
+          assert.ok(err instanceof Error);
+          assert.strictEqual(
+            err.message,
+            formatObjectGroupKeyCollisionError("g", "dup", 0, 1),
+          );
+          return true;
+        },
       );
     });
   });

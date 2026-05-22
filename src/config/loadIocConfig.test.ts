@@ -256,4 +256,41 @@ describe("resolveIocConfigPath", () => {
       assert.equal(resolved, path.join(root, "cfg", "ioc.config.ts"));
     });
   });
+
+  describe("When groupBaseTypeAliases is set in library mode", () => {
+    it("should reject the field", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-alias-lib-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default {
+          discovery: { scanDirs: "src" },
+          groupBaseTypeAliases: { g: ["/a:Foo", "/b:Foo"] },
+        };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /groupBaseTypeAliases is only valid in app mode/,
+      );
+    });
+  });
+
+  describe("When groupBaseTypeAliases has fewer than two entries", () => {
+    it("should reject the alias set", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-alias-short-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default {
+          discovery: { scanDirs: "src" },
+          composedManifests: ["@pkg/a"],
+          groupBaseTypeAliases: { g: ["/only:Foo"] },
+        };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /at least 2 canonical identifier strings/,
+      );
+    });
+  });
 });
