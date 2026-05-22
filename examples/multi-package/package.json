@@ -6,9 +6,11 @@
     "packages/*"
   ],
   "scripts": {
+    "setup": "node scripts/setup.mjs",
     "gen": "node scripts/gen.mjs",
     "typecheck": "tsc -p packages/app/tsconfig.json",
-    "start": "tsx packages/app/src/bootstrap.ts"
+    "start": "tsx packages/app/src/bootstrap.ts",
+    "typecheck:broken-expect-fail": "node scripts/expect-broken-typecheck.mjs"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

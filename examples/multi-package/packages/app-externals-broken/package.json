@@ -1,0 +1,15 @@
+{
+  "name": "@example/app-externals-broken",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@example/externals-probe": "*",
+    "@example/lib-storage": "*",
+    "@example/lib-services": "*",
+    "ioc-manifest": "file:../../../.."
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
