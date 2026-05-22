@@ -1,0 +1,9 @@
+{
+  "name": "@example/lib-contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./types/LoggingService": "./src/types/LoggingService.ts"
+  }
+}

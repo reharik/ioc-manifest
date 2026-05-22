@@ -11,4 +11,10 @@ export default defineIocConfig({
       localStorage: { default: true },
     },
   },
+  groups: {
+    loggers: {
+      kind: "collection",
+      baseType: "LoggingService",
+    },
+  },
 });

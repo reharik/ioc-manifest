@@ -6,4 +6,10 @@ export default defineIocConfig({
     generatedDir: "src/generated",
     includes: ["**/*.{ts,tsx}"],
   },
+  groups: {
+    loggers: {
+      kind: "collection",
+      baseType: "LoggingService",
+    },
+  },
 });

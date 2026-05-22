@@ -11,5 +11,8 @@ export default defineIocConfig({
     Storage: {
       s3Storage: { default: true },
     },
+    LoggingService: {
+      loggingService: { default: true },
+    },
   },
 });

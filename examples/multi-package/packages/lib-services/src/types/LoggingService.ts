@@ -1,3 +1,1 @@
-export type LoggingService = {
-  ping: () => string;
-};
+export type { LoggingService } from "@example/lib-contracts/types/LoggingService.js";

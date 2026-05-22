@@ -1,5 +1,5 @@
+import type { LoggingService } from "@example/lib-contracts/types/LoggingService.js";
 import type { Logger } from "../types/Logger.js";
-import type { LoggingService } from "../types/LoggingService.js";
 
 type LoggingServiceDeps = {
   logger: Logger;
@@ -8,5 +8,6 @@ type LoggingServiceDeps = {
 export const buildLoggingService = ({
   logger,
 }: LoggingServiceDeps): LoggingService => ({
+  id: "loggingService",
   ping: () => logger.log("ping"),
 });

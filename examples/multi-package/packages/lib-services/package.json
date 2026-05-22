@@ -15,6 +15,7 @@
     }
   },
   "dependencies": {
+    "@example/lib-contracts": "*",
     "@example/lib-storage": "*"
   },
   "devDependencies": {

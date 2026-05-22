@@ -7,6 +7,12 @@
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "paths": {
+      "@example/lib-contracts/types/LoggingService": [
+        "./packages/lib-contracts/src/types/LoggingService.ts"
+      ],
+      "@example/lib-contracts/*": ["./packages/lib-contracts/src/*"]
+    }
   }
 }
