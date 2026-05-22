@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import type { IocGroupsManifest } from "../core/manifest.js";
+import type { DemandSupplyAnalysisResult } from "./analyzeDemandSupply/index.js";
 import type { DiscoveredFactory } from "./types.js";
 import type { ResolvedContractRegistration } from "./resolveRegistrationPlan.js";
 import { writeManifest } from "./writeManifest.js";
@@ -34,6 +35,49 @@ const mkPlan = (
     accessKey: partial.accessKey ?? contractKey,
   };
 };
+
+const mkDemandSupplyFromPlans = (
+  plans: readonly ResolvedContractRegistration[],
+): DemandSupplyAnalysisResult => {
+  const byKey = new Map<
+    string,
+    DemandSupplyAnalysisResult["entries"][number]
+  >();
+
+  for (const plan of plans) {
+    for (const impl of plan.implementations) {
+      byKey.set(impl.registrationKey, {
+        key: impl.registrationKey,
+        typeRef: {
+          typeName: plan.contractName,
+          relImport: plan.contractTypeRelImport,
+          useDefaultImport: false,
+        },
+        classification: "local",
+      });
+    }
+  }
+
+  const entries = Array.from(byKey.values()).sort((a, b) =>
+    a.key.localeCompare(b.key),
+  );
+  return { entries, externalKeys: [] };
+};
+
+const writeWithDemandSupply = async (
+  acceptedFactories: DiscoveredFactory[],
+  plans: ResolvedContractRegistration[],
+  groups: IocGroupsManifest | undefined,
+  manifestOutPath: string,
+): Promise<void> =>
+  writeManifest(
+    acceptedFactories,
+    plans,
+    groups,
+    manifestOutPath,
+    "ioc-manifest",
+    { demandSupply: mkDemandSupplyFromPlans(plans) },
+  );
 
 describe("writeManifest", () => {
   describe("When writing generated outputs repeatedly", () => {
@@ -72,23 +116,21 @@ describe("writeManifest", () => {
         }),
       ];
 
-      await writeManifest(
+      await writeWithDemandSupply(
         acceptedFactories,
         plans,
         undefined,
         manifestOutPath,
-        "ioc-manifest",
       );
       const manifestFirst = await fs.readFile(manifestOutPath, "utf8");
       const typesPath = path.join(generatedDir, "ioc-registry.types.ts");
       const typesFirst = await fs.readFile(typesPath, "utf8");
 
-      await writeManifest(
+      await writeWithDemandSupply(
         acceptedFactories,
         plans,
         undefined,
         manifestOutPath,
-        "ioc-manifest",
       );
       const manifestSecond = await fs.readFile(manifestOutPath, "utf8");
       const typesSecond = await fs.readFile(typesPath, "utf8");
@@ -138,12 +180,11 @@ describe("writeManifest", () => {
         }),
       ];
 
-      await writeManifest(
+      await writeWithDemandSupply(
         acceptedFactories,
         plans,
         undefined,
         manifestOutPath,
-        "ioc-manifest",
       );
 
       const manifestSource = await fs.readFile(manifestOutPath, "utf8");
@@ -151,15 +192,103 @@ describe("writeManifest", () => {
       assert.ok(!manifestSource.includes("OLD_CONTENT_SHOULD_BE_REPLACED"));
       assert.ok(!typesSource.includes("OLD_TYPES_SHOULD_BE_REPLACED"));
       assert.ok(manifestSource.includes("export const iocManifest"));
-      assert.ok(typesSource.includes("export interface IocGeneratedTypes"));
-      assert.ok(
-        typesSource.includes("export type IocGeneratedCradle = IocGeneratedTypes"),
-      );
+      assert.ok(typesSource.includes("export interface IocGeneratedCradle"));
+      assert.ok(typesSource.includes("export interface IocExternals"));
 
       const files = await fs.readdir(generatedDir);
       assert.ok(
         files.every((name) => !name.includes(".tmp-")),
         "temporary files should not remain after successful replacement",
+      );
+    });
+  });
+
+  describe("When demand supply includes external keys", () => {
+    it("should emit IocExternals with only external demanded keys", async () => {
+      const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ioc-write-manifest-"));
+      const generatedDir = path.join(tempRoot, "src", "generated");
+      await fs.mkdir(generatedDir, { recursive: true });
+      const manifestOutPath = path.join(generatedDir, "ioc-manifest.ts");
+
+      const acceptedFactories: DiscoveredFactory[] = [
+        mkFactory({
+          contractName: "UserService",
+          implementationName: "userService",
+          registrationKey: "userService",
+          modulePath: "fixtures/u.ts",
+          relImport: "../fixtures/u.js",
+        }),
+      ];
+      const plans: ResolvedContractRegistration[] = [
+        mkPlan({
+          contractName: "UserService",
+          contractTypeRelImport: "../fixtures/contracts.js",
+          contractKey: "userService",
+          defaultImplementationName: "userService",
+          implementations: [
+            {
+              implementationName: "userService",
+              exportName: "buildUserService",
+              modulePath: "fixtures/u.ts",
+              relImport: "../fixtures/u.js",
+              registrationKey: "userService",
+              lifetime: "singleton",
+            },
+          ],
+        }),
+      ];
+
+      const demandSupply: DemandSupplyAnalysisResult = {
+        entries: [
+          {
+            key: "database",
+            typeRef: {
+              typeName: "Database",
+              relImport: "../fixtures/contracts.js",
+              useDefaultImport: false,
+            },
+            classification: "external",
+          },
+          {
+            key: "logger",
+            typeRef: {
+              typeName: "Logger",
+              relImport: "../fixtures/contracts.js",
+              useDefaultImport: false,
+            },
+            classification: "external",
+          },
+          {
+            key: "userService",
+            typeRef: {
+              typeName: "UserService",
+              relImport: "../fixtures/contracts.js",
+              useDefaultImport: false,
+            },
+            classification: "local",
+          },
+        ],
+        externalKeys: ["database", "logger"],
+      };
+
+      await writeManifest(
+        acceptedFactories,
+        plans,
+        undefined,
+        manifestOutPath,
+        "ioc-manifest",
+        { demandSupply },
+      );
+
+      const typesSource = await fs.readFile(
+        path.join(generatedDir, "ioc-registry.types.ts"),
+        "utf8",
+      );
+      assert.match(typesSource, /database: Database; \/\/ externally provided/);
+      assert.match(typesSource, /logger: Logger; \/\/ externally provided/);
+      assert.match(
+        typesSource,
+        /export interface IocExternals \{\n  database: Database;\n  logger: Logger;\n\}/,
       );
     });
   });
@@ -200,25 +329,24 @@ describe("writeManifest", () => {
         }),
       ];
 
-      await writeManifest(
+      await writeWithDemandSupply(
         acceptedFactories,
         plans,
         undefined,
         manifestOutPath,
-        "ioc-manifest",
       );
 
       const typesSource = await fs.readFile(
         path.join(generatedDir, "ioc-registry.types.ts"),
         "utf8",
       );
-      assert.match(typesSource, /\bonlyOne:\s*OnlyOne\b/);
+      assert.match(typesSource, /\bonlyOne:\s*OnlyOne\b.*\/\/ locally supplied/);
       assert.ok(!typesSource.includes("onlyOnes:"));
     });
   });
 
   describe("When a contract has multiple implementations", () => {
-    it("should emit only the contract default and collection keys on IocGeneratedTypes, not each registration key", async () => {
+    it("should emit factory supply keys plus contract default and collection keys on IocGeneratedCradle", async () => {
       const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ioc-write-manifest-"));
       const generatedDir = path.join(tempRoot, "src", "generated");
       await fs.mkdir(generatedDir, { recursive: true });
@@ -268,22 +396,27 @@ describe("writeManifest", () => {
         }),
       ];
 
-      await writeManifest(
+      await writeWithDemandSupply(
         acceptedFactories,
         plans,
         undefined,
         manifestOutPath,
-        "ioc-manifest",
       );
 
       const typesSource = await fs.readFile(
         path.join(generatedDir, "ioc-registry.types.ts"),
         "utf8",
       );
-      assert.match(typesSource, /\bwidget:\s*Widget\b/);
-      assert.match(typesSource, /\bwidgets:\s*ReadonlyArray<\s*Widget\s*>\s*;/);
+      assert.match(typesSource, /\bwidget:\s*Widget\b.*\/\/ locally supplied/);
+      assert.match(
+        typesSource,
+        /\bwidgets:\s*ReadonlyArray<\s*Widget\s*>;\s*\/\/ locally supplied/,
+      );
+      assert.match(
+        typesSource,
+        /\bprimaryWidget:\s*Widget\b.*\/\/ locally supplied/,
+      );
       assert.ok(!typesSource.includes("Record<"));
-      assert.ok(!typesSource.includes("primaryWidget: Widget"));
     });
 
     it("should emit accessKey as the singular cradle property when it differs from the convention key", async () => {
@@ -322,19 +455,18 @@ describe("writeManifest", () => {
         }),
       ];
 
-      await writeManifest(
+      await writeWithDemandSupply(
         acceptedFactories,
         plans,
         undefined,
         manifestOutPath,
-        "ioc-manifest",
       );
 
       const typesSource = await fs.readFile(
         path.join(generatedDir, "ioc-registry.types.ts"),
         "utf8",
       );
-      assert.match(typesSource, /\bdatabase:\s*Knex\b/);
+      assert.match(typesSource, /\bdatabase:\s*Knex\b.*\/\/ locally supplied/);
       assert.ok(!/\bknex:\s*Knex\b/.test(typesSource));
     });
 
@@ -398,19 +530,21 @@ describe("writeManifest", () => {
         },
       };
 
-      await writeManifest(
+      await writeWithDemandSupply(
         acceptedFactories,
         plans,
         groups,
         manifestOutPath,
-        "ioc-manifest",
       );
 
       const typesSource = await fs.readFile(
         path.join(generatedDir, "ioc-registry.types.ts"),
         "utf8",
       );
-      assert.match(typesSource, /\bwidgets:\s*ReadonlyArray<\s*Widget\s*>\s*;/);
+      assert.match(
+        typesSource,
+        /\bwidgets:\s*ReadonlyArray<\s*Widget\s*>;\s*\/\/ locally supplied/,
+      );
       assert.match(typesSource, /\bwidgetGroup:\s*ReadonlyArray</);
       assert.match(typesSource, /\bwidgetObjectGroup:\s*\{/);
       assert.match(typesSource, /\bwidget:\s*Widget\b/);
