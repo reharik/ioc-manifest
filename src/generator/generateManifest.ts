@@ -199,7 +199,10 @@ export const generateManifest = async (
 
   let composedOutPath: string | undefined;
   if (config !== undefined && isAppMode(config)) {
-    const configPath = resolveIocConfigPath(resolvedProjectRoot, overrides?.iocConfigPath);
+    const configPath = resolveIocConfigPath(
+      resolvedProjectRoot,
+      overrides?.iocConfigPath,
+    );
     await validateGroupBaseTypeAliasKeysAtCodegen(
       resolvedProjectRoot,
       config,
@@ -208,12 +211,12 @@ export const generateManifest = async (
     const composedPackages = resolveComposedPackageSpecs(
       config.composedManifests!,
     );
-    const overrides = buildComposedRegistrationOverridesFromConfig(config);
+    const composedOverrides = buildComposedRegistrationOverridesFromConfig(config);
     composedOutPath = path.join(generatedDir, "ioc-composed.ts");
     const composedSource = buildComposedManifestSource({
       generatedDir,
       composedPackages,
-      overrides,
+      overrides: composedOverrides,
     });
     filesToWrite.push({ path: composedOutPath, contents: composedSource });
   }

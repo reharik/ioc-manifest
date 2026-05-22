@@ -103,7 +103,6 @@ const resolveBaseTypeViaScanRootImports = (
   program: ts.Program,
   checker: ts.TypeChecker,
   typeName: string,
-  generatedDir: string,
   scanDirs: readonly ResolvedScanDir[],
 ): string | undefined => {
   const host = ts.createCompilerHost(program.getCompilerOptions());
@@ -222,7 +221,6 @@ export const resolveCanonicalBaseTypeId = (
     context.program,
     checker,
     typeName,
-    context.generatedDir,
     context.scanDirs,
   );
   if (importFile !== undefined) {

@@ -11,7 +11,6 @@ import {
   type IocContractManifest,
   type IocGroupCollectionManifest,
   type IocGroupLeafManifest,
-  type IocGroupNodeManifest,
   type IocGroupObjectManifest,
   type IocGroupRootManifest,
   type IocModuleNamespace,
@@ -607,10 +606,13 @@ export const composeManifests = (
         const existing = keyOwners.get(key);
         if (existing !== undefined) {
           if (existing.kind === "groupRoot") {
-            throwGroupRootKeyConflict(key, existing, {
-              kind: "groupRoot",
-              originalIndex,
-            });
+            throw new Error(
+              [
+                `[ioc] Conflicting registration key ${JSON.stringify(key)} across manifests:`,
+                `  - Group root declared by manifest at index ${existing.originalIndex}`,
+                `  - Implementation supplied by manifest at index ${originalIndex} (contract: ${contractName}, implementation: ${implementationName})`,
+              ].join("\n"),
+            );
           } else {
             const incomingOwner: KeyOwner & { kind: "implementation" } = {
               kind: "implementation",
