@@ -32,6 +32,7 @@ import {
 import type { ManifestRuntimePaths } from "./manifestPaths.js";
 import { buildGroupPlan } from "../groups/resolveGroupPlan.js";
 import { isAppMode, isLibraryMode, resolveManifestExportPath } from "../config/iocMode.js";
+import { loadComposedManifestContractNames } from "./loadComposedManifestContracts.js";
 import { buildComposedRegistrationOverridesFromConfig } from "./buildComposedRegistrationOverrides.js";
 import {
   buildComposedManifestSource,
@@ -145,9 +146,18 @@ export const generateManifest = async (
     config,
   );
 
+  const composedContractNames =
+    config !== undefined && isAppMode(config)
+      ? loadComposedManifestContractNames(
+          projectRoot,
+          config.composedManifests!,
+        )
+      : undefined;
+
   const plans = buildRegistrationPlan(contractMap, config, {
     projectRoot,
     scanDirs,
+    composedContractNames,
   });
   const groupResult = buildGroupPlan(config?.groups, plans, {
     program,

@@ -14,7 +14,7 @@ import {
   isIocImplementationOverride,
 } from "../config/iocConfig.js";
 import type { IocConfigOverrideField } from "../core/manifest.js";
-import { isAppMode } from "../config/iocMode.js";
+import type { ComposedManifestContractNames } from "./loadComposedManifestContracts.js";
 import {
   resolveDiscoveryRootDefaultLifetime,
   resolveFactorySourceAbsPath,
@@ -36,6 +36,8 @@ export type IocRegistrationLifetimeSource =
 export type RegistrationPlanLifetimeContext = {
   projectRoot: string;
   scanDirs: readonly ResolvedScanDir[];
+  /** Contract names from composed package manifests (app mode). */
+  composedContractNames?: ComposedManifestContractNames;
 };
 
 export type ResolvedImplementationEntry = {
@@ -292,24 +294,109 @@ const mergeContractOverrides = (
   return out;
 };
 
+const suggestContractName = (
+  unknown: string,
+  candidates: readonly string[],
+): string | undefined => {
+  const lower = unknown.toLowerCase();
+  const exact = candidates.find((c) => c.toLowerCase() === lower);
+  if (exact !== undefined) {
+    return exact;
+  }
+
+  let best: string | undefined;
+  let bestDist = 3;
+  for (const candidate of candidates) {
+    const dist = levenshteinDistance(unknown, candidate);
+    if (dist > 0 && dist < bestDist) {
+      bestDist = dist;
+      best = candidate;
+    }
+  }
+  return bestDist <= 2 ? best : undefined;
+};
+
+const levenshteinDistance = (a: string, b: string): number => {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  const dp: number[][] = Array.from({ length: rows }, () =>
+    Array.from({ length: cols }, () => 0),
+  );
+  for (let i = 0; i < rows; i++) {
+    dp[i][0] = i;
+  }
+  for (let j = 0; j < cols; j++) {
+    dp[0][j] = j;
+  }
+  for (let i = 1; i < rows; i++) {
+    for (let j = 1; j < cols; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost,
+      );
+    }
+  }
+  return dp[a.length][b.length];
+};
+
+const formatComposedContractList = (
+  composed: ComposedManifestContractNames,
+): string => {
+  const names: string[] = [];
+  for (const [, contractNames] of Array.from(composed.byPackage.entries()).sort(
+    ([a], [b]) => a.localeCompare(b),
+  )) {
+    for (const name of Array.from(contractNames).sort((x, y) =>
+      x.localeCompare(y),
+    )) {
+      names.push(name);
+    }
+  }
+  return names.length > 0 ? names.join(", ") : "(none)";
+};
+
 export const validateConfigContractsExist = (
   config: IocConfig | undefined,
-  contractNames: Set<string>,
+  localContractNames: Set<string>,
+  composedContractNames?: ComposedManifestContractNames,
 ): void => {
   if (config?.registrations === undefined) {
     return;
   }
 
-  if (config !== undefined && isAppMode(config)) {
-    return;
-  }
-
   for (const contract of Object.keys(config.registrations)) {
-    if (!contractNames.has(contract)) {
-      throw new Error(
-        `[ioc-config] registrations["${contract}"] refers to a contract that was not discovered. Discovered contracts: ${Array.from(contractNames).sort().join(", ")}`,
-      );
+    const knownLocal = localContractNames.has(contract);
+    const knownComposed =
+      composedContractNames?.all.has(contract) ?? false;
+    if (knownLocal || knownComposed) {
+      continue;
     }
+
+    const localList =
+      Array.from(localContractNames).sort((a, b) => a.localeCompare(b)).join(", ") ||
+      "(none)";
+    const composedList =
+      composedContractNames !== undefined
+        ? formatComposedContractList(composedContractNames)
+        : "(none)";
+    const candidates = [
+      ...Array.from(localContractNames),
+      ...(composedContractNames !== undefined
+        ? Array.from(composedContractNames.all)
+        : []),
+    ];
+    const suggestion = suggestContractName(contract, candidates);
+    const lines = [
+      `[ioc-config] registrations references unknown contract ${JSON.stringify(contract)}.`,
+      `Known local contracts: ${localList}.`,
+      `Known contracts from composed packages: ${composedList}.`,
+    ];
+    if (suggestion !== undefined) {
+      lines.push(`Did you mean: ${JSON.stringify(suggestion)}?`);
+    }
+    throw new Error(lines.join("\n"));
   }
 };
 
@@ -526,10 +613,15 @@ const validateGlobalNamespaceCollisions = (
 const validateIocConfigSemantics = (
   contractMap: Map<string, Map<string, DiscoveredFactory>>,
   config: IocConfig | undefined,
+  composedContractNames?: ComposedManifestContractNames,
 ): Map<string, Map<string, DiscoveredFactory>> => {
   const contractNames = new Set(contractMap.keys());
 
-  validateConfigContractsExist(config, contractNames);
+  validateConfigContractsExist(
+    config,
+    contractNames,
+    composedContractNames,
+  );
   validateConfigImplementationKeys(config, contractMap);
   validateAtMostOneConfigDefaultPerContract(config);
 
@@ -561,7 +653,11 @@ export const buildRegistrationPlan = (
   config?: IocConfig,
   lifetimeContext?: RegistrationPlanLifetimeContext,
 ): ResolvedContractRegistration[] => {
-  const mergedByContract = validateIocConfigSemantics(contractMap, config);
+  const mergedByContract = validateIocConfigSemantics(
+    contractMap,
+    config,
+    lifetimeContext?.composedContractNames,
+  );
 
   const sortedContracts = Array.from(mergedByContract.keys()).sort((a, b) =>
     a.localeCompare(b),
