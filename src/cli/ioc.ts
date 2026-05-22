@@ -5,6 +5,7 @@
  * - `ioc generate` — runs the full generation pipeline (discover, plan, emit).
  * - `ioc inspect` — human-readable contract / implementation summary + manifest validation.
  * - `ioc inspect --discovery` — re-runs source discovery (no manifest read) for drift analysis.
+ * - `ioc validate` — app mode only: cross-manifest composition checks without writing files (CI gate).
  *
  * Resolves config like generation (`tryLoadIocConfig`, optional `--config`), walking up from cwd
  * (or `--project`) to find `ioc.config.ts` in a monorepo.
@@ -35,6 +36,10 @@ import {
   resolveDiscoveryManifestContext,
   runDiscoveryAnalysis,
 } from "../inspection/runDiscoveryAnalysis.js";
+import {
+  printValidateResult,
+  runValidate,
+} from "../validate/runValidate.js";
 
 type GeneratedMainManifestModule = {
   iocManifest: IocGeneratedContainerManifest;
@@ -97,6 +102,35 @@ const main = async (): Promise<void> => {
           ? { projectRoot: path.resolve(cli.projectDir) }
           : undefined,
     });
+    return;
+  }
+
+  if (parsed.kind === "validate") {
+    /**
+     * `validate` is separate from `generate` so dev codegen can tolerate transient sibling drift;
+     * validate is the pre-merge / pre-deploy gate that reports every composition issue at once.
+     * Run after `ioc generate`. Does not modify any files.
+     */
+    const cli = parsed.options;
+    const searchStart = path.resolve(cli.projectDir ?? process.cwd());
+    const cfgPath = resolveIocConfigPath(searchStart, cli.iocConfigPath);
+    const config = await tryLoadIocConfig(cfgPath);
+    if (config === undefined) {
+      throw new Error(
+        `No ioc config found at ${cfgPath}. Pass --config or run from a project with ioc.config.ts.`,
+      );
+    }
+    const projectRoot = resolveProjectRootFromIocConfigPath(cfgPath);
+    const result = await runValidate({
+      projectRoot,
+      configPath: cfgPath,
+      config,
+      json: cli.json,
+    });
+    const code = printValidateResult(result, cli.json);
+    if (code !== 0) {
+      process.exitCode = code;
+    }
     return;
   }
 
