@@ -148,7 +148,7 @@ export const generateManifest = async (
 
   const composedContractNames =
     config !== undefined && isAppMode(config)
-      ? loadComposedManifestContractNames(
+      ? await loadComposedManifestContractNames(
           projectRoot,
           config.composedManifests!,
         )

@@ -7,31 +7,34 @@ import { loadComposedManifestContractNames } from "./loadComposedManifestContrac
 
 describe("loadComposedManifestContractNames", () => {
   describe("When a package exports iocManifest with contracts", () => {
-    it("should collect contract names from the resolved manifest module", () => {
+    it("should collect contract names from the generated manifest source", async () => {
       const root = mkdtempSync(path.join(tmpdir(), "ioc-composed-contracts-"));
       const pkgDir = path.join(root, "node_modules", "@test", "lib-a");
       mkdirSync(pkgDir, { recursive: true });
       writeFileSync(
         path.join(root, "package.json"),
-        JSON.stringify({ name: "test-host", type: "commonjs" }),
+        JSON.stringify({ name: "test-host", type: "module" }),
       );
       writeFileSync(
         path.join(pkgDir, "package.json"),
         JSON.stringify({
           name: "@test/lib-a",
-          exports: { "./iocManifest": "./ioc-manifest.cjs" },
+          exports: { "./iocManifest": "./ioc-manifest.ts" },
         }),
       );
       writeFileSync(
-        path.join(pkgDir, "ioc-manifest.cjs"),
-        `exports.iocManifest = {
+        path.join(pkgDir, "ioc-manifest.ts"),
+        `export const iocManifest = {
   manifestSchemaVersion: 1,
   moduleImports: [],
-  contracts: { Storage: { localStorage: {} }, UploadService: { uploadService: {} } },
+  contracts: {
+    Storage: { localStorage: {} },
+    UploadService: { uploadService: {} },
+  },
 };`,
       );
 
-      const result = loadComposedManifestContractNames(root, ["@test/lib-a"]);
+      const result = await loadComposedManifestContractNames(root, ["@test/lib-a"]);
       assert.deepStrictEqual(
         Array.from(result.all).sort((a, b) => a.localeCompare(b)),
         ["Storage", "UploadService"],
