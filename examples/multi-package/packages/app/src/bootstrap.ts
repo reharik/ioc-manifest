@@ -23,7 +23,10 @@ const main = (): void => {
   );
 
   const loggers = container.resolve("loggers") as { id: string }[];
-  const loggerIds = loggers.map((l) => l.id).sort((a, b) => a.localeCompare(b));
+  const loggerIds = loggers
+    .map((l) => l.id)
+    .filter((id) => id.length > 0)
+    .sort((a, b) => a.localeCompare(b));
   console.log(`Loggers in group: ${loggerIds.join(", ")}`);
 };
 

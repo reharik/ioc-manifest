@@ -11,8 +11,11 @@ export default defineIocConfig({
     Storage: {
       s3Storage: { default: true },
     },
+    Logger: {
+      consoleLogger: { default: true },
+    },
     LoggingService: {
-      loggingService: { default: true },
+      requestTracingLogger: { default: true },
     },
   },
 });
