@@ -25,9 +25,19 @@ import {
 } from "./manifestOptions.js";
 import { analyzeDemandSupply } from "./analyzeDemandSupply/index.js";
 import { buildRegistrationPlan } from "./resolveRegistrationPlan.js";
-import { writeManifest } from "./writeManifest.js";
+import {
+  buildManifestArtifactSources,
+  writeGeneratedFilesAtomically,
+} from "./writeManifest.js";
 import type { ManifestRuntimePaths } from "./manifestPaths.js";
 import { buildGroupPlan } from "../groups/resolveGroupPlan.js";
+import { isAppMode, isLibraryMode, resolveManifestExportPath } from "../config/iocMode.js";
+import { buildComposedRegistrationOverridesFromConfig } from "./buildComposedRegistrationOverrides.js";
+import {
+  buildComposedManifestSource,
+  removeComposedManifestIfPresent,
+  resolveComposedPackageSpecs,
+} from "./writeComposedManifest.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../../package.json") as { name?: unknown };
@@ -153,30 +163,85 @@ export const generateManifest = async (
     groupsManifest: groupResult?.manifest,
   });
 
-  await writeManifest(
+  const writeOptions = {
+    demandSupply,
+    registryTypesBuildContext: {
+      program,
+      generatedDir,
+      scanDirs,
+    },
+  };
+
+  const artifactSources = buildManifestArtifactSources(
     acceptedFactories,
     plans,
     groupResult?.manifest,
     manifestOutPath,
     packageName,
-    {
-      demandSupply,
-      registryTypesBuildContext: {
-        program,
-        generatedDir,
-        scanDirs,
-      },
-    },
+    writeOptions,
   );
+
+  const filesToWrite: { path: string; contents: string }[] = [
+    { path: manifestOutPath, contents: artifactSources.mainSource },
+    { path: artifactSources.typesPath, contents: artifactSources.typesSource },
+  ];
+
+  let composedOutPath: string | undefined;
+  if (config !== undefined && isAppMode(config)) {
+    const composedPackages = resolveComposedPackageSpecs(
+      config.composedManifests!,
+    );
+    const overrides = buildComposedRegistrationOverridesFromConfig(config);
+    composedOutPath = path.join(generatedDir, "ioc-composed.ts");
+    const composedSource = buildComposedManifestSource({
+      generatedDir,
+      composedPackages,
+      overrides,
+    });
+    filesToWrite.push({ path: composedOutPath, contents: composedSource });
+  }
+
+  try {
+    await writeGeneratedFilesAtomically(filesToWrite);
+  } catch (error) {
+    if (composedOutPath !== undefined) {
+      await removeComposedManifestIfPresent(generatedDir);
+    }
+    throw error;
+  }
+
+  if (config === undefined || isLibraryMode(config)) {
+    await removeComposedManifestIfPresent(generatedDir);
+  }
 
   formatGeneratedFileWithPrettier(manifestOutPath, projectRoot);
+  formatGeneratedFileWithPrettier(artifactSources.typesPath, projectRoot);
+  if (composedOutPath !== undefined) {
+    formatGeneratedFileWithPrettier(composedOutPath, projectRoot);
+  }
 
-  formatGeneratedFileWithPrettier(
-    path.join(path.dirname(manifestOutPath), "ioc-registry.types.ts"),
-    projectRoot,
-  );
-
+  const relManifest = path.relative(projectRoot, manifestOutPath);
   console.log(
-    `Generated ${path.relative(projectRoot, manifestOutPath)} — ${acceptedFactories.length} module factory(ies), ${contractMap.size} contract(s).`,
+    `Generated ${relManifest} — ${acceptedFactories.length} module factory(ies), ${contractMap.size} contract(s).`,
   );
+
+  if (config !== undefined && isLibraryMode(config)) {
+    console.log(
+      `Manifest export path (configure package.json exports): ${resolveManifestExportPath(config)}`,
+    );
+  }
+
+  if (config !== undefined && isAppMode(config)) {
+    console.log(
+      `App mode: composed ${config.composedManifests!.length} package manifest(s)`,
+    );
+    for (const pkg of config.composedManifests!) {
+      console.log(`  - ${pkg} → import from '${pkg}/iocManifest'`);
+    }
+    if (composedOutPath !== undefined) {
+      console.log(
+        `Generated ${path.relative(projectRoot, composedOutPath)}`,
+      );
+    }
+  }
 };

@@ -628,18 +628,23 @@ const replaceFileFromTemp = async (
   }
 };
 
+export type ManifestArtifactSources = {
+  readonly mainSource: string;
+  readonly typesSource: string;
+  readonly typesPath: string;
+};
+
 /**
- * Writes the two generated artifacts next to each other. `manifestImportFromPackage` is the
- * package name (or path) used in the `import type` for `IocGeneratedContainerManifest`.
+ * Builds manifest and registry type sources without writing to disk.
  */
-export const writeManifest = async (
+export const buildManifestArtifactSources = (
   acceptedFactories: DiscoveredFactory[],
   plans: ResolvedContractRegistration[],
   groupsManifest: IocGroupsManifest | undefined,
   manifestOutPath: string,
   manifestImportFromPackage: string,
-  options?: WriteManifestOptions,
-): Promise<void> => {
+  options: WriteManifestOptions,
+): ManifestArtifactSources => {
   const sortedFactories = sortFactoriesForManifest(acceptedFactories);
   const modules = uniqueModuleRows(sortedFactories);
   const moduleIndexByPath = buildModuleIndexByPath(modules);
@@ -675,13 +680,11 @@ export const writeManifest = async (
     moduleArrayLines,
   );
 
-  await replaceFileFromTemp(manifestOutPath, mainSource);
-
   const typesPath = path.join(
     path.dirname(manifestOutPath),
     "ioc-registry.types.ts",
   );
-  if (options?.demandSupply === undefined) {
+  if (options.demandSupply === undefined) {
     throw new Error(
       "[ioc] internal error: demandSupply analysis is required for registry type generation",
     );
@@ -693,5 +696,70 @@ export const writeManifest = async (
     options.demandSupply,
     options.registryTypesBuildContext,
   );
-  await replaceFileFromTemp(typesPath, typesSource);
+
+  return { mainSource, typesSource, typesPath };
+};
+
+export type GeneratedFileWrite = {
+  readonly path: string;
+  readonly contents: string;
+};
+
+export const writeGeneratedFilesAtomically = async (
+  files: readonly GeneratedFileWrite[],
+): Promise<void> => {
+  const pending: { readonly path: string; readonly tempPath: string }[] = [];
+
+  try {
+    for (const file of files) {
+      const tempPath = `${file.path}.tmp-${process.pid}-${Date.now()}-${pending.length}`;
+      await fs.writeFile(tempPath, file.contents, "utf8");
+      pending.push({ path: file.path, tempPath });
+    }
+    for (const { path: targetPath, tempPath } of pending) {
+      await fs.rename(tempPath, targetPath);
+    }
+  } catch (error) {
+    for (const { tempPath } of pending) {
+      try {
+        await fs.unlink(tempPath);
+      } catch {
+        // Best effort cleanup.
+      }
+    }
+    throw error;
+  }
+};
+
+/**
+ * Writes the two generated artifacts next to each other. `manifestImportFromPackage` is the
+ * package name (or path) used in the `import type` for `IocGeneratedContainerManifest`.
+ */
+export const writeManifest = async (
+  acceptedFactories: DiscoveredFactory[],
+  plans: ResolvedContractRegistration[],
+  groupsManifest: IocGroupsManifest | undefined,
+  manifestOutPath: string,
+  manifestImportFromPackage: string,
+  options?: WriteManifestOptions,
+): Promise<void> => {
+  if (options?.demandSupply === undefined) {
+    throw new Error(
+      "[ioc] internal error: demandSupply analysis is required for registry type generation",
+    );
+  }
+
+  const sources = buildManifestArtifactSources(
+    acceptedFactories,
+    plans,
+    groupsManifest,
+    manifestOutPath,
+    manifestImportFromPackage,
+    options,
+  );
+
+  await writeGeneratedFilesAtomically([
+    { path: manifestOutPath, contents: sources.mainSource },
+    { path: sources.typesPath, contents: sources.typesSource },
+  ]);
 };
