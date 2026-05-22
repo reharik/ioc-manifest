@@ -381,7 +381,7 @@ const throwGroupRootKeyConflict = (
 
 /**
  * Merges deduplicated manifests (caller should validate schema versions first).
- * Returns a single manifest with `manifestSchemaVersion: 1`.
+ * Returns a single manifest with the current `manifestSchemaVersion`.
  */
 export const composeManifests = (
   manifests: readonly IocRegisterableManifest[],

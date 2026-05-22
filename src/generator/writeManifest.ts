@@ -20,6 +20,7 @@ import type {
   ModuleFactoryManifestMetadata,
 } from "../core/manifest.js";
 import type { ResolvedScanDir } from "./manifestPaths.js";
+import { MANIFEST_SCHEMA_VERSION } from "../schemaVersion.js";
 
 export type IocRegistryTypesBuildContext = {
   program: ts.Program;
@@ -383,7 +384,7 @@ Re-run \`npm run gen:manifest\` after changing factories or IoC config.
 ${importLines.join("\n")}
 
 ${groupRootsTypeBlock}export const iocManifest = {
-  manifestSchemaVersion: 1,
+  manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
 
   moduleImports: [
 ${moduleArrayLines.join("\n")}

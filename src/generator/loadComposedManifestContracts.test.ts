@@ -25,7 +25,7 @@ describe("loadComposedManifestContractNames", () => {
       writeFileSync(
         path.join(pkgDir, "ioc-manifest.ts"),
         `export const iocManifest = {
-  manifestSchemaVersion: 1,
+  manifestSchemaVersion: 2,
   moduleImports: [],
   contracts: {
     Storage: { localStorage: {} },
