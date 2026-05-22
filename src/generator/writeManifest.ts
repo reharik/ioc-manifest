@@ -496,13 +496,12 @@ const buildCradleTypeSource = (
   const cradleProperties: { key: string; line: string }[] = [];
 
   for (const entry of demandSupply.entries) {
-    const comment =
-      entry.classification === "local"
-        ? "// locally supplied"
-        : "// externally provided";
+    if (entry.classification !== "local") {
+      continue;
+    }
     cradleProperties.push({
       key: entry.key,
-      line: `  ${tsIdentifierOrQuoted(entry.key)}: ${entry.typeRef.typeName}; ${comment}`,
+      line: `  ${tsIdentifierOrQuoted(entry.key)}: ${entry.typeRef.typeName};`,
     });
   }
 
@@ -515,7 +514,7 @@ const buildCradleTypeSource = (
     if (!demandSupplyKeys.has(plan.accessKey)) {
       cradleProperties.push({
         key: plan.accessKey,
-        line: `  ${plan.accessKey}: ${typeName}; // locally supplied`,
+        line: `  ${plan.accessKey}: ${typeName};`,
       });
       demandSupplyKeys.add(plan.accessKey);
     }
@@ -526,7 +525,7 @@ const buildCradleTypeSource = (
     ) {
       cradleProperties.push({
         key: plan.collectionKey,
-        line: `  ${plan.collectionKey}: ReadonlyArray<${typeName}>; // locally supplied`,
+        line: `  ${plan.collectionKey}: ReadonlyArray<${typeName}>;`,
       });
       demandSupplyKeys.add(plan.collectionKey);
     }
@@ -577,7 +576,7 @@ const buildCradleTypeSource = (
       const node = groupsManifest[key]!;
       cradleProperties.push({
         key,
-        line: `  ${tsIdentifierOrQuoted(key)}: ${appendGroupNodeType(node, "")}; // locally supplied`,
+        line: `  ${tsIdentifierOrQuoted(key)}: ${appendGroupNodeType(node, "")};`,
       });
       demandSupplyKeys.add(key);
     }

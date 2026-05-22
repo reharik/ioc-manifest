@@ -93,7 +93,7 @@ const buildExternalsAssertionLines = (
     const satisfied = `_${cap}ExternalsSatisfied`;
     lines.push(
       `type ${satisfied} =`,
-      `  ${cap}Externals extends Pick<${appCradle}, keyof ${cap}Externals> ? true : never;`,
+      `  ${cap}Externals extends Pick<${appCradle}, keyof ${cap}Externals> ? true : false;`,
       `type _${cap}ExternalsAssert = _IocExpect<${satisfied}>;`,
     );
   }
