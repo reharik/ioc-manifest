@@ -15,7 +15,7 @@ if (!existsSync(iocCli)) {
   process.exit(1);
 }
 
-const packages = ["lib-storage", "lib-services", "app"];
+const packages = ["lib-storage", "lib-services", "app", "app-externals-broken"];
 
 for (const name of packages) {
   const cwd = path.join(exampleRoot, "packages", name);

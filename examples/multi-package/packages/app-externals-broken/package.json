@@ -4,7 +4,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@example/externals-probe": "*",
     "@example/lib-storage": "*",
     "@example/lib-services": "*",
     "ioc-manifest": "file:../../../.."

@@ -6,9 +6,5 @@ export default defineIocConfig({
     generatedDir: "src/generated",
     includes: ["**/*.{ts,tsx}"],
   },
-  composedManifests: [
-    "@example/lib-storage",
-    "@example/lib-services",
-    "@example/externals-probe",
-  ],
+  composedManifests: ["@example/lib-storage", "@example/lib-services"],
 });
