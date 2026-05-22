@@ -22,7 +22,7 @@ const main = (): void => {
     `Upload service resolved; using ${storage.label} storage; logger says ${result}`,
   );
 
-  const loggers = container.resolve("loggers") as { id: string }[];
+  const loggers = container.resolve("loggers");
   const loggerIds = loggers
     .map((l) => l.id)
     .filter((id) => id.length > 0)
