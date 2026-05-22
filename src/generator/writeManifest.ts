@@ -584,14 +584,26 @@ const buildCradleTypeSource = (
   cradleProperties.sort((a, b) => a.key.localeCompare(b.key));
   const propertyLines = cradleProperties.map((p) => p.line);
 
+  const externalEntries = demandSupply.entries.filter(
+    (e) => e.classification === "external",
+  );
+  const externalsLines = externalEntries.map(
+    (e) => `  ${tsIdentifierOrQuoted(e.key)}: ${e.typeRef.typeName};`,
+  );
+
   const header = `/* AUTO-GENERATED. DO NOT EDIT.
 Re-run \`npm run gen:manifest\` after changing factories or IoC config.
 */
 `;
 
+  const externalsBlock =
+    externalsLines.length > 0
+      ? `\n\nexport interface IocExternals {\n${externalsLines.join("\n")}\n}`
+      : `\n\nexport interface IocExternals {}`;
+
   return `${header}${importLines.length > 0 ? importLines.join("\n") + "\n\n" : ""}export interface IocGeneratedCradle {
 ${propertyLines.join("\n")}
-}
+}${externalsBlock}
 `;
 };
 
