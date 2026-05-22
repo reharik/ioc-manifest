@@ -4,5 +4,14 @@
   "type": "module",
   "workspaces": [
     "packages/*"
-  ]
+  ],
+  "scripts": {
+    "gen": "node scripts/gen.mjs",
+    "typecheck": "tsc -p packages/app/tsconfig.json",
+    "start": "tsx packages/app/src/bootstrap.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.0.0"
+  }
 }
