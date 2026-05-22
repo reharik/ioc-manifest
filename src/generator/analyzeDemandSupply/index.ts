@@ -13,6 +13,7 @@ import {
   isUnresolvableDepsPropertyType,
   type EmitTypeReferenceContext,
 } from "./emitTypeReference.js";
+import { validateNamedDepsType } from "./enforceNamedDepsType.js";
 import type {
   DemandSupplyAnalysisResult,
   DemandSupplyCradleEntry,
@@ -137,7 +138,8 @@ export type AnalyzeDemandSupplyOptions = FactoryDiscoveryPaths & {
 };
 
 /**
- * Walks factories to collect demand/supply pairs and validate type agreement.
+ * Walks factories to collect demand/supply pairs, validates named deps and type agreement,
+ * and produces cradle entries for {@link buildCradleTypeSource}.
  */
 export const analyzeDemandSupply = (
   factories: readonly DiscoveredFactory[],
@@ -207,16 +209,17 @@ export const analyzeDemandSupply = (
       continue;
     }
 
-    const paramNode = factoryDecl.parameters[0]!;
-    const paramSymbol = signature?.getParameters()[0];
-    if (!paramSymbol) {
-      continue;
+    const named = validateNamedDepsType(
+      checker,
+      factoryDecl,
+      projectRoot,
+      loc,
+    );
+    if (!named.ok) {
+      throw new Error(named.message);
     }
 
-    const depsType = checker.getApparentType(
-      checker.getTypeOfSymbolAtLocation(paramSymbol, paramNode),
-    );
-    const props = collectDepsProperties(checker, depsType);
+    const props = collectDepsProperties(checker, named.depsType);
     for (const { name: propName, type: propType } of props) {
       if (isUnresolvableDepsPropertyType(checker, propType, emitCtx)) {
         throw new Error(
