@@ -1,0 +1,24 @@
+{
+  "name": "@example/lib-services",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./iocManifest": {
+      "types": "./src/generated/ioc-manifest.ts",
+      "import": "./src/generated/ioc-manifest.ts"
+    },
+    "./iocTypes": {
+      "types": "./src/generated/ioc-registry.types.ts",
+      "import": "./src/generated/ioc-registry.types.ts"
+    }
+  },
+  "dependencies": {
+    "@example/lib-storage": "*"
+  },
+  "devDependencies": {
+    "ioc-manifest": "file:../../../..",
+    "typescript": "^5.0.0"
+  }
+}
