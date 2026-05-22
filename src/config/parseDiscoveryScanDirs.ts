@@ -5,6 +5,13 @@ const IOC_LIFETIMES = new Set<IocLifetime>(["singleton", "scoped", "transient"])
 const isIocLifetime = (value: unknown): value is IocLifetime =>
   typeof value === "string" && IOC_LIFETIMES.has(value as IocLifetime);
 
+const REMOVED_SCAN_DIR_KEYS: Record<string, string> = {
+  importPrefix:
+    "discovery.scanDirs[].importPrefix was removed in v2; use composedManifests instead.",
+  importMode:
+    "discovery.scanDirs[].importMode was removed in v2; use composedManifests instead.",
+};
+
 /**
  * Validates and normalizes authoring `scanDirs` into a list of specs (single string → one spec).
  */
@@ -28,7 +35,7 @@ export const parseDiscoveryScanDirs = (
   }
 
   const out: IocScanDirSpec[] = [];
-  const allowedKeys = new Set(["path", "importPrefix", "importMode", "scope"]);
+  const allowedKeys = new Set(["path", "scope"]);
 
   for (let i = 0; i < raw.length; i += 1) {
     const el = raw[i];
@@ -50,6 +57,10 @@ export const parseDiscoveryScanDirs = (
 
     const rec = el as Record<string, unknown>;
     for (const k of Object.keys(rec)) {
+      const removedMsg = REMOVED_SCAN_DIR_KEYS[k];
+      if (removedMsg !== undefined) {
+        throw new Error(`[ioc-config] ${sourceLabel} ${removedMsg}`);
+      }
       if (!allowedKeys.has(k)) {
         throw new Error(
           `[ioc-config] ${sourceLabel} discovery.scanDirs[${i}] has unknown property ${JSON.stringify(k)}`,
@@ -64,17 +75,6 @@ export const parseDiscoveryScanDirs = (
       );
     }
 
-    const importPrefix = rec.importPrefix;
-    if (importPrefix !== undefined) {
-      if (typeof importPrefix !== "string" || importPrefix.length === 0) {
-        throw new Error(
-          `[ioc-config] ${sourceLabel} discovery.scanDirs[${i}].importPrefix must be a non-empty string when set`,
-        );
-      }
-    }
-
-    const importMode = rec.importMode;
-
     const scopeRaw = rec.scope;
 
     let scope: IocLifetime | undefined;
@@ -87,29 +87,10 @@ export const parseDiscoveryScanDirs = (
       scope = scopeRaw;
     }
 
-    if (importPrefix !== undefined) {
-      if (importMode !== "root" && importMode !== "subpath") {
-        throw new Error(
-          `[ioc-config] ${sourceLabel} discovery.scanDirs[${i}].importMode must be "root" or "subpath" when importPrefix is set`,
-        );
-      }
-      out.push({
-        path: p,
-        importPrefix,
-        importMode,
-        ...(scope !== undefined ? { scope } : {}),
-      });
-    } else {
-      if (importMode === "root") {
-        throw new Error(
-          `[ioc-config] ${sourceLabel} discovery.scanDirs[${i}].importMode cannot be set to "root" without importPrefix`,
-        );
-      }
-      out.push({
-        path: p,
-        ...(scope !== undefined ? { scope } : {}),
-      });
-    }
+    out.push({
+      path: p,
+      ...(scope !== undefined ? { scope } : {}),
+    });
   }
 
   return out;

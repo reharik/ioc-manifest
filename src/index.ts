@@ -21,9 +21,7 @@ export {
   type IocLifetime,
   type IocOverride,
   type IocRegistrationsPerContract,
-  type IocScanDirImportMode,
   type IocScanDirSpec,
-  type IocWorkspacePackageImportBase,
 } from "./config/iocConfig.js";
 
 export { parseDiscoveryScanDirs } from "./config/parseDiscoveryScanDirs.js";
@@ -54,12 +52,9 @@ export {
   mapTypesPackageToRuntimePackage,
   normalizeEmittedModuleSpecifier,
   resolveScanDirEntries,
-  resolveWorkspacePackageImportBases,
-  resolveWorkspacePackageRoot,
   type ComputeManifestModuleSpecifierOptions,
   type ManifestRuntimePaths,
   type ResolvedScanDir,
-  type ResolvedWorkspacePackageImportBase,
 } from "./generator/manifestPaths.js";
 
 export {

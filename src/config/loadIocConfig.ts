@@ -27,7 +27,6 @@ const DISCOVERY_KEYS = new Set([
   "excludes",
   "factoryPrefix",
   "generatedDir",
-  "workspacePackageImportBases",
 ]);
 
 const IMPL_OVERRIDE_KEYS = new Set(["name", "lifetime", "default"]);
@@ -41,39 +40,6 @@ const assertOnlyKeys = (
     if (!allowed.has(k)) {
       throw new Error(
         `[ioc-config] ${pathLabel} has unknown property ${JSON.stringify(k)}`,
-      );
-    }
-  }
-};
-
-const validateWorkspacePackageImportBases = (
-  value: unknown,
-  pathLabel: string,
-): void => {
-  if (value === undefined) {
-    return;
-  }
-
-  if (!Array.isArray(value)) {
-    throw new Error(`[ioc-config] ${pathLabel} must be an array when set`);
-  }
-
-  for (let i = 0; i < value.length; i += 1) {
-    const el = value[i];
-    if (!isRecord(el)) {
-      throw new Error(`[ioc-config] ${pathLabel}[${i}] must be an object`);
-    }
-    assertOnlyKeys(el, new Set(["root", "importBase"]), `${pathLabel}[${i}]`);
-    const root = el.root;
-    if (typeof root !== "string" || root.length === 0) {
-      throw new Error(
-        `[ioc-config] ${pathLabel}[${i}].root must be a non-empty string`,
-      );
-    }
-    const importBase = el.importBase;
-    if (typeof importBase !== "string" || importBase.length === 0) {
-      throw new Error(
-        `[ioc-config] ${pathLabel}[${i}].importBase must be a non-empty string`,
       );
     }
   }
@@ -235,6 +201,12 @@ const validateIocConfig = (raw: unknown, sourceLabel: string): IocConfig => {
     throw new Error(`[ioc-config] ${sourceLabel} is missing discovery`);
   }
 
+  if ("workspacePackageImportBases" in discovery) {
+    throw new Error(
+      `[ioc-config] ${sourceLabel} discovery.workspacePackageImportBases was removed in v2; use composedManifests instead.`,
+    );
+  }
+
   assertOnlyKeys(discovery, DISCOVERY_KEYS, `${sourceLabel} discovery`);
 
   parseDiscoveryScanDirs(
@@ -263,11 +235,6 @@ const validateIocConfig = (raw: unknown, sourceLabel: string): IocConfig => {
   validateOptionalNonEmptyString(
     discovery.generatedDir,
     `${sourceLabel} discovery.generatedDir`,
-  );
-
-  validateWorkspacePackageImportBases(
-    discovery.workspacePackageImportBases,
-    `${sourceLabel} discovery.workspacePackageImportBases`,
   );
 
   validateRegistrationsShape(raw.registrations, sourceLabel);

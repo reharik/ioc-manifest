@@ -41,14 +41,10 @@ type GeneratedMainManifestModule = {
 };
 
 const formatResolvedScanDir = (e: ResolvedScanDir): string => {
-  let base = e.absPath;
   if (e.scope !== undefined) {
-    base = `${base} [scope=${e.scope}]`;
+    return `${e.absPath} [scope=${e.scope}]`;
   }
-  if (e.importPrefix !== undefined && e.importMode !== undefined) {
-    return `${base} → ${e.importPrefix} (${e.importMode})`;
-  }
-  return base;
+  return e.absPath;
 };
 
 const logInspectContext = (

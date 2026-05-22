@@ -40,19 +40,19 @@ describe("loadIocConfig", () => {
     });
   });
 
-  describe("When workspacePackageImportBases entry has extra keys", () => {
-    it("should throw", async () => {
+  describe("When discovery sets workspacePackageImportBases", () => {
+    it("should throw a v2 removal error", async () => {
       const root = mkdtempSync(path.join(tmpdir(), "ioc-ws-"));
       const cfg = path.join(root, "ioc.config.ts");
       writeFileSync(
         cfg,
         `export default { discovery: { scanDirs: "src", workspacePackageImportBases: [
-          { root: "packages/a", importBase: "@a/a", extra: 1 }
+          { root: "packages/a", importBase: "@a/a" }
         ] } };`,
       );
       await assert.rejects(
         () => loadIocConfig(cfg),
-        /unknown property .*extra/,
+        /workspacePackageImportBases was removed in v2/,
       );
     });
   });

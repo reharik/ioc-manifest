@@ -24,74 +24,36 @@ describe("parseDiscoveryScanDirs", () => {
     it("should normalize each element in order", () => {
       assert.deepStrictEqual(
         parseDiscoveryScanDirs(
-          [
-            "src",
-            {
-              path: "../../packages/x",
-              importPrefix: "@scope/x",
-              importMode: "root",
-            },
-          ],
+          ["src", { path: "lib", scope: "singleton" }],
           "cfg",
         ),
-        [
-          { path: "src" },
-          {
-            path: "../../packages/x",
-            importPrefix: "@scope/x",
-            importMode: "root",
-          },
-        ],
+        [{ path: "src" }, { path: "lib", scope: "singleton" }],
       );
     });
   });
 
-  describe("When scanDirs is an object array with importPrefix and importMode", () => {
-    it("should preserve path, importPrefix, and importMode", () => {
-      assert.deepStrictEqual(
-        parseDiscoveryScanDirs(
-          [
-            {
-              path: "../../packages/x",
-              importPrefix: "@scope/x",
-              importMode: "subpath",
-            },
-          ],
-          "cfg",
-        ),
-        [
-          {
-            path: "../../packages/x",
-            importPrefix: "@scope/x",
-            importMode: "subpath",
-          },
-        ],
-      );
-    });
-  });
-
-  describe("When an object has importMode without importPrefix", () => {
-    it('should throw when importMode is "root"', () => {
-      assert.throws(
-        () =>
-          parseDiscoveryScanDirs(
-            [{ path: "src", importMode: "root" }] as never,
-            "cfg",
-          ),
-        /importMode cannot be set to "root" without importPrefix/,
-      );
-    });
-  });
-
-  describe("When an object has importPrefix without importMode", () => {
-    it("should throw a clear config error", () => {
+  describe("When an object sets importPrefix", () => {
+    it("should throw a v2 removal error", () => {
       assert.throws(
         () =>
           parseDiscoveryScanDirs(
             [{ path: "src", importPrefix: "@x" }] as never,
             "cfg",
           ),
-        /importMode must be "root" or "subpath" when importPrefix is set/,
+        /importPrefix was removed in v2/,
+      );
+    });
+  });
+
+  describe("When an object sets importMode", () => {
+    it("should throw a v2 removal error", () => {
+      assert.throws(
+        () =>
+          parseDiscoveryScanDirs(
+            [{ path: "src", importMode: "subpath" }] as never,
+            "cfg",
+          ),
+        /importMode was removed in v2/,
       );
     });
   });
