@@ -15,11 +15,19 @@ import {
   type IocLifetime,
 } from "./iocConfig.js";
 import { parseDiscoveryScanDirs } from "./parseDiscoveryScanDirs.js";
+import { isAppMode } from "./iocMode.js";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const TOP_LEVEL_KEYS = new Set(["discovery", "registrations", "groups"]);
+const TOP_LEVEL_KEYS = new Set([
+  "discovery",
+  "composedManifests",
+  "manifestExportPath",
+  "packageName",
+  "registrations",
+  "groups",
+]);
 
 const DISCOVERY_KEYS = new Set([
   "scanDirs",
@@ -114,6 +122,99 @@ const validateOptionalNonEmptyString = (
   }
 };
 
+const readPackageJsonName = async (
+  projectRoot: string,
+): Promise<string | undefined> => {
+  const pkgPath = path.join(projectRoot, "package.json");
+  try {
+    const text = await fs.readFile(pkgPath, "utf8");
+    const parsed: unknown = JSON.parse(text);
+    if (!isRecord(parsed)) {
+      return undefined;
+    }
+    const name = parsed.name;
+    return typeof name === "string" && name.length > 0 ? name : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const resolveLocalPackageName = async (
+  raw: Record<string, unknown>,
+  sourceLabel: string,
+  projectRoot: string,
+): Promise<string | undefined> => {
+  const fromPackageJson = await readPackageJsonName(projectRoot);
+  if (fromPackageJson !== undefined) {
+    return fromPackageJson;
+  }
+  const fromConfig = raw.packageName;
+  if (typeof fromConfig === "string" && fromConfig.length > 0) {
+    return fromConfig;
+  }
+  return undefined;
+};
+
+const validateComposedManifestsField = (
+  value: unknown,
+  sourceLabel: string,
+): string[] | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  validateStringArray(value, `${sourceLabel} composedManifests`);
+  const list = value;
+  if (list.length === 0) {
+    console.warn(
+      `[ioc-config] ${sourceLabel} composedManifests is an empty array; omit the field for library mode.`,
+    );
+    return list;
+  }
+  const seen = new Set<string>();
+  for (const pkg of list) {
+    if (seen.has(pkg)) {
+      throw new Error(
+        `[ioc-config] ${sourceLabel} composedManifests contains duplicate entry ${JSON.stringify(pkg)}`,
+      );
+    }
+    seen.add(pkg);
+  }
+  return list;
+};
+
+const validateAppLibraryModeExclusivity = (
+  raw: Record<string, unknown>,
+  sourceLabel: string,
+  composedManifests: string[] | undefined,
+): void => {
+  const inAppMode =
+    composedManifests !== undefined && composedManifests.length > 0;
+  if (inAppMode && raw.manifestExportPath !== undefined) {
+    throw new Error(
+      `[ioc-config] ${sourceLabel} manifestExportPath is only valid in library mode; remove it or remove composedManifests for app mode`,
+    );
+  }
+};
+
+const validateComposedManifestsSelfReference = (
+  composedManifests: readonly string[],
+  localPackageName: string | undefined,
+  sourceLabel: string,
+): void => {
+  if (localPackageName === undefined) {
+    throw new Error(
+      `[ioc-config] ${sourceLabel} Unable to determine local package name for self-reference detection. Add packageName to your ioc.config.`,
+    );
+  }
+  for (const pkg of composedManifests) {
+    if (pkg === localPackageName) {
+      throw new Error(
+        `[ioc-config] ${sourceLabel} composedManifests cannot include this package's own name ${JSON.stringify(pkg)} (self-composition is not supported)`,
+      );
+    }
+  }
+};
+
 const validateRegistrationsShape = (
   registrations: unknown,
   sourceLabel: string,
@@ -189,12 +290,30 @@ const validateRegistrationsShape = (
   }
 };
 
-const validateIocConfig = (raw: unknown, sourceLabel: string): IocConfig => {
+const validateIocConfig = async (
+  raw: unknown,
+  sourceLabel: string,
+): Promise<IocConfig> => {
   if (!isRecord(raw)) {
     throw new Error(`[ioc-config] ${sourceLabel} must export an object`);
   }
 
   assertOnlyKeys(raw, TOP_LEVEL_KEYS, sourceLabel);
+
+  validateOptionalNonEmptyString(
+    raw.packageName,
+    `${sourceLabel} packageName`,
+  );
+  validateOptionalNonEmptyString(
+    raw.manifestExportPath,
+    `${sourceLabel} manifestExportPath`,
+  );
+
+  const composedManifests = validateComposedManifestsField(
+    raw.composedManifests,
+    sourceLabel,
+  );
+  validateAppLibraryModeExclusivity(raw, sourceLabel, composedManifests);
 
   const discovery = raw.discovery;
   if (!isRecord(discovery)) {
@@ -243,7 +362,23 @@ const validateIocConfig = (raw: unknown, sourceLabel: string): IocConfig => {
     validateGroupsShape(raw.groups, `${sourceLabel} groups`);
   }
 
-  return raw as IocConfig;
+  const config = raw as IocConfig;
+
+  if (composedManifests !== undefined && composedManifests.length > 0) {
+    const projectRoot = resolveProjectRootFromIocConfigPath(sourceLabel);
+    const localPackageName = await resolveLocalPackageName(
+      raw,
+      sourceLabel,
+      projectRoot,
+    );
+    validateComposedManifestsSelfReference(
+      composedManifests,
+      localPackageName,
+      sourceLabel,
+    );
+  }
+
+  return config;
 };
 
 export const loadIocConfig = async (
