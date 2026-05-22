@@ -1,4 +1,8 @@
 export { registerIocFromManifest } from "./bootstrap.js";
+export type {
+  ComposedContractOverride,
+  ComposedRegistrationOverrides,
+} from "./composedOverrides.js";
 export {
   applyIocResolutionErrorMessage,
   createIocResolutionError,

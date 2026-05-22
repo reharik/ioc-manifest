@@ -41,6 +41,7 @@ import {
   type RegistrationKeyIndex,
 } from "./registrationKeyIndex.js";
 import { prepareManifestsForRegistration } from "./composeManifests.js";
+import type { ComposedRegistrationOverrides } from "./composedOverrides.js";
 
 /** Group-root entries only: strips fixed manifest keys (`moduleImports`, `contracts`). */
 const extractGroupRootsFromContainerManifest = (
@@ -372,8 +373,9 @@ const registerGroups = <TCradle extends object>(
 export const registerIocFromManifest = <TCradle extends object>(
   container: AwilixContainer<TCradle>,
   manifests: readonly IocRegisterableManifest[],
+  overrides?: ComposedRegistrationOverrides,
 ): void => {
-  const manifest = prepareManifestsForRegistration(manifests);
+  const manifest = prepareManifestsForRegistration(manifests, overrides);
   const { contracts: manifestByContract, moduleImports } = manifest;
   const groupsManifest = extractGroupRootsFromContainerManifest(manifest);
   const keyIndex = buildRegistrationKeyIndex(manifestByContract);

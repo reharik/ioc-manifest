@@ -24,6 +24,23 @@ export {
   type IocScanDirSpec,
 } from "./config/iocConfig.js";
 
+export {
+  DEFAULT_MANIFEST_EXPORT_PATH,
+  isAppMode,
+  isLibraryMode,
+  resolveManifestExportPath,
+} from "./config/iocMode.js";
+
+export {
+  packageNameToIdentifier,
+  LOCAL_PACKAGE_IDENTIFIER,
+} from "./config/packageIdentifier.js";
+
+export type {
+  ComposedContractOverride,
+  ComposedRegistrationOverrides,
+} from "./runtime/composedOverrides.js";
+
 export { parseDiscoveryScanDirs } from "./config/parseDiscoveryScanDirs.js";
 
 export {
