@@ -109,8 +109,11 @@ const serializeOverridesLiteral = (
   const hasPackages =
     overrides?.composedPackageNames !== undefined &&
     overrides.composedPackageNames.length > 0;
+  const aliasSets = overrides?.groups?.baseTypeAliases;
+  const hasAliases =
+    aliasSets !== undefined && Object.keys(aliasSets).length > 0;
 
-  if (!hasContracts && !hasPackages) {
+  if (!hasContracts && !hasPackages && !hasAliases) {
     return "export const composedRegistrationOverrides = {} as const satisfies ComposedRegistrationOverrides;";
   }
 
@@ -124,6 +127,21 @@ const serializeOverridesLiteral = (
   }
 
   if (!hasContracts) {
+    if (hasAliases) {
+      contractLines.push("  groups: {");
+      contractLines.push("    baseTypeAliases: {");
+      const groupNames = Object.keys(aliasSets!).sort((a, b) =>
+        a.localeCompare(b),
+      );
+      for (const groupName of groupNames) {
+        const ids = aliasSets![groupName]!.map((id) => JSON.stringify(id));
+        contractLines.push(
+          `      ${JSON.stringify(groupName)}: [${ids.join(", ")}],`,
+        );
+      }
+      contractLines.push("    },");
+      contractLines.push("  },");
+    }
     contractLines.push(
       "} as const satisfies ComposedRegistrationOverrides;",
     );
@@ -158,10 +176,25 @@ const serializeOverridesLiteral = (
     contractLines.push("    },");
   }
 
-  contractLines.push(
-    "  },",
-    "} as const satisfies ComposedRegistrationOverrides;",
-  );
+  contractLines.push("  },");
+
+  if (hasAliases) {
+    contractLines.push("  groups: {");
+    contractLines.push("    baseTypeAliases: {");
+    const groupNames = Object.keys(aliasSets!).sort((a, b) =>
+      a.localeCompare(b),
+    );
+    for (const groupName of groupNames) {
+      const ids = aliasSets![groupName]!.map((id) => JSON.stringify(id));
+      contractLines.push(
+        `      ${JSON.stringify(groupName)}: [${ids.join(", ")}],`,
+      );
+    }
+    contractLines.push("    },");
+    contractLines.push("  },");
+  }
+
+  contractLines.push("} as const satisfies ComposedRegistrationOverrides;");
   return contractLines.join("\n");
 };
 

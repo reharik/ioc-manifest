@@ -65,13 +65,23 @@ export const buildComposedRegistrationOverridesFromConfig = (
   const hasContracts = Object.keys(contracts).length > 0;
   const hasPackages =
     composedPackageNames !== undefined && composedPackageNames.length > 0;
+  const aliasEntries = config.groupBaseTypeAliases;
+  const hasAliases =
+    aliasEntries !== undefined && Object.keys(aliasEntries).length > 0;
 
-  if (!hasContracts && !hasPackages) {
+  if (!hasContracts && !hasPackages && !hasAliases) {
     return undefined;
   }
 
   return {
     ...(hasPackages ? { composedPackageNames } : {}),
     ...(hasContracts ? { contracts } : {}),
+    ...(hasAliases
+      ? {
+          groups: {
+            baseTypeAliases: aliasEntries,
+          },
+        }
+      : {}),
   };
 };

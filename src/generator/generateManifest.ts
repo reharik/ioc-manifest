@@ -33,6 +33,7 @@ import type { ManifestRuntimePaths } from "./manifestPaths.js";
 import { buildGroupPlan } from "../groups/resolveGroupPlan.js";
 import { isAppMode, isLibraryMode, resolveManifestExportPath } from "../config/iocMode.js";
 import { loadComposedManifestContractNames } from "./loadComposedManifestContracts.js";
+import { validateGroupBaseTypeAliasKeysAtCodegen } from "./loadComposedManifestGroups.js";
 import { buildComposedRegistrationOverridesFromConfig } from "./buildComposedRegistrationOverrides.js";
 import {
   buildComposedManifestSource,
@@ -198,6 +199,12 @@ export const generateManifest = async (
 
   let composedOutPath: string | undefined;
   if (config !== undefined && isAppMode(config)) {
+    const configPath = resolveIocConfigPath(resolvedProjectRoot, overrides?.iocConfigPath);
+    await validateGroupBaseTypeAliasKeysAtCodegen(
+      resolvedProjectRoot,
+      config,
+      configPath,
+    );
     const composedPackages = resolveComposedPackageSpecs(
       config.composedManifests!,
     );
