@@ -116,7 +116,6 @@ export const discoverFactories = (
         projectRoot,
         scanDirs: discoveryPaths.scanDirs,
         generatedDir: discoveryPaths.generatedDir,
-        workspacePackageImportBases: discoveryPaths.workspacePackageImportBases,
       },
     };
 

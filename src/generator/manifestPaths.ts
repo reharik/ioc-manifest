@@ -1,89 +1,14 @@
-import fs from "node:fs";
 import path from "node:path";
-import type {
-  IocLifetime,
-  IocScanDirSpec,
-  IocWorkspacePackageImportBase,
-} from "../config/iocConfig.js";
+import type { IocLifetime, IocScanDirSpec } from "../config/iocConfig.js";
 
 const toPosix = (value: string): string => value.replace(/\\/g, "/");
 
 const NODE_MODULES_MARKER = `${path.sep}node_modules${path.sep}`;
 
-const DEBUG_IMPORT_SPEC = process.env.IOC_DEBUG_WORKSPACE_IMPORT_SPECS === "1";
-
-const debugImportSpec = (message: string, detail?: Record<string, unknown>): void => {
-  if (DEBUG_IMPORT_SPEC) {
-    console.error(`[ioc][import-spec] ${message}`, detail ?? "");
-  }
-};
-
-/**
- * Normalizes path; if it exists on disk, follows symlinks (realpath) so workspace roots match
- * TypeScript's resolved declaration paths.
- */
-const tryRealpathIfExists = (p: string): string => {
-  const normalized = path.normalize(p);
-  try {
-    if (fs.existsSync(normalized)) {
-      return fs.realpathSync.native(normalized);
-    }
-  } catch {
-    // keep normalized path
-  }
-  return normalized;
-};
-
-/**
- * Resolves `root` from {@link IocWorkspacePackageImportBase} to an absolute directory.
- *
- * When `ioc.config.ts` lives in an app package (e.g. `apps/web`), {@link projectRoot} is that
- * package, not the monorepo root. A path like `packages/foo/src` would incorrectly resolve to
- * `apps/web/packages/foo/src`. If that path does not exist, this walks up ancestors of
- * `projectRoot` until `path.join(ancestor, root)` exists — typically the repo root containing
- * `packages/`.
- */
-export const resolveWorkspacePackageRoot = (
-  projectRoot: string,
-  root: string,
-): string => {
-  const normalizedProjectRoot = path.normalize(projectRoot);
-  const rootTrimmed = root.trim().replace(/^\.(?:\/|\\)+/, "");
-  if (path.isAbsolute(rootTrimmed)) {
-    const n = path.normalize(rootTrimmed);
-    return tryRealpathIfExists(n);
-  }
-  const direct = path.resolve(normalizedProjectRoot, rootTrimmed);
-  if (fs.existsSync(direct)) {
-    return tryRealpathIfExists(direct);
-  }
-  let dir = normalizedProjectRoot;
-  for (let i = 0; i < 16; i += 1) {
-    const candidate = path.resolve(dir, rootTrimmed);
-    if (fs.existsSync(candidate)) {
-      return tryRealpathIfExists(candidate);
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) {
-      break;
-    }
-    dir = parent;
-  }
-  return direct;
-};
-
 /** After resolving `path` against the package root. Optional `scope` is default registration lifetime for factories under this root. */
 export type ResolvedScanDir = {
   absPath: string;
-  importPrefix?: string;
-  importMode?: "root" | "subpath";
   scope?: IocLifetime;
-};
-
-/** Resolved workspace root + import base (absolute root, longest match wins). */
-export type ResolvedWorkspacePackageImportBase = {
-  absRoot: string;
-  importBase: string;
 };
 
 /** Resolved filesystem layout for manifest generation and factory discovery. */
@@ -93,17 +18,12 @@ export type ManifestRuntimePaths = {
   generatedDir: string;
   /** Primary generated manifest output file. */
   manifestOutPath: string;
-  /**
-   * Optional workspace package roots with public import bases (from config), sorted by longest
-   * `absRoot` first.
-   */
-  workspacePackageImportBases?: readonly ResolvedWorkspacePackageImportBase[];
 };
 
 /** Subset passed into per-file factory discovery (import path + module path math). */
 export type FactoryDiscoveryPaths = Pick<
   ManifestRuntimePaths,
-  "projectRoot" | "scanDirs" | "generatedDir" | "workspacePackageImportBases"
+  "projectRoot" | "scanDirs" | "generatedDir"
 >;
 
 export type ComputeManifestModuleSpecifierOptions = {
@@ -112,10 +32,9 @@ export type ComputeManifestModuleSpecifierOptions = {
    * `@koa/router`), preserve that instead of deriving from the resolved declaration file path.
    */
   preferredModuleSpecifier?: string;
-  workspacePackageImportBases?: readonly ResolvedWorkspacePackageImportBase[];
   /**
    * IoC package root (same as manifest `projectRoot`). Used when TypeScript gives a relative
-   * `SourceFile.fileName` for the contract declaration so workspace matching still works.
+   * `SourceFile.fileName` for the contract declaration.
    */
   projectRoot?: string;
 };
@@ -125,24 +44,24 @@ const normalizeGlobPath = (p: string): string => p.replaceAll(path.sep, "/");
 export const resolveScanDirEntries = (
   projectRoot: string,
   specs: readonly IocScanDirSpec[],
-): ResolvedScanDir[] =>
-  specs.map((s) => {
+): ResolvedScanDir[] => {
+  const packageRoot = path.normalize(projectRoot);
+  return specs.map((s) => {
     const absPath = path.isAbsolute(s.path)
       ? path.normalize(s.path)
-      : path.resolve(projectRoot, s.path);
-    const base = {
+      : path.resolve(packageRoot, s.path);
+    const rel = path.relative(packageRoot, absPath);
+    if (rel.startsWith("..") || path.isAbsolute(rel)) {
+      throw new Error(
+        `[ioc-config] scanDir ${JSON.stringify(s.path)} resolves outside the package root. Cross-package scanning was removed in v2; use composedManifests instead.`,
+      );
+    }
+    return {
       absPath,
       ...(s.scope !== undefined ? { scope: s.scope } : {}),
     };
-    if (s.importPrefix !== undefined && s.importMode !== undefined) {
-      return {
-        ...base,
-        importPrefix: s.importPrefix,
-        importMode: s.importMode,
-      };
-    }
-    return base;
   });
+};
 
 export const findResolvedScanDirForFile = (
   absFile: string,
@@ -227,10 +146,10 @@ export const resolveDiscoveryRootDefaultLifetime = (
 };
 
 const useSingleLocalScanRoot = (entries: readonly ResolvedScanDir[]): boolean =>
-  entries.length === 1 && entries[0].importPrefix === undefined;
+  entries.length === 1;
 
 /**
- * Stable `modulePath` for manifest indexing: relative to the sole local scan root when there is one;
+ * Stable `modulePath` for manifest indexing: relative to the sole scan root when there is one;
  * otherwise relative to `projectRoot` (posix) so paths stay unique.
  */
 export const computeDiscoveryModulePath = (
@@ -320,28 +239,6 @@ export const emitBarePackageSpecifierFromNodeModulesPath = (
   return pkg;
 };
 
-const matchWorkspacePackageImportBase = (
-  absFile: string,
-  bases: readonly ResolvedWorkspacePackageImportBase[],
-): ResolvedWorkspacePackageImportBase | undefined => {
-  const normFile = tryRealpathIfExists(absFile);
-  let best: ResolvedWorkspacePackageImportBase | undefined;
-  let bestRootLen = -1;
-
-  for (const b of bases) {
-    const root = tryRealpathIfExists(b.absRoot);
-    const rel = path.relative(root, normFile);
-    if (!rel.startsWith("..") && !path.isAbsolute(rel)) {
-      if (root.length > bestRootLen) {
-        bestRootLen = root.length;
-        best = b;
-      }
-    }
-  }
-
-  return best;
-};
-
 const isBarePackageModuleSpecifier = (spec: string): boolean => {
   if (spec.length === 0) {
     return false;
@@ -360,8 +257,7 @@ const isBarePackageModuleSpecifier = (spec: string): boolean => {
 
 /**
  * Strips declaration-file artifacts and redundant `/index` segments from emitted specifiers.
- * Single-segment package names (e.g. `knex`) drop `.ts`/`.js`; subpaths keep `.js` when present
- * (workspace `importPrefix` + `subpath` mode).
+ * Single-segment package names (e.g. `knex`) drop `.ts`/`.js`; subpaths keep `.js` when present.
  */
 export const normalizeEmittedModuleSpecifier = (spec: string): string => {
   let s = spec;
@@ -395,16 +291,16 @@ const toAbsoluteContractDeclarationPath = (
 };
 
 /**
- * ESM import specifier for a source file as emitted next to `generatedDir` (relative path, package root, or subpath).
+ * ESM import specifier for a source file as emitted next to `generatedDir` (relative path or bare
+ * package name from `node_modules`).
  *
- * Resolution order: optional recovered bare import → configured workspace import bases (before
- * `node_modules`, so symlinked workspace packages resolve to `importBase`) → `node_modules`
- * package name → scan dir `importPrefix` / `importMode` → relative path from `generatedDir`.
+ * Resolution order: optional recovered bare import → `node_modules` package name → relative path
+ * from `generatedDir`.
  */
 export const computeManifestModuleSpecifier = (
   absFile: string,
   generatedDir: string,
-  scanDirs: readonly ResolvedScanDir[],
+  _scanDirs: readonly ResolvedScanDir[],
   options?: ComputeManifestModuleSpecifierOptions,
 ): string => {
   const resolvedAbs = toAbsoluteContractDeclarationPath(
@@ -412,116 +308,19 @@ export const computeManifestModuleSpecifier = (
     options?.projectRoot,
   );
   const preferred = options?.preferredModuleSpecifier;
-  const workspaceBases = options?.workspacePackageImportBases;
-
-  if (DEBUG_IMPORT_SPEC) {
-    debugImportSpec("computeManifestModuleSpecifier", {
-      contractDeclarationFileRaw: path.normalize(absFile),
-      contractDeclarationFileResolved: resolvedAbs,
-      projectRoot: options?.projectRoot ?? null,
-      generatedDir: path.normalize(generatedDir),
-      preferredModuleSpecifier: preferred ?? null,
-      workspaceBasesCount: workspaceBases?.length ?? 0,
-      workspaceAbsRoots: workspaceBases?.map((b) => b.absRoot) ?? [],
-    });
-  }
 
   if (preferred !== undefined && isBarePackageModuleSpecifier(preferred)) {
-    const out = normalizeEmittedModuleSpecifier(preferred);
-    if (DEBUG_IMPORT_SPEC) {
-      debugImportSpec("branch: preferred bare specifier", { out });
-    }
-    return out;
-  }
-
-  if (workspaceBases !== undefined && workspaceBases.length > 0) {
-    const hit = matchWorkspacePackageImportBase(resolvedAbs, workspaceBases);
-    if (hit !== undefined) {
-      const out = normalizeEmittedModuleSpecifier(hit.importBase);
-      if (DEBUG_IMPORT_SPEC) {
-        debugImportSpec("branch: workspacePackageImportBases", {
-          matchedImportBase: hit.importBase,
-          matchedAbsRoot: hit.absRoot,
-          out,
-        });
-      }
-      return out;
-    }
-    if (DEBUG_IMPORT_SPEC) {
-      debugImportSpec(
-        "workspacePackageImportBases: no match (declaration file not under any configured absRoot after realpath)",
-        {
-          declarationFile: tryRealpathIfExists(resolvedAbs),
-          triedRoots: workspaceBases.map((b) => ({
-            absRoot: b.absRoot,
-            realpathRoot: tryRealpathIfExists(b.absRoot),
-          })),
-        },
-      );
-    }
-  } else if (DEBUG_IMPORT_SPEC) {
-    debugImportSpec("workspacePackageImportBases: none passed (undefined or empty)");
+    return normalizeEmittedModuleSpecifier(preferred);
   }
 
   const fromNode = emitBarePackageSpecifierFromNodeModulesPath(resolvedAbs);
   if (fromNode !== undefined) {
-    const out = normalizeEmittedModuleSpecifier(fromNode);
-    if (DEBUG_IMPORT_SPEC) {
-      debugImportSpec("branch: node_modules package name", { fromNode, out });
-    }
-    return out;
+    return normalizeEmittedModuleSpecifier(fromNode);
   }
 
-  const entry = findResolvedScanDirForFile(resolvedAbs, scanDirs);
-  if (entry?.importPrefix !== undefined && entry.importMode !== undefined) {
-    if (entry.importMode === "root") {
-      const out = normalizeEmittedModuleSpecifier(entry.importPrefix);
-      if (DEBUG_IMPORT_SPEC) {
-        debugImportSpec("branch: scanDir importPrefix root", { out });
-      }
-      return out;
-    }
-    const rel = path.relative(entry.absPath, resolvedAbs);
-    const posix = toPosix(rel).replace(/\.[^.]+$/, "");
-    const out = normalizeEmittedModuleSpecifier(`${entry.importPrefix}/${posix}.js`);
-    if (DEBUG_IMPORT_SPEC) {
-      debugImportSpec("branch: scanDir importPrefix subpath", { out });
-    }
-    return out;
-  }
-  const out = normalizeEmittedModuleSpecifier(
+  return normalizeEmittedModuleSpecifier(
     relativeImportFromGeneratedDir(resolvedAbs, generatedDir),
   );
-  if (DEBUG_IMPORT_SPEC) {
-    debugImportSpec("branch: relative from generatedDir (fallback)", { out });
-  }
-  return out;
-};
-
-export const resolveWorkspacePackageImportBases = (
-  projectRoot: string,
-  specs: readonly IocWorkspacePackageImportBase[] | undefined,
-): readonly ResolvedWorkspacePackageImportBase[] | undefined => {
-  if (specs === undefined || specs.length === 0) {
-    return undefined;
-  }
-  const resolved = specs.map((s) => {
-    if (typeof s.root !== "string" || s.root.length === 0) {
-      throw new Error(
-        "[ioc-config] discovery.workspacePackageImportBases[].root must be a non-empty string",
-      );
-    }
-    if (typeof s.importBase !== "string" || s.importBase.length === 0) {
-      throw new Error(
-        "[ioc-config] discovery.workspacePackageImportBases[].importBase must be a non-empty string",
-      );
-    }
-    return {
-      absRoot: resolveWorkspacePackageRoot(projectRoot, s.root),
-      importBase: s.importBase,
-    };
-  });
-  return [...resolved].sort((a, b) => b.absRoot.length - a.absRoot.length);
 };
 
 /** Ignore glob for one scan root so discovery does not pick up generated output (relative to that root's `cwd`). */

@@ -67,7 +67,7 @@ const runDiscoveryFromResolution = async (
 ): Promise<DiscoveryAnalysisResult> => {
   const { config, options } = resolved;
   const {
-    paths: { projectRoot, scanDirs, generatedDir, workspacePackageImportBases },
+    paths: { projectRoot, scanDirs, generatedDir },
     includePatterns,
     excludePatterns,
     factoryExportPrefix,
@@ -87,7 +87,7 @@ const runDiscoveryFromResolution = async (
     program,
     projectRoot,
     factoryExportPrefix,
-    { projectRoot, scanDirs, generatedDir, workspacePackageImportBases },
+    { projectRoot, scanDirs, generatedDir },
     config ?? undefined,
     { collectFileRecords: true },
   );

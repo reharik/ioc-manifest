@@ -3,7 +3,6 @@ import type { IocConfig } from "../config/iocConfig.js";
 import { parseDiscoveryScanDirs } from "../config/parseDiscoveryScanDirs.js";
 import {
   resolveScanDirEntries,
-  resolveWorkspacePackageImportBases,
   type ManifestRuntimePaths,
 } from "./manifestPaths.js";
 
@@ -73,9 +72,6 @@ export const resolveManifestOptions = (
       scanDirs: pathOverrides?.scanDirs ?? defaults.scanDirs,
       generatedDir: pathOverrides?.generatedDir ?? defaults.generatedDir,
       manifestOutPath: pathOverrides?.manifestOutPath ?? defaults.manifestOutPath,
-      workspacePackageImportBases:
-        pathOverrides?.workspacePackageImportBases ??
-        defaults.workspacePackageImportBases,
     },
   };
 };
@@ -99,13 +95,6 @@ export const mergeManifestOptionsWithIocConfig = (
     ? configuredGeneratedDir
     : path.resolve(projectRoot, configuredGeneratedDir);
 
-  const fromConfig = resolveWorkspacePackageImportBases(
-    projectRoot,
-    config.discovery.workspacePackageImportBases,
-  );
-  const workspacePackageImportBases =
-    fromConfig ?? base.paths.workspacePackageImportBases;
-
   return {
     ...base,
     paths: {
@@ -113,7 +102,6 @@ export const mergeManifestOptionsWithIocConfig = (
       scanDirs,
       generatedDir,
       manifestOutPath: path.join(generatedDir, "ioc-manifest.ts"),
-      workspacePackageImportBases,
     },
     includePatterns: config.discovery.includes ?? base.includePatterns,
     excludePatterns: config.discovery.excludes ?? base.excludePatterns,

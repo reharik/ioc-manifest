@@ -467,7 +467,6 @@ export const scanFactoryFile = (
           returnType,
           sourceFile,
         ),
-        workspacePackageImportBases: context.paths.workspacePackageImportBases,
         projectRoot: context.projectRoot,
       },
     );
