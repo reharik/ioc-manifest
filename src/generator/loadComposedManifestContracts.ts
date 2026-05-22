@@ -2,68 +2,12 @@
  * @fileoverview Loads contract names from composed package manifests for app-mode validation.
  */
 import fs from "node:fs";
-import path from "node:path";
 import ts from "typescript";
+import { resolvePackageExportPath } from "./resolveComposedPackageExport.js";
 
 export type ComposedManifestContractNames = {
   readonly all: ReadonlySet<string>;
   readonly byPackage: ReadonlyMap<string, ReadonlySet<string>>;
-};
-
-type PackageExportsEntry =
-  | string
-  | {
-      readonly import?: string;
-      readonly types?: string;
-    };
-
-const findPackageDirectory = (
-  projectRoot: string,
-  packageName: string,
-): string => {
-  const candidates: string[] = [];
-  let dir = path.resolve(projectRoot);
-  for (let i = 0; i < 8; i++) {
-    candidates.push(path.join(dir, "node_modules", packageName));
-    const parent = path.dirname(dir);
-    if (parent === dir) {
-      break;
-    }
-    dir = parent;
-  }
-
-  for (const candidate of candidates) {
-    const pkgJson = path.join(candidate, "package.json");
-    if (fs.existsSync(pkgJson)) {
-      return candidate;
-    }
-  }
-
-  throw new Error(
-    `[ioc-config] cannot locate installed package ${JSON.stringify(packageName)} from project root ${JSON.stringify(projectRoot)}`,
-  );
-};
-
-const resolveIocManifestPath = (
-  projectRoot: string,
-  packageName: string,
-): string => {
-  const pkgDir = findPackageDirectory(projectRoot, packageName);
-  const pkgJsonPath = path.join(pkgDir, "package.json");
-  const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8")) as {
-    exports?: Record<string, PackageExportsEntry>;
-  };
-  const manifestExport = pkg.exports?.["./iocManifest"];
-  const rel =
-    typeof manifestExport === "string"
-      ? manifestExport
-      : manifestExport?.import ?? manifestExport?.types;
-  if (typeof rel !== "string") {
-    throw new Error(
-      `[ioc-config] ${JSON.stringify(packageName)} must export "./iocManifest" in package.json (see design doc §6.1)`,
-    );
-  }
-  return path.join(pkgDir, rel);
 };
 
 const extractContractNamesFromManifestSource = (
@@ -154,7 +98,11 @@ export const loadComposedManifestContractNames = async (
   const all = new Set<string>();
 
   for (const packageName of composedPackageNames) {
-    const manifestPath = resolveIocManifestPath(projectRoot, packageName);
+    const manifestPath = resolvePackageExportPath(
+      projectRoot,
+      packageName,
+      "./iocManifest",
+    );
     const names = readContractNamesFromManifestFile(manifestPath);
     const nameSet = new Set(names);
     byPackage.set(packageName, nameSet);

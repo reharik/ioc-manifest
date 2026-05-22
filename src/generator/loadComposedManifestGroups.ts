@@ -2,58 +2,9 @@
  * @fileoverview Collects group root names from composed package manifests for app-mode validation.
  */
 import fs from "node:fs";
-import path from "node:path";
 import ts from "typescript";
 import { IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS } from "../core/manifest.js";
-
-const findPackageDirectory = (
-  projectRoot: string,
-  packageName: string,
-): string => {
-  const candidates: string[] = [];
-  let dir = path.resolve(projectRoot);
-  for (let i = 0; i < 8; i++) {
-    candidates.push(path.join(dir, "node_modules", packageName));
-    const parent = path.dirname(dir);
-    if (parent === dir) {
-      break;
-    }
-    dir = parent;
-  }
-
-  for (const candidate of candidates) {
-    const pkgJson = path.join(candidate, "package.json");
-    if (fs.existsSync(pkgJson)) {
-      return candidate;
-    }
-  }
-
-  throw new Error(
-    `[ioc-config] cannot locate installed package ${JSON.stringify(packageName)} from project root ${JSON.stringify(projectRoot)}`,
-  );
-};
-
-const resolveIocManifestPath = (
-  projectRoot: string,
-  packageName: string,
-): string => {
-  const pkgDir = findPackageDirectory(projectRoot, packageName);
-  const pkgJsonPath = path.join(pkgDir, "package.json");
-  const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8")) as {
-    exports?: Record<string, string | { import?: string; types?: string }>;
-  };
-  const manifestExport = pkg.exports?.["./iocManifest"];
-  const rel =
-    typeof manifestExport === "string"
-      ? manifestExport
-      : manifestExport?.import ?? manifestExport?.types;
-  if (typeof rel !== "string") {
-    throw new Error(
-      `[ioc-config] ${JSON.stringify(packageName)} must export "./iocManifest" in package.json`,
-    );
-  }
-  return path.join(pkgDir, rel);
-};
+import { resolvePackageExportPath } from "./resolveComposedPackageExport.js";
 
 const extractGroupRootKeysFromManifestSource = (
   content: string,
@@ -122,7 +73,11 @@ export const loadComposedManifestGroupNames = async (
   const all = new Set<string>();
 
   for (const packageName of composedPackageNames) {
-    const manifestPath = resolveIocManifestPath(projectRoot, packageName);
+    const manifestPath = resolvePackageExportPath(
+      projectRoot,
+      packageName,
+      "./iocManifest",
+    );
     const content = fs.readFileSync(manifestPath, "utf8");
     for (const key of extractGroupRootKeysFromManifestSource(
       content,
