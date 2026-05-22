@@ -193,7 +193,12 @@ describe("analyzeDemandSupply", () => {
         scanDirs,
         generatedDir,
         groupsManifest: {
-          database: [],
+          database: {
+            kind: "collection",
+            baseType: "Database",
+            baseTypeId: "/fake/Database.ts:Database",
+            members: [],
+          },
         },
       });
 

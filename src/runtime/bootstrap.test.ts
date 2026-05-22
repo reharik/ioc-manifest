@@ -780,10 +780,15 @@ describe("registerIocFromManifest", () => {
           },
         };
         const groups: IocGroupsManifest = {
-          pair: [
-            { contractName: "A", registrationKey: "implA" },
-            { contractName: "B", registrationKey: "implB" },
-          ],
+          pair: {
+            kind: "collection",
+            baseType: "A",
+            baseTypeId: "/fake/A.ts:A",
+            members: [
+              { contractName: "A", registrationKey: "implA" },
+              { contractName: "B", registrationKey: "implB" },
+            ],
+          },
         };
         const moduleImports: readonly IocModuleNamespace[] = [
           { buildA: (): { tag: string } => ({ tag: "a" }) },
@@ -842,8 +847,13 @@ describe("registerIocFromManifest", () => {
         };
         const groups: IocGroupsManifest = {
           byKey: {
-            a: { contractName: "A", registrationKey: "implA" },
-            b: { contractName: "B", registrationKey: "implB" },
+            kind: "object",
+            baseType: "A",
+            baseTypeId: "/fake/A.ts:A",
+            members: {
+              a: { contractName: "A", registrationKey: "implA" },
+              b: { contractName: "B", registrationKey: "implB" },
+            },
           },
         };
         const moduleImports: readonly IocModuleNamespace[] = [

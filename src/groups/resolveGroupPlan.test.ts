@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   formatGroupPlanIssue,
   groupPlanToManifestNode,
+  groupPlanToManifestRoot,
   type GroupPlan,
 } from "./resolveGroupPlan.js";
 
@@ -13,6 +14,7 @@ describe("groupPlanToManifestNode", () => {
         groupName: "g",
         kind: "collection",
         baseType: "Base",
+        baseTypeId: "/tmp/Base.ts:Base",
         members: [
           { contractName: "B", registrationKey: "b" },
           { contractName: "A", registrationKey: "a" },
@@ -31,6 +33,7 @@ describe("groupPlanToManifestNode", () => {
         groupName: "g",
         kind: "object",
         baseType: "Base",
+        baseTypeId: "/tmp/Base.ts:Base",
         members: [
           {
             contractKey: "albumReadService",
@@ -61,6 +64,7 @@ describe("groupPlanToManifestNode", () => {
         groupName: "g",
         kind: "object",
         baseType: "Base",
+        baseTypeId: "/tmp/Base.ts:Base",
         members: [
           {
             contractKey: "albumReadService",
@@ -74,6 +78,26 @@ describe("groupPlanToManifestNode", () => {
           contractName: "AlbumReadService",
           registrationKey: "primaryAlbumReadService",
         },
+      });
+    });
+  });
+});
+
+describe("groupPlanToManifestRoot", () => {
+  describe("When kind is collection", () => {
+    it("should wrap members with kind, baseType, and baseTypeId", () => {
+      const plan: GroupPlan = {
+        groupName: "g",
+        kind: "collection",
+        baseType: "Base",
+        baseTypeId: "/proj/Base.ts:Base",
+        members: [{ contractName: "A", registrationKey: "a" }],
+      };
+      assert.deepStrictEqual(groupPlanToManifestRoot(plan), {
+        kind: "collection",
+        baseType: "Base",
+        baseTypeId: "/proj/Base.ts:Base",
+        members: [{ contractName: "A", registrationKey: "a" }],
       });
     });
   });

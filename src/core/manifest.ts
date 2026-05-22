@@ -100,8 +100,23 @@ export type IocGroupCollectionManifest = IocGroupLeafManifest[];
 /** Object group: property keys are contract keys (default implementation resolved per leaf `registrationKey`). */
 export type IocGroupObjectManifest = Record<string, IocGroupLeafManifest>;
 
+/** Member payload only (array or object of leaves); used inside {@link IocGroupRootManifest}. */
 export type IocGroupNodeManifest =
   | IocGroupCollectionManifest
   | IocGroupObjectManifest;
 
-export type IocGroupsManifest = Record<string, IocGroupNodeManifest>;
+export type IocGroupKind = "collection" | "object";
+
+/**
+ * Generated top-level group root (schema v2). Carries composition metadata plus member leaves.
+ */
+export type IocGroupRootManifest = {
+  readonly kind: IocGroupKind;
+  /** Human-readable name from `ioc.config` `groups.<name>.baseType`. */
+  readonly baseType: string;
+  /** Opaque canonical identifier for cross-manifest base-type matching (§8.1). */
+  readonly baseTypeId: string;
+  readonly members: IocGroupNodeManifest;
+};
+
+export type IocGroupsManifest = Record<string, IocGroupRootManifest>;

@@ -15,8 +15,13 @@ import {
 import {
   IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS,
   type IocGroupNodeManifest,
+  type IocGroupRootManifest,
   type IocGroupsManifest,
 } from "../core/manifest.js";
+import {
+  resolveBaseTypeFromCanonicalId,
+  resolveCanonicalBaseTypeId,
+} from "./canonicalBaseTypeId.js";
 import type { ResolvedScanDir } from "../generator/manifestPaths.js";
 import type { ResolvedContractRegistration } from "../generator/resolveRegistrationPlan.js";
 
@@ -41,12 +46,14 @@ export type GroupPlan =
       groupName: string;
       kind: "collection";
       baseType: string;
+      baseTypeId: string;
       members: readonly AssignableImplementationMember[];
     }
   | {
       groupName: string;
       kind: "object";
       baseType: string;
+      baseTypeId: string;
       members: readonly ContractDefaultGroupMember[];
     };
 
@@ -146,6 +153,15 @@ export const groupPlanToManifestNode = (
 
   return out;
 };
+
+export const groupPlanToManifestRoot = (
+  plan: GroupPlan,
+): IocGroupRootManifest => ({
+  kind: plan.kind,
+  baseType: plan.baseType,
+  baseTypeId: plan.baseTypeId,
+  members: groupPlanToManifestNode(plan),
+});
 
 const buildObjectGroupMembersOrIssue = (
   groupName: string,
@@ -255,17 +271,35 @@ const runGroupPlan = (
     }
 
     const entry = groups[groupName] as IocGroupDefinition;
-    const base = resolveDeclaredBaseType(
+    const canonical = resolveCanonicalBaseTypeId(checker, discovery, entry.baseType);
+
+    if (!canonical.ok) {
+      issues.push({
+        kind: "group_unknown_base_type",
+        groupName,
+        message: canonical.message,
+      });
+      continue;
+    }
+
+    const declaredBase = resolveDeclaredBaseType(
       discovery.program,
       checker,
       entry.baseType,
     );
+    const resolvedBase = declaredBase.ok
+      ? declaredBase
+      : resolveBaseTypeFromCanonicalId(
+          discovery.program,
+          checker,
+          canonical.baseTypeId,
+        );
 
-    if (!base.ok) {
+    if (!resolvedBase.ok) {
       issues.push({
         kind: "group_unknown_base_type",
         groupName,
-        message: base.message,
+        message: resolvedBase.message,
       });
       continue;
     }
@@ -277,7 +311,7 @@ const runGroupPlan = (
         discovery.generatedDir,
         discovery.scanDirs,
         plans,
-        base.type,
+        resolvedBase.type,
       );
 
       if (objectMembers.length === 0) {
@@ -300,6 +334,7 @@ const runGroupPlan = (
         groupName,
         kind: "object",
         baseType: entry.baseType,
+        baseTypeId: canonical.baseTypeId,
         members: built.members,
       });
       continue;
@@ -311,7 +346,7 @@ const runGroupPlan = (
       discovery.generatedDir,
       discovery.scanDirs,
       plans,
-      base.type,
+      resolvedBase.type,
       shouldIncludeImplInCollectionGroup,
     );
 
@@ -329,6 +364,7 @@ const runGroupPlan = (
       groupName,
       kind: "collection",
       baseType: entry.baseType,
+      baseTypeId: canonical.baseTypeId,
       members,
     });
   }
@@ -339,7 +375,7 @@ const runGroupPlan = (
 
   const manifest: IocGroupsManifest = {};
   for (const plan of groupPlans) {
-    manifest[plan.groupName] = groupPlanToManifestNode(plan);
+    manifest[plan.groupName] = groupPlanToManifestRoot(plan);
   }
 
   return { ok: true, plans: groupPlans, manifest };

@@ -520,12 +520,22 @@ describe("writeManifest", () => {
       ];
 
       const groups: IocGroupsManifest = {
-        widgetGroup: [
-          { contractName: "Widget", registrationKey: "primaryWidget" },
-          { contractName: "Widget", registrationKey: "widget" },
-        ],
+        widgetGroup: {
+          kind: "collection",
+          baseType: "Widget",
+          baseTypeId: "/fake/Widget.ts:Widget",
+          members: [
+            { contractName: "Widget", registrationKey: "primaryWidget" },
+            { contractName: "Widget", registrationKey: "widget" },
+          ],
+        },
         widgetObjectGroup: {
-          widget: { contractName: "Widget", registrationKey: "widget" },
+          kind: "object",
+          baseType: "Widget",
+          baseTypeId: "/fake/Widget.ts:Widget",
+          members: {
+            widget: { contractName: "Widget", registrationKey: "widget" },
+          },
         },
       };
 

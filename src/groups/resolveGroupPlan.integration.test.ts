@@ -77,9 +77,9 @@ describe("buildGroupPlan", () => {
         ctx,
       );
       assert.ok(result);
-      const node = result!.manifest.readServices;
-      assert.ok(Array.isArray(node));
-      const keys = (node as { registrationKey: string }[]).map((x) => x.registrationKey);
+      const root = result!.manifest.readServices;
+      assert.ok(Array.isArray(root.members));
+      const keys = root.members.map((x) => x.registrationKey);
       assert.deepStrictEqual(keys, [
         "albumService",
         "mediaStorage",
@@ -100,9 +100,9 @@ describe("buildGroupPlan", () => {
         ctx,
       );
       assert.ok(result);
-      const node = result!.manifest.readByKey;
-      assert.ok(!Array.isArray(node));
-      const obj = node as Record<string, { contractName: string; registrationKey: string }>;
+      const root = result!.manifest.readByKey;
+      assert.ok(!Array.isArray(root.members));
+      const obj = root.members;
       assert.deepStrictEqual(Object.keys(obj).sort(), [
         "albumService",
         "mediaStorage",

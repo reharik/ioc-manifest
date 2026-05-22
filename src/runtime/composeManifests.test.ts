@@ -32,7 +32,7 @@ describe("composeManifests", () => {
       const valid = baseManifest({});
       const badAt1 = {
         ...baseManifest({}),
-        manifestSchemaVersion: 2 as unknown as typeof MANIFEST_SCHEMA_VERSION,
+        manifestSchemaVersion: 1 as unknown as typeof MANIFEST_SCHEMA_VERSION,
       };
       const badAt2 = {
         ...baseManifest({
@@ -49,16 +49,16 @@ describe("composeManifests", () => {
             },
           },
         }),
-        manifestSchemaVersion: 2 as unknown as typeof MANIFEST_SCHEMA_VERSION,
+        manifestSchemaVersion: 1 as unknown as typeof MANIFEST_SCHEMA_VERSION,
       };
       assert.throws(
         () => prepareManifestsForRegistration([valid, badAt1, badAt2]),
         (err: unknown) => {
           assert.ok(err instanceof Error);
           assert.match(err.message, /Manifest schema version mismatch/);
-          assert.match(err.message, /Runtime expects: 1/);
-          assert.match(err.message, /Got: 2 from manifest at index 1/);
-          assert.match(err.message, /Got: 2 from manifest at index 2/);
+          assert.match(err.message, /Runtime expects: 2/);
+          assert.match(err.message, /Got: 1 from manifest at index 1/);
+          assert.match(err.message, /Got: 1 from manifest at index 2/);
           assert.doesNotMatch(err.message, /index 0/);
           return true;
         },
@@ -266,14 +266,19 @@ describe("composeManifests", () => {
 
   describe("When two manifests declare the same group root key", () => {
     it("should throw the group-root conflict message with original indices", () => {
-      const groupNode = [
-        {
-          contractName: "Widget",
-          registrationKey: "widget",
-        },
-      ];
-      const manifestA = baseManifest({}, [], { myGroup: groupNode });
-      const manifestB = baseManifest({}, [], { myGroup: groupNode });
+      const groupRoot = {
+        kind: "collection" as const,
+        baseType: "Widget",
+        baseTypeId: "/fake/Widget.ts:Widget",
+        members: [
+          {
+            contractName: "Widget",
+            registrationKey: "widget",
+          },
+        ],
+      };
+      const manifestA = baseManifest({}, [], { myGroup: groupRoot });
+      const manifestB = baseManifest({}, [], { myGroup: groupRoot });
 
       assert.throws(
         () => composeManifests([manifestA, manifestB]),

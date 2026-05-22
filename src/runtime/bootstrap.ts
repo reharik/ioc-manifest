@@ -14,6 +14,7 @@ import {
   IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS,
   type IocContractManifest,
   type IocGroupNodeManifest,
+  type IocGroupRootManifest,
   type IocGroupsManifest,
   type IocModuleNamespace,
   type IocRegisterableManifest,
@@ -59,8 +60,8 @@ const extractGroupRootsFromContainerManifest = (
       continue;
     }
 
-    /* Generated manifests only place `IocGroupNodeManifest` values on non-fixed keys. */
-    out[key] = value as IocGroupNodeManifest;
+    /* Schema v2: top-level group roots are `IocGroupRootManifest` wrappers. */
+    out[key] = value as IocGroupRootManifest;
   }
 
   return out;
@@ -339,7 +340,7 @@ const registerGroups = <TCradle extends object>(
     a.localeCompare(b),
   );
   for (const key of rootKeys) {
-    const node = groupsManifest[key]!;
+    const root = groupsManifest[key]!;
     registerPair<TCradle>(container, {
       [key]: asFunction(
         (cradle: TCradle) => {
@@ -349,7 +350,7 @@ const registerGroups = <TCradle extends object>(
             registrationKey: key,
           });
           try {
-            return resolveGroupNodeFromCradle(cradle, node);
+            return resolveGroupNodeFromCradle(cradle, root.members);
           } catch (cause: unknown) {
             return propagateIocResolutionFailure({
               cause,

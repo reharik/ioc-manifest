@@ -260,3 +260,51 @@ export const resolveDeclaredBaseTypeForGroup = (
   typeName: string,
 ): BaseTypeResolution =>
   resolveDeclaredBaseType(program, checker, typeName);
+
+const parseCanonicalBaseTypeId = (
+  baseTypeId: string,
+): { fileName: string; typeName: string } | undefined => {
+  const colon = baseTypeId.lastIndexOf(":");
+  if (colon <= 0 || colon >= baseTypeId.length - 1) {
+    return undefined;
+  }
+  return {
+    fileName: baseTypeId.slice(0, colon),
+    typeName: baseTypeId.slice(colon + 1),
+  };
+};
+
+/** Loads the `ts.Type` for a resolved canonical id (e.g. when the declaration lives under node_modules). */
+export const resolveBaseTypeFromCanonicalId = (
+  program: ts.Program,
+  checker: ts.TypeChecker,
+  baseTypeId: string,
+): BaseTypeResolution => {
+  const parsed = parseCanonicalBaseTypeId(baseTypeId);
+  if (parsed === undefined) {
+    return { ok: false, message: "internal error: invalid canonical base type id" };
+  }
+
+  const sf = program.getSourceFile(parsed.fileName);
+  if (sf === undefined) {
+    return {
+      ok: false,
+      message: `declaration file ${JSON.stringify(parsed.fileName)} is not in the TypeScript program`,
+    };
+  }
+
+  const decl = getTopLevelTypeDeclaration(sf, parsed.typeName);
+  if (decl === undefined) {
+    return {
+      ok: false,
+      message: `no interface or type alias ${JSON.stringify(parsed.typeName)} in ${JSON.stringify(parsed.fileName)}`,
+    };
+  }
+
+  const sym = checker.getSymbolAtLocation(decl.name);
+  if (sym === undefined) {
+    return { ok: false, message: "internal error resolving base type symbol" };
+  }
+
+  return { ok: true, type: checker.getDeclaredTypeOfSymbol(sym) };
+};
