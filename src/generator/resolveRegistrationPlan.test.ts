@@ -4,9 +4,11 @@ import { describe, it } from "node:test";
 import type { IocConfig } from "../config/iocConfig.js";
 import { IOC_CONTRACT_CONFIG_KEY } from "../config/iocConfig.js";
 import type { DiscoveredFactory } from "./types.js";
+import type { ComposedManifestContractNames } from "./loadComposedManifestContracts.js";
 import {
   buildRegistrationPlan,
   normalizeIocOverride,
+  validateConfigContractsExist,
 } from "./resolveRegistrationPlan.js";
 
 const factory = (
@@ -34,6 +36,76 @@ const toContractMap = (
   }
   return root;
 };
+
+const composedContracts = (
+  byPackage: Record<string, readonly string[]>,
+): ComposedManifestContractNames => {
+  const all = new Set<string>();
+  const map = new Map<string, ReadonlySet<string>>();
+  for (const [pkg, names] of Object.entries(byPackage)) {
+    const set = new Set(names);
+    map.set(pkg, set);
+    for (const n of names) {
+      all.add(n);
+    }
+  }
+  return { all, byPackage: map };
+};
+
+describe("validateConfigContractsExist", () => {
+  describe("When a registration references a composed-only contract", () => {
+    it("should not throw when the contract is in the composed manifest union", () => {
+      assert.doesNotThrow(() =>
+        validateConfigContractsExist(
+          {
+            discovery: { scanDirs: "src" },
+            composedManifests: ["@example/lib-storage"],
+            registrations: {
+              Storage: { s3Storage: { default: true } },
+            },
+          },
+          new Set<string>(),
+          composedContracts({
+            "@example/lib-storage": ["Storage"],
+          }),
+        ),
+      );
+    });
+  });
+
+  describe("When a registration references an unknown contract with a typo", () => {
+    it("should throw listing local and composed contract names", () => {
+      assert.throws(
+        () =>
+          validateConfigContractsExist(
+            {
+              discovery: { scanDirs: "src" },
+              composedManifests: ["@example/lib-storage"],
+              registrations: {
+                Sttorage: { s3Storage: { default: true } },
+              },
+            },
+            new Set(["Logger"]),
+            composedContracts({
+              "@example/lib-storage": ["Storage"],
+              "@example/lib-services": ["UploadService", "LoggingService"],
+            }),
+          ),
+        (err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          assert.match(message, /unknown contract "Sttorage"/);
+          assert.match(message, /Known local contracts: Logger/);
+          assert.match(
+            message,
+            /Known contracts from composed packages: LoggingService, UploadService, Storage/,
+          );
+          assert.match(message, /Did you mean: "Storage"/);
+          return true;
+        },
+      );
+    });
+  });
+});
 
 describe("normalizeIocOverride", () => {
   describe("When override includes name", () => {
@@ -145,7 +217,7 @@ describe("buildRegistrationPlan", () => {
       };
       assert.throws(
         () => buildRegistrationPlan(map, config),
-        /registrations\["Bar"\].*not discovered/,
+        /unknown contract "Bar"/,
       );
     });
   });
