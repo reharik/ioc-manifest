@@ -5,6 +5,12 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import type { IocConfig } from "../config/iocConfig.js";
 import { MANIFEST_SCHEMA_VERSION } from "../schemaVersion.js";
+import {
+  manifestSource,
+  parsedSlice,
+  typesSource,
+  validateContext,
+} from "../test-support/manifestFixtures.js";
 import { checkAppConfigSanity } from "./checks/appConfig.js";
 import { checkDefaultAmbiguity } from "./checks/defaultAmbiguity.js";
 import { checkExternalsSatisfaction } from "./checks/externals.js";
@@ -12,68 +18,18 @@ import { checkGroupConsistency } from "./checks/groups.js";
 import { checkSameKeyConflicts } from "./checks/sameKeyConflict.js";
 import { checkSchemaVersions } from "./checks/schemaVersion.js";
 import { runAllValidationChecks } from "./runValidate.js";
-import type { ParsedManifestSlice, ValidateContext } from "./types.js";
-
-const manifestSource = (
-  contracts: string,
-  extras = "",
-  version: number = MANIFEST_SCHEMA_VERSION,
-): string => `export const iocManifest = {
-  manifestSchemaVersion: ${version},
-  moduleImports: [],
-  contracts: { ${contracts} },
-  ${extras}
-};`;
-
-const typesSource = (
-  cradle: string,
-  externals: string,
-): string => `export interface IocGeneratedCradle { ${cradle} }
-export interface IocExternals { ${externals} }`;
-
-const slice = (
-  partial: Partial<ParsedManifestSlice> & Pick<ParsedManifestSlice, "packageLabel">,
-): ParsedManifestSlice => ({
-  sourceId: partial.sourceId ?? partial.packageLabel,
-  manifestPath: partial.manifestPath ?? "/tmp/ioc-manifest.ts",
-  typesPath: partial.typesPath ?? "/tmp/ioc-registry.types.ts",
-  manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
-  contracts: {},
-  groupRoots: {},
-  cradleKeys: new Set(),
-  externals: {},
-  ...partial,
-});
-
-const baseCtx = (
-  slices: readonly ParsedManifestSlice[],
-  overrides?: ValidateContext["overrides"],
-): ValidateContext => ({
-  projectRoot: "/proj",
-  configPath: "/proj/ioc.config.ts",
-  slices,
-  composedPackageNames: slices.slice(1).map((s) => s.sourceId),
-  overrides,
-  localContractNames: new Set(Object.keys(slices[0]?.contracts ?? {})),
-  composedContractNames: new Set(
-    slices.slice(1).flatMap((s) => Object.keys(s.contracts)),
-  ),
-  declaredGroupNames: new Set(
-    slices.flatMap((s) => Object.keys(s.groupRoots)),
-  ),
-});
 
 describe("validate checks", () => {
   describe("checkExternalsSatisfaction", () => {
     describe("When a composed package external is not in any cradle", () => {
       it("should report an externals error", () => {
-        const ctx = baseCtx([
-          slice({
+        const ctx = validateContext([
+          parsedSlice({
             packageLabel: "local",
             cradleKeys: new Set(["appOnly"]),
             externals: {},
           }),
-          slice({
+          parsedSlice({
             packageLabel: "@lib/a",
             sourceId: "@lib/a",
             cradleKeys: new Set(["svc"]),
@@ -89,12 +45,12 @@ describe("validate checks", () => {
 
     describe("When all externals are supplied in a cradle", () => {
       it("should report no issues", () => {
-        const ctx = baseCtx([
-          slice({
+        const ctx = validateContext([
+          parsedSlice({
             packageLabel: "local",
             cradleKeys: new Set(["logger"]),
           }),
-          slice({
+          parsedSlice({
             packageLabel: "@lib/a",
             sourceId: "@lib/a",
             externals: { logger: { typeText: "Logger" } },
@@ -108,8 +64,8 @@ describe("validate checks", () => {
   describe("checkSchemaVersions", () => {
     describe("When a manifest schema version mismatches runtime", () => {
       it("should report a schema-version error", () => {
-        const ctx = baseCtx([
-          slice({
+        const ctx = validateContext([
+          parsedSlice({
             packageLabel: "@lib/a",
             manifestSchemaVersion: 1,
           }),
@@ -127,12 +83,12 @@ describe("validate checks", () => {
         const impl = {
           registrationKey: "dup",
         };
-        const ctx = baseCtx([
-          slice({
+        const ctx = validateContext([
+          parsedSlice({
             packageLabel: "local",
             contracts: { A: { a: impl } },
           }),
-          slice({
+          parsedSlice({
             packageLabel: "@lib/b",
             sourceId: "@lib/b",
             contracts: { B: { b: impl } },
@@ -147,13 +103,13 @@ describe("validate checks", () => {
     describe("When source override resolves the conflict", () => {
       it("should report no issues", () => {
         const impl = { registrationKey: "dup" };
-        const ctx = baseCtx(
+        const ctx = validateContext(
           [
-            slice({
+            parsedSlice({
               packageLabel: "local",
               contracts: { A: { a: impl } },
             }),
-            slice({
+            parsedSlice({
               packageLabel: "@lib/b",
               sourceId: "@lib/b",
               contracts: { B: { b: impl } },
@@ -174,8 +130,8 @@ describe("validate checks", () => {
   describe("checkGroupConsistency", () => {
     describe("When group kinds differ across manifests", () => {
       it("should report a group-kind error", () => {
-        const ctx = baseCtx([
-          slice({
+        const ctx = validateContext([
+          parsedSlice({
             packageLabel: "local",
             groupRoots: {
               g: {
@@ -186,7 +142,7 @@ describe("validate checks", () => {
               },
             },
           }),
-          slice({
+          parsedSlice({
             packageLabel: "@lib/b",
             sourceId: "@lib/b",
             groupRoots: {
@@ -204,10 +160,52 @@ describe("validate checks", () => {
       });
     });
 
+    describe("When base type ids differ but groupBaseTypeAliases declares equivalence", () => {
+      it("should report no group-base-type issue", () => {
+        const idA = "/path/a.ts:Discount";
+        const idB = "/path/b.ts:Discount";
+        const ctx = validateContext(
+          [
+            parsedSlice({
+              packageLabel: "local",
+              groupRoots: {
+                g: {
+                  kind: "collection",
+                  baseType: "Discount",
+                  baseTypeId: idA,
+                  members: [],
+                },
+              },
+            }),
+            parsedSlice({
+              packageLabel: "@lib/b",
+              sourceId: "@lib/b",
+              groupRoots: {
+                g: {
+                  kind: "collection",
+                  baseType: "Discount",
+                  baseTypeId: idB,
+                  members: [],
+                },
+              },
+            }),
+          ],
+          {
+            groups: { baseTypeAliases: { g: [idA, idB] } },
+          },
+        );
+        const issues = checkGroupConsistency(ctx);
+        assert.equal(
+          issues.filter((i) => i.category === "group-base-type").length,
+          0,
+        );
+      });
+    });
+
     describe("When base type ids differ without aliases", () => {
       it("should report a group-base-type error with alias suggestion", () => {
-        const ctx = baseCtx([
-          slice({
+        const ctx = validateContext([
+          parsedSlice({
             packageLabel: "local",
             groupRoots: {
               g: {
@@ -218,7 +216,7 @@ describe("validate checks", () => {
               },
             },
           }),
-          slice({
+          parsedSlice({
             packageLabel: "@lib/b",
             sourceId: "@lib/b",
             groupRoots: {
@@ -242,8 +240,8 @@ describe("validate checks", () => {
   describe("checkDefaultAmbiguity", () => {
     describe("When multiple implementations exist without a default", () => {
       it("should report a default-ambiguity error", () => {
-        const ctx = baseCtx([
-          slice({
+        const ctx = validateContext([
+          parsedSlice({
             packageLabel: "local",
             contracts: {
               Widget: {
@@ -252,7 +250,7 @@ describe("validate checks", () => {
               },
             },
           }),
-          slice({
+          parsedSlice({
             packageLabel: "@lib/x",
             sourceId: "@lib/x",
             contracts: {
@@ -278,9 +276,9 @@ describe("validate checks", () => {
             Storge: { x: { default: true } },
           },
         } as IocConfig;
-        const ctx = baseCtx([
-          slice({ packageLabel: "local", contracts: { Storage: { s: { registrationKey: "s" } } } }),
-          slice({
+        const ctx = validateContext([
+          parsedSlice({ packageLabel: "local", contracts: { Storage: { s: { registrationKey: "s" } } } }),
+          parsedSlice({
             packageLabel: "@lib/a",
             sourceId: "@lib/a",
             contracts: {},
@@ -297,9 +295,9 @@ describe("validate checks", () => {
     describe("When multiple independent issues exist", () => {
       it("should aggregate externals and schema-version errors", () => {
         const config = { composedManifests: ["@lib/a"] } as IocConfig;
-        const ctx = baseCtx([
-          slice({ packageLabel: "local", cradleKeys: new Set() }),
-          slice({
+        const ctx = validateContext([
+          parsedSlice({ packageLabel: "local", cradleKeys: new Set() }),
+          parsedSlice({
             packageLabel: "@lib/a",
             sourceId: "@lib/a",
             manifestSchemaVersion: 1,

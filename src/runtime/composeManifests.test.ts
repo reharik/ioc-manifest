@@ -6,6 +6,7 @@ import type {
   IocRegisterableManifest,
 } from "../core/manifest.js";
 import { MANIFEST_SCHEMA_VERSION } from "../schemaVersion.js";
+import { baseManifest, implMeta } from "../test-support/manifestFixtures.js";
 import {
   composeManifests,
   formatConflictingRegistrationKeyError,
@@ -16,17 +17,6 @@ import {
   prepareManifestsForRegistration,
   validateManifestSchemaVersions,
 } from "./composeManifests.js";
-
-const baseManifest = (
-  contracts: IocContractManifest,
-  moduleImports: readonly IocModuleNamespace[] = [],
-  extras: Record<string, unknown> = {},
-): IocRegisterableManifest => ({
-  manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
-  moduleImports,
-  contracts,
-  ...extras,
-});
 
 describe("composeManifests", () => {
   describe("When manifest schema version does not match runtime", () => {
@@ -709,6 +699,64 @@ describe("composeManifests", () => {
           ]),
         /Got: 9 from manifest at index 1/,
       );
+    });
+  });
+
+  describe("When three manifests each contribute a distinct contract", () => {
+    it("should merge all implementations into one composed manifest", () => {
+      const manifestA = baseManifest(
+        {
+          Alpha: { a: implMeta({ contractName: "Alpha", implementationName: "a" }) },
+        },
+        [{ buildA: (): { tag: string } => ({ tag: "a" }) }],
+      );
+      const manifestB = baseManifest(
+        {
+          Beta: { b: implMeta({ contractName: "Beta", implementationName: "b" }) },
+        },
+        [{ buildB: (): { tag: string } => ({ tag: "b" }) }],
+      );
+      const manifestC = baseManifest(
+        {
+          Gamma: { g: implMeta({ contractName: "Gamma", implementationName: "g" }) },
+        },
+        [{ buildG: (): { tag: string } => ({ tag: "g" }) }],
+      );
+
+      const composed = composeManifests([manifestA, manifestB, manifestC]);
+      assert.ok(composed.contracts.Alpha?.a);
+      assert.ok(composed.contracts.Beta?.b);
+      assert.ok(composed.contracts.Gamma?.g);
+      assert.strictEqual(composed.moduleImports.length, 3);
+    });
+  });
+
+  describe("When a manifest contributes only a group root", () => {
+    it("should merge the group with contracts from other manifests", () => {
+      const groupOnly = baseManifest({}, [], {
+        tactics: {
+          kind: "collection",
+          baseType: "Tactic",
+          baseTypeId: "/shared:Tactic",
+          members: [],
+        },
+      });
+      const withContract = baseManifest(
+        {
+          Unit: {
+            u: implMeta({
+              contractName: "Unit",
+              implementationName: "u",
+              registrationKey: "unit",
+            }),
+          },
+        },
+        [{ buildU: (): { id: string } => ({ id: "u1" }) }],
+      );
+
+      const composed = composeManifests([groupOnly, withContract]);
+      assert.ok(composed.tactics);
+      assert.ok(composed.contracts.Unit?.u);
     });
   });
 });
