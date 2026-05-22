@@ -61,7 +61,7 @@ const expectFactory = (
   return f;
 };
 
-describe("Discovery strategies (discoverFactories)", () => {
+describe("discoverFactories", () => {
   describe("When naming convention discovery is enabled", () => {
     it("should discover build* factories by default prefix", () => {
       const program = makeProgram();
@@ -219,4 +219,3 @@ describe("Discovery strategies (discoverFactories)", () => {
     });
   });
 });
-
