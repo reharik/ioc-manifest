@@ -7,6 +7,7 @@ import type {
   IocModuleNamespace,
 } from "../core/manifest.js";
 import { MANIFEST_SCHEMA_VERSION } from "../schemaVersion.js";
+import { baseManifest, implMeta } from "../test-support/manifestFixtures.js";
 import { registerIocFromManifest } from "./bootstrap.js";
 import type { ComposedRegistrationOverrides } from "./composedOverrides.js";
 import { isIocResolutionError } from "./iocResolutionError.js";
@@ -933,6 +934,90 @@ describe("registerIocFromManifest", () => {
       }>({ injectionMode: "PROXY" });
       registerIocFromManifest(container, [manifestA, manifestB], overrides);
       assert.strictEqual(container.resolve("mediaStorage").tag, "mock");
+    });
+  });
+
+  describe("When a composed package external is supplied by another manifest", () => {
+    it("should resolve the external registration key from the supplying manifest at runtime", () => {
+      type Logger = { message: string };
+      const loggerImpl: Logger = { message: "supplied-by-lib" };
+
+      const supplier = baseManifest(
+        {
+          Logger: {
+            appLogger: {
+              ...implMeta({
+                contractName: "Logger",
+                implementationName: "appLogger",
+                exportName: "buildAppLogger",
+                registrationKey: "logger",
+                default: true,
+              }),
+            },
+          },
+        },
+        [{ buildAppLogger: (): Logger => loggerImpl }],
+      );
+
+      const consumer = baseManifest(
+        {
+          Consumer: {
+            consumer: {
+              ...implMeta({
+                contractName: "Consumer",
+                implementationName: "consumer",
+                exportName: "buildConsumer",
+                registrationKey: "consumer",
+                moduleIndex: 0,
+                default: true,
+              }),
+            },
+          },
+        },
+        [
+          {
+            buildConsumer: (deps: { logger: Logger }): { out: string } => ({
+              out: deps.logger.message,
+            }),
+          },
+        ],
+      );
+
+      const container = createContainer<{
+        logger: Logger;
+        consumer: { out: string };
+      }>({ injectionMode: "PROXY" });
+
+      registerIocFromManifest(container, [supplier, consumer]);
+      assert.strictEqual(container.resolve("consumer").out, "supplied-by-lib");
+    });
+  });
+
+  describe("When a manifest declares an incompatible schema version", () => {
+    it("should throw before registering factories", () => {
+      const bad = {
+        ...baseManifest({
+          Only: {
+            only: implMeta({
+              contractName: "Only",
+              implementationName: "only",
+            }),
+          },
+        }),
+        manifestSchemaVersion: 1 as unknown as typeof MANIFEST_SCHEMA_VERSION,
+      };
+
+      assert.throws(
+        () =>
+          registerIocFromManifest(createContainer({ injectionMode: "PROXY" }), [
+            bad,
+          ]),
+        (err: unknown) => {
+          assert.ok(err instanceof Error);
+          assert.match(err.message, /Manifest schema version mismatch/);
+          return true;
+        },
+      );
     });
   });
 });
