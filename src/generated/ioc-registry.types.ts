@@ -7,15 +7,21 @@ import type { Widget } from "../examples/c-default-selection.js";
 import type { CacheClient } from "../examples/d-grouping.js";
 import type { AlbumService } from "../examples/f-dependency-injection.js";
 
-export interface IocGeneratedTypes {
-  albumService: AlbumService;
-  cacheClient: CacheClient;
-  logger: Logger;
-  mediaStorage: MediaStorage;
-  mediaStorages: ReadonlyArray<MediaStorage>;
-  widget: Widget;
-  widgets: ReadonlyArray<Widget>;
-  mediaStoragesGroup: ReadonlyArray<MediaStorage>;
+export interface IocGeneratedCradle {
+  albumService: AlbumService; // locally supplied
+  cacheClient: CacheClient; // locally supplied
+  consoleLogger: Logger; // locally supplied
+  localMediaStorage: MediaStorage; // locally supplied
+  logger: Logger; // locally supplied
+  mediaStorage: MediaStorage; // locally supplied
+  mediaStorages: ReadonlyArray<MediaStorage>; // locally supplied
+  mediaStoragesGroup: ReadonlyArray<MediaStorage>; // locally supplied
+  memoryCache: CacheClient; // locally supplied
+  primaryWidget: Widget; // locally supplied
+  s3MediaStorage: MediaStorage; // locally supplied
+  secondaryWidget: Widget; // locally supplied
+  widget: Widget; // locally supplied
+  widgets: ReadonlyArray<Widget>; // locally supplied
 }
 
-export type IocGeneratedCradle = IocGeneratedTypes;
+export interface IocExternals {}
