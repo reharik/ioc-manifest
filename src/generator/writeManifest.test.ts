@@ -560,6 +560,7 @@ describe("writeManifest", () => {
         mainSource,
         /IocGeneratedContainerManifest<\s*IocManifestGroupRoots\s*>/,
       );
+      assert.match(mainSource, /\bmanifestSchemaVersion:\s*1\b/);
     });
   });
 });

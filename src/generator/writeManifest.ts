@@ -383,6 +383,8 @@ Re-run \`npm run gen:manifest\` after changing factories or IoC config.
 ${importLines.join("\n")}
 
 ${groupRootsTypeBlock}export const iocManifest = {
+  manifestSchemaVersion: 1,
+
   moduleImports: [
 ${moduleArrayLines.join("\n")}
   ] as const satisfies readonly IocModuleNamespace[],
