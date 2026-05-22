@@ -26,6 +26,11 @@ export type IocOverride = {
   name?: string;
   lifetime?: IocLifetime;
   default?: boolean;
+  /**
+   * App mode only. Resolves same registration-key conflicts across composed manifests:
+   * `'local'` or a package name from `composedManifests`.
+   */
+  source?: "local" | string;
 };
 
 export type IocRegistrationsPerContract = Record<
@@ -146,6 +151,19 @@ export type IocConfig = {
     /** Output directory relative to the package root unless absolute. Default: `"generated"`. */
     generatedDir?: string;
   };
+  /**
+   * Package names whose manifests this app composes. Non-empty triggers app-mode codegen
+   * (`ioc-composed.ts`). Omit for library mode.
+   */
+  composedManifests?: string[];
+  /**
+   * Library mode only. Informational path for `package.json` exports (default `./generated/ioc-manifest`).
+   */
+  manifestExportPath?: string;
+  /**
+   * Fallback local package name when `package.json` has no `name` (self-reference detection in app mode).
+   */
+  packageName?: string;
   registrations?: Record<string, IocRegistrationsPerContract>;
   /**
    * Group registrations by assignability to a named `baseType` (interface or type alias in the program).
