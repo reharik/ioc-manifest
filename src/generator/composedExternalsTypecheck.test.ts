@@ -26,7 +26,7 @@ describe("composed externals satisfaction assertion", () => {
 export interface LibExternals { database: unknown; }
 type _IocExpect<T extends true> = T;
 type _LibExternalsSatisfied =
-  LibExternals extends Pick<AppCradle, keyof LibExternals> ? true : never;
+  LibExternals extends Pick<AppCradle, keyof LibExternals> ? true : false;
 type _LibExternalsAssert = _IocExpect<_LibExternalsSatisfied>;
 `,
       );

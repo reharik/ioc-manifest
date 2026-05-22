@@ -27,8 +27,13 @@ describe("buildComposedManifestSource", () => {
 
       assert.match(source, /export const composedManifests = \[localManifest, mediaCoreManifest, infraManifest\] as const;/);
       assert.match(source, /export type AppCradle = LocalCradle & MediaCoreCradle & InfraCradle;/);
+      assert.match(source, /type _IocExpect<T extends true> = T;/);
       assert.match(source, /type _MediaCoreExternalsSatisfied/);
-      assert.match(source, /type _MediaCoreExternalsAssert = _IocExpect/);
+      assert.match(
+        source,
+        /MediaCoreExternals extends Pick<AppCradle, keyof MediaCoreExternals> \? true : false;/,
+      );
+      assert.match(source, /type _MediaCoreExternalsAssert = _IocExpect<_MediaCoreExternalsSatisfied>/);
       assert.match(source, /type _InfraExternalsAssert = _IocExpect/);
       assert.match(source, /defaultImplementation: "mockMediaStorage"/);
       assert.match(source, /"albumRepository": "local"/);

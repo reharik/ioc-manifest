@@ -8,20 +8,20 @@ import type { CacheClient } from "../examples/d-grouping.js";
 import type { AlbumService } from "../examples/f-dependency-injection.js";
 
 export interface IocGeneratedCradle {
-  albumService: AlbumService; // locally supplied
-  cacheClient: CacheClient; // locally supplied
-  consoleLogger: Logger; // locally supplied
-  localMediaStorage: MediaStorage; // locally supplied
-  logger: Logger; // locally supplied
-  mediaStorage: MediaStorage; // locally supplied
-  mediaStorages: ReadonlyArray<MediaStorage>; // locally supplied
-  mediaStoragesGroup: ReadonlyArray<MediaStorage>; // locally supplied
-  memoryCache: CacheClient; // locally supplied
-  primaryWidget: Widget; // locally supplied
-  s3MediaStorage: MediaStorage; // locally supplied
-  secondaryWidget: Widget; // locally supplied
-  widget: Widget; // locally supplied
-  widgets: ReadonlyArray<Widget>; // locally supplied
+  albumService: AlbumService;
+  cacheClient: CacheClient;
+  consoleLogger: Logger;
+  localMediaStorage: MediaStorage;
+  logger: Logger;
+  mediaStorage: MediaStorage;
+  mediaStorages: ReadonlyArray<MediaStorage>;
+  mediaStoragesGroup: ReadonlyArray<MediaStorage>;
+  memoryCache: CacheClient;
+  primaryWidget: Widget;
+  s3MediaStorage: MediaStorage;
+  secondaryWidget: Widget;
+  widget: Widget;
+  widgets: ReadonlyArray<Widget>;
 }
 
 export interface IocExternals {}

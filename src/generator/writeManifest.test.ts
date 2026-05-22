@@ -284,8 +284,13 @@ describe("writeManifest", () => {
         path.join(generatedDir, "ioc-registry.types.ts"),
         "utf8",
       );
-      assert.match(typesSource, /database: Database; \/\/ externally provided/);
-      assert.match(typesSource, /logger: Logger; \/\/ externally provided/);
+      const cradleBody = typesSource.match(
+        /export interface IocGeneratedCradle \{([\s\S]*?)\}\n\nexport interface IocExternals/,
+      )?.[1];
+      assert.ok(cradleBody !== undefined);
+      assert.ok(!/\bdatabase:/.test(cradleBody));
+      assert.ok(!/\blogger:/.test(cradleBody));
+      assert.match(cradleBody, /\buserService:\s*UserService;/);
       assert.match(
         typesSource,
         /export interface IocExternals \{\n  database: Database;\n  logger: Logger;\n\}/,
@@ -340,7 +345,7 @@ describe("writeManifest", () => {
         path.join(generatedDir, "ioc-registry.types.ts"),
         "utf8",
       );
-      assert.match(typesSource, /\bonlyOne:\s*OnlyOne\b.*\/\/ locally supplied/);
+      assert.match(typesSource, /\bonlyOne:\s*OnlyOne;/);
       assert.ok(!typesSource.includes("onlyOnes:"));
     });
   });
@@ -407,15 +412,9 @@ describe("writeManifest", () => {
         path.join(generatedDir, "ioc-registry.types.ts"),
         "utf8",
       );
-      assert.match(typesSource, /\bwidget:\s*Widget\b.*\/\/ locally supplied/);
-      assert.match(
-        typesSource,
-        /\bwidgets:\s*ReadonlyArray<\s*Widget\s*>;\s*\/\/ locally supplied/,
-      );
-      assert.match(
-        typesSource,
-        /\bprimaryWidget:\s*Widget\b.*\/\/ locally supplied/,
-      );
+      assert.match(typesSource, /\bwidget:\s*Widget;/);
+      assert.match(typesSource, /\bwidgets:\s*ReadonlyArray<\s*Widget\s*>;/);
+      assert.match(typesSource, /\bprimaryWidget:\s*Widget;/);
       assert.ok(!typesSource.includes("Record<"));
     });
 
@@ -466,7 +465,7 @@ describe("writeManifest", () => {
         path.join(generatedDir, "ioc-registry.types.ts"),
         "utf8",
       );
-      assert.match(typesSource, /\bdatabase:\s*Knex\b.*\/\/ locally supplied/);
+      assert.match(typesSource, /\bdatabase:\s*Knex;/);
       assert.ok(!/\bknex:\s*Knex\b/.test(typesSource));
     });
 
@@ -541,10 +540,7 @@ describe("writeManifest", () => {
         path.join(generatedDir, "ioc-registry.types.ts"),
         "utf8",
       );
-      assert.match(
-        typesSource,
-        /\bwidgets:\s*ReadonlyArray<\s*Widget\s*>;\s*\/\/ locally supplied/,
-      );
+      assert.match(typesSource, /\bwidgets:\s*ReadonlyArray<\s*Widget\s*>;/);
       assert.match(typesSource, /\bwidgetGroup:\s*ReadonlyArray</);
       assert.match(typesSource, /\bwidgetObjectGroup:\s*\{/);
       assert.match(typesSource, /\bwidget:\s*Widget\b/);
