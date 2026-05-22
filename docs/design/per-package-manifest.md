@@ -97,12 +97,14 @@ No local-vs-external distinction at the factory site. A factory destructuring `d
 Three artifacts emitted to the package's `generatedDir`:
 
 1. `ioc-manifest.ts` — runtime manifest value. Same shape as today's manifest (factories, contracts, lifetimes, module imports). Per-package, not per-app.
-2. `ioc-registry.types.ts` — exports `IocGeneratedCradle` (flat interface containing every demanded key with its declared type) and `IocExternals` (the subset of demanded keys with no local supplier).
+2. `ioc-registry.types.ts` — exports `IocGeneratedCradle` (flat interface of locally-supplied registration keys and their types) and `IocExternals` (demanded keys with no local supplier).
 3. _(apps only)_ `ioc-composed.ts` — see §6.
 
 ### 4.3 `IocGeneratedCradle` shape
 
-A single flat interface. Local supplies and externals appear side-by-side. Factories destructure from this cradle (via their named deps types, which are subsets of it).
+A single flat interface containing **only locally-supplied keys** (factory return types and contract access/collection slots). Externally-demanded keys are **not** in the cradle; they appear only in `IocExternals`. Factories never destructure from `IocGeneratedCradle` directly (§3); their named deps types may reference external keys, but those keys are satisfied at app composition time.
+
+Externals are excluded from the cradle so that `AppCradle = LocalCradle & LibACradle & …` does not already contain a library’s external keys via that library’s own `IocGeneratedCradle`. If externals were in each library cradle, the compile-time satisfaction assertion in §6 would be vacuously true.
 
 ```ts
 // media-core/generated/ioc-registry.types.ts
@@ -112,10 +114,8 @@ import type { Knex } from "knex";
 import type { Logger } from "../types/Logger.js";
 
 export interface IocGeneratedCradle {
-  albumRepository: AlbumRepository; // locally supplied
-  albumService: AlbumService; // locally supplied
-  database: Knex; // externally provided
-  logger: Logger; // externally provided
+  albumRepository: AlbumRepository;
+  albumService: AlbumService;
 }
 
 export interface IocExternals {
@@ -123,8 +123,6 @@ export interface IocExternals {
   logger: Logger;
 }
 ```
-
-Codegen emits comments distinguishing locally-supplied from externally-provided keys in `IocGeneratedCradle`, for human readability. The distinction has no type-level effect — both kinds of keys are mandatory.
 
 ### 4.4 Demand-only-from-supplier degenerate case
 
@@ -226,16 +224,19 @@ export const composedManifests = [
 
 export type AppCradle = ApiCradle & MediaCoreCradle & InfraCradle;
 
-// Compile-time satisfaction assertions
+// Compile-time externals satisfaction assertions
+type _IocExpect<T extends true> = T;
 type _MediaCoreExternalsSatisfied =
   MediaCoreExternals extends Pick<AppCradle, keyof MediaCoreExternals>
     ? true
-    : never;
+    : false;
+type _MediaCoreExternalsAssert = _IocExpect<_MediaCoreExternalsSatisfied>;
 type _InfraExternalsSatisfied =
-  InfraExternals extends Pick<AppCradle, keyof InfraExternals> ? true : never;
+  InfraExternals extends Pick<AppCradle, keyof InfraExternals> ? true : false;
+type _InfraExternalsAssert = _IocExpect<_InfraExternalsSatisfied>;
 ```
 
-The satisfaction assertions produce TS compile errors at the assertion site if any composed package's externals are not provided by some member of the intersection. Errors point to the unsatisfied package; the developer fixes by either adding a factory or composing another manifest that supplies the key.
+The `_IocExpect<T extends true>` wrapper is required: a bare conditional that resolves to `false` does not fail `tsc`; assigning it to `_IocExpect<false>` does. When a composed package’s externals are not supplied by any member of `AppCradle` (typically the app’s local factories), compilation fails at the `_…ExternalsAssert` line. The developer fixes by adding a factory for the missing key or composing another manifest that supplies it.
 
 App bootstrap imports `composedManifests` and `AppCradle` from this generated file. No hand-maintained list.
 
@@ -546,7 +547,7 @@ Package A composes manifest from B, B composes from A. Conceptually nonsense —
 The implementation is considered complete when:
 
 1. A package can declare `ioc.config.ts` scanning only its own source, run `ioc generate`, and produce a working manifest, types file, and externals interface.
-2. An app can declare `composedManifests`, run `ioc generate`, and produce a working `ioc-composed.ts` with a satisfaction-asserted `AppCradle`.
+2. An app can declare `composedManifests`, run `ioc generate`, and produce a working `ioc-composed.ts` with a satisfaction-asserted `AppCradle` (`_IocExpect` assertions fail compilation when composed externals are missing from the intersection).
 3. `registerIocFromManifest(container, manifests)` composes any number of manifests, resolves cross-manifest contracts per §5, and refuses unresolved conflicts.
 4. Same-key conflicts produce errors with both manifest sources named, resolvable via `source` config.
 5. Cross-manifest groups merge per §8 with canonical-base-type matching.
