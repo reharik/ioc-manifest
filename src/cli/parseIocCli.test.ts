@@ -128,6 +128,19 @@ describe("parseIocCliArgv", () => {
         options: { json: true },
       });
     });
+
+    it("should parse validate --project", () => {
+      const r = parseIocCliArgv([
+        ...nodeStub(),
+        "validate",
+        "--project",
+        "./packages/app",
+      ]);
+      assert.deepEqual(r, {
+        kind: "validate",
+        options: { projectDir: "./packages/app", json: false },
+      });
+    });
   });
 
   describe("When argv is invalid", () => {
