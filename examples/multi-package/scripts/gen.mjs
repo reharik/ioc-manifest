@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, globSync } from "node:fs";
 import { execSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,7 +15,23 @@ if (!existsSync(iocCli)) {
   process.exit(1);
 }
 
-const packages = ["lib-storage", "lib-services", "app", "app-externals-broken"];
+/** Packages with `src/ioc.config.ts` (same convention as the main test glob). */
+const discoverPackages = (root) => {
+  const pattern = path.join(root, "packages", "*", "src", "ioc.config.ts");
+  const configs = globSync(pattern);
+  return configs
+    .map((cfg) => path.basename(path.dirname(path.dirname(cfg))))
+    .sort((a, b) => a.localeCompare(b));
+};
+
+const packages = discoverPackages(exampleRoot);
+
+if (packages.length === 0) {
+  console.error(
+    "[example] no packages found matching packages/*/src/ioc.config.ts",
+  );
+  process.exit(1);
+}
 
 for (const name of packages) {
   const cwd = path.join(exampleRoot, "packages", name);

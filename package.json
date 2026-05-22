@@ -1,6 +1,6 @@
 {
   "name": "ioc-manifest",
-  "version": "0.3.2",
+  "version": "1.0.0",
   "description": "Build-time factory discovery and codegen: generates a typed Awilix (PROXY) registration manifest from TypeScript sources with ioc.config as the single policy surface.",
   "license": "MIT",
   "repository": {
@@ -60,7 +60,7 @@
     "example:start": "npm run start --prefix examples/multi-package",
     "example:typecheck-broken": "npm run typecheck:broken-expect-fail --prefix examples/multi-package",
     "example:validate-broken-expect-fail": "npm run validate:broken-expect-fail --prefix examples/multi-package",
-    "example:full": "npm run example:install && npm run example:gen && npm run example:validate && npm run example:typecheck && npm run example:start && npm run example:typecheck-broken && npm run example:validate-broken-expect-fail"
+    "example:full": "npm run example:install && npm run full --prefix examples/multi-package"
   },
   "dependencies": {
     "awilix": "^12.0.5",

@@ -1,6 +1,6 @@
 # ioc-manifest
 
-**Convention-based dependency discovery and codegen for [Awilix](https://github.com/jeffijoe/awilix).** Write factory functions, run the generator, get a fully typed IoC container — no manual registrations.
+**Convention-based dependency discovery and codegen for [Awilix](https://github.com/jeffijoe/awilix).** Write factory functions, run the generator, get a fully typed IoC container — no manual registrations. Compose containers across packages in a monorepo with first-class support.
 
 ```
 npm install ioc-manifest
@@ -12,14 +12,22 @@ npm install ioc-manifest
 
 In most Node.js DI setups, every new service means another `container.register(...)` call, another import, another string key to keep in sync. Scale that to 50+ services and registration code becomes a maintenance burden. Awilix's `loadModules` helps, but you lose type safety — `container.resolve("userService")` returns `any` unless you maintain a cradle type by hand.
 
+And once you have more than one package in a monorepo, the registration story gets worse: either one app's bootstrap scans into every other package's source (fragile, fights TypeScript's module resolution), or you duplicate registration glue everywhere.
+
 ## What this does
 
-`ioc-manifest` scans your TypeScript source at **build time**, discovers factory functions by naming convention, infers their contracts and dependencies from the type system, and generates two files:
+`ioc-manifest` scans your TypeScript source at **build time**, discovers factory functions by naming convention, infers their contracts and dependencies from the type system, and generates manifest and types files that hand directly to Awilix.
+
+For a single-package project, that's two generated files:
 
 1. **`ioc-manifest.ts`** — a registration manifest with every factory, its contract, lifetime, and module import
-2. **`ioc-registry.types.ts`** — a fully typed `IocGeneratedCradle` interface for your container
+2. **`ioc-registry.types.ts`** — a fully typed `IocGeneratedCradle` interface for your container, plus an `IocExternals` interface describing dependencies the package expects from outside
 
-Hand those to Awilix and you're done. Every factory is registered with the correct key and lifetime, the container is fully typed, and you never write a registration line again.
+For a monorepo where one app composes manifests from multiple packages, a third file appears in the app:
+
+3. **`ioc-composed.ts`** — the composition glue: imports each package's manifest, intersects their cradle types into a single `AppCradle`, and emits compile-time assertions that every package's externals are satisfied.
+
+Every factory is registered with the correct key and lifetime, the container is fully typed end-to-end, and you never write a registration line again.
 
 The approach is loosely inspired by [StructureMap](https://structuremap.github.io/)'s registry scanning conventions from the .NET world — convention over configuration, with a single config file as the policy surface when you need to override defaults.
 
@@ -29,15 +37,35 @@ The approach is loosely inspired by [StructureMap](https://structuremap.github.i
 - **Typed container** — `container.resolve("userService")` returns `UserService`, not `any`
 - **Plural collections** — two implementations of `MediaStorage` automatically get a `mediaStorages: ReadonlyArray<MediaStorage>` key
 - **Default selection** — convention picks the default; override in config when you have multiple implementations
+- **Externals are explicit** — every dependency a package expects from outside is tracked in a generated `IocExternals` interface
+- **Cross-package composition** — apps in a monorepo can compose manifests from multiple packages with no scanning across boundaries
+- **Compile-time satisfaction checks** — when composing, TypeScript fails compilation if any composed package's externals aren't satisfied
+- **`ioc validate`** — a CI-friendly command that reports every cross-manifest problem at once
 - **Works in dev and prod** — discovers from TypeScript source during development, and works just as well against a bundled single-file production build (see [Dev and production builds](#dev-and-production-builds))
+
+---
+
+## Library mode vs app mode
+
+`ioc-manifest` has two modes. Which one applies depends on a single config field: `composedManifests`.
+
+**Library mode** is the default. A package generates its own manifest and types. Factories in that package can declare dependencies on things the package itself supplies (other local factories) _and_ on things it expects from outside (externals). The generated `IocExternals` interface documents the external contract — what the package needs to be handed at composition time.
+
+**App mode** is what you turn on when a package composes manifests from other packages. The app declares `composedManifests: ['@scope/pkg-a', '@scope/pkg-b']` in its config. Codegen produces the extra `ioc-composed.ts` file, intersects the participating cradle types, and emits the compile-time assertion that every composed package's externals are satisfied somewhere in the composition.
+
+A single-package project stays in library mode and never thinks about composition. A monorepo with one or more apps that consume shared packages has library-mode packages and one or more app-mode apps.
+
+The quick start below walks through library mode. App mode is covered in [Cross-package composition](#cross-package-composition).
 
 ---
 
 ## Quick start
 
+This walks through a single-package setup in library mode.
+
 ### 1. Create factories
 
-Write plain factory functions. The naming convention `build<Name>` is the only requirement.
+Write plain factory functions. The naming convention `build<Name>` is the only requirement. Each factory's first parameter is a **named local deps type** describing what it consumes.
 
 ```ts
 // src/services/buildUserRepository.ts
@@ -53,20 +81,23 @@ export const buildUserRepository = (): UserRepository => ({
 ```ts
 // src/services/buildUserService.ts
 import type { UserRepository } from "./buildUserRepository.js";
-import type { IocGeneratedCradle } from "../generated/ioc-registry.types.js";
 
 export type UserService = {
   getUser: (id: string) => Promise<User | undefined>;
 };
 
+type UserServiceDeps = {
+  userRepository: UserRepository;
+};
+
 export const buildUserService = ({
   userRepository,
-}: IocGeneratedCradle): UserService => ({
+}: UserServiceDeps): UserService => ({
   getUser: (id) => userRepository.findById(id),
 });
 ```
 
-Dependencies are declared via parameter destructuring against the generated cradle type. After generation, TypeScript tells you exactly what's available.
+The named deps type pattern is required — factories cannot destructure directly from `IocGeneratedCradle`. There's a real reason for this: the cradle is generated _from_ what your factories declare. Asking a factory to declare its inputs by referencing the cradle would be a chicken-and-egg loop. Naming the deps type at the factory site also makes each factory independently testable — see [Testing](#testing) below.
 
 ### 2. Configure
 
@@ -111,39 +142,46 @@ const container = createContainer<IocGeneratedCradle>({
   injectionMode: InjectionMode.PROXY,
 });
 
-registerIocFromManifest(container, iocManifest);
+registerIocFromManifest(container, [iocManifest]);
 
 // Fully typed — no 'any', no string guessing
 const userService = container.resolve("userService");
 ```
 
-That's all you need for most applications. The sections below cover the conventions in more detail, and the [Advanced usage](#advanced-usage) section covers features you can reach for when your app grows — folder-scoped lifetimes, groups, monorepo support, and environment-specific configs.
+Note that `registerIocFromManifest` takes an **array** of manifests, even when there's only one. The array is set-like — ordering is irrelevant, and the same input always produces the same registrations.
+
+That's all you need for most single-package applications. The sections below cover the conventions in more detail. For monorepo composition, see [Cross-package composition](#cross-package-composition).
 
 ---
 
 ## What gets generated
 
-Here's what the output looks like for a small app. You never edit these files — they're regenerated from source.
+Here's what library-mode output looks like for a small app. You never edit these files — they're regenerated from source.
 
-**`ioc-registry.types.ts`** — the typed cradle:
+**`ioc-registry.types.ts`** — the typed cradle and externals:
 
 ```ts
 /* AUTO-GENERATED. DO NOT EDIT. */
 import type { Logger } from "../services/buildConsoleLogger.js";
 import type { MediaStorage } from "../services/buildLocalMediaStorage.js";
 import type { UserService } from "../services/buildUserService.js";
+import type { Database } from "../types/Database.js";
 
-export interface IocGeneratedTypes {
+export interface IocGeneratedCradle {
   logger: Logger;
   mediaStorage: MediaStorage;
   mediaStorages: ReadonlyArray<MediaStorage>;
   userService: UserService;
 }
 
-export type IocGeneratedCradle = IocGeneratedTypes;
+export interface IocExternals {
+  database: Database;
+}
 ```
 
-Notice `mediaStorages` (plural) — that appeared automatically because there are multiple `MediaStorage` implementations.
+`mediaStorages` (plural) appears automatically because there are multiple `MediaStorage` implementations.
+
+`IocExternals` lists every dependency the package consumes from outside — keys destructured by factory deps types where no local factory supplies them. `IocGeneratedCradle` contains only what the package itself supplies. The two interfaces together describe the package's full contract: what it provides and what it needs.
 
 **`ioc-manifest.ts`** — the registration data:
 
@@ -159,6 +197,7 @@ import * as ioc_services_buildLocalMediaStorage from "../services/buildLocalMedi
 // ... more imports ...
 
 export const iocManifest = {
+  manifestSchemaVersion: 2,
   moduleImports: [
     /* ... */
   ] as const satisfies readonly IocModuleNamespace[],
@@ -201,9 +240,10 @@ The contract type must be a named type (interface or type alias) that is importe
 
 When a contract has only one implementation, it is the default. When there are multiple, the default is selected by this precedence:
 
-1. **Explicit** — `default: true` on exactly one implementation in `ioc.config`
-2. **Convention** — the implementation whose registration key equals the camel-cased contract name (e.g. `mediaStorage` for `MediaStorage`)
-3. **Single** — if only one implementation exists, it's the default
+1. **App override** — `default: true` in an app-mode `ioc.config` (highest precedence; only relevant when composing)
+2. **Explicit** — `default: true` on exactly one implementation in the local `ioc.config`
+3. **Convention** — the implementation whose registration key equals the camel-cased contract name (e.g. `mediaStorage` for `MediaStorage`)
+4. **Single** — if only one implementation exists, it's the default
 
 If the choice is ambiguous, generation fails with a clear error telling you what to do.
 
@@ -222,7 +262,9 @@ This is the same fundamental idea behind having multiple implementations of a si
 
 ### Dependency inference
 
-The generator analyzes each factory's first parameter to determine which contracts it depends on. If `buildUserService` destructures `{ userRepository }` and `UserRepository` is a known contract, the manifest records that dependency relationship. This powers the resolution chain in error messages.
+The generator analyzes each factory's first parameter — the named deps type — to determine which keys the factory consumes. Every property in the deps type becomes a **demand**. If a demanded key has a corresponding `build*` factory in the same package, it's a local dependency. If not, it's an external (and appears in `IocExternals`).
+
+Codegen validates type agreement across factories: if `buildA` declares `database: Knex` and `buildB` declares `database: PostgresClient`, codegen fails with both locations and the conflicting types named.
 
 ---
 
@@ -243,19 +285,22 @@ export default defineIocConfig({
   groups: {
     /* cross-contract grouping by base type (advanced) */
   },
+  // app mode only:
+  composedManifests: [
+    /* package names to compose */
+  ],
 });
 ```
 
 ### `discovery`
 
-| Field                         | Purpose                                                                                                                      | Default                              |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `scanDirs`                    | **Required.** Directories to scan. String, string array, or array of `{ path, scope?, importPrefix?, importMode? }` objects. | —                                    |
-| `includes`                    | Glob patterns for files to include.                                                                                          | `["**/*.{ts,tsx,js,mjs,cjs}"]`       |
-| `excludes`                    | Glob patterns for files to exclude.                                                                                          | `["**/*.d.ts", "**/*.test.ts", ...]` |
-| `factoryPrefix`               | Export name prefix for factory discovery.                                                                                    | `"build"`                            |
-| `generatedDir`                | Output directory for generated files.                                                                                        | `"generated"`                        |
-| `workspacePackageImportBases` | Maps workspace roots to bare specifiers for generated imports (see [Monorepo support](#monorepo-support-importprefix)).      | —                                    |
+| Field           | Purpose                                                                                                                                      | Default                              |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `scanDirs`      | **Required.** Directories to scan. String, string array, or array of `{ path, scope? }` objects. Paths must resolve within the package root. | —                                    |
+| `includes`      | Glob patterns for files to include.                                                                                                          | `["**/*.{ts,tsx,js,mjs,cjs}"]`       |
+| `excludes`      | Glob patterns for files to exclude.                                                                                                          | `["**/*.d.ts", "**/*.test.ts", ...]` |
+| `factoryPrefix` | Export name prefix for factory discovery.                                                                                                    | `"build"`                            |
+| `generatedDir`  | Output directory for generated files.                                                                                                        | `"generated"`                        |
 
 ### `registrations`
 
@@ -276,15 +321,200 @@ registrations: {
 
 Under each contract name, keys are implementation names from discovery (`buildFoo` → `foo`). The reserved `$contract` key holds contract-level options.
 
-| Per-implementation field | Effect                                                       |
-| ------------------------ | ------------------------------------------------------------ |
-| `name`                   | Overrides the Awilix registration key                        |
-| `lifetime`               | `"singleton"` \| `"scoped"` \| `"transient"`                 |
-| `default`                | `true` to select this implementation as the contract default |
+| Per-implementation field | Effect                                                                                                                             |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                   | Overrides the Awilix registration key                                                                                              |
+| `lifetime`               | `"singleton"` \| `"scoped"` \| `"transient"`                                                                                       |
+| `default`                | `true` to select this implementation as the contract default                                                                       |
+| `source`                 | (app mode only) Resolve same-key conflicts across composed manifests. See [Cross-package composition](#cross-package-composition). |
 
 | `$contract` field | Effect                                                                                          |
 | ----------------- | ----------------------------------------------------------------------------------------------- |
 | `accessKey`       | Overrides the cradle property name for the default slot (e.g. `"database"` instead of `"knex"`) |
+
+### App-mode fields
+
+These only apply in app mode (a package that composes manifests from other packages):
+
+| Field                  | Purpose                                                                                                                                              |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `composedManifests`    | Array of package names whose manifests this app composes. Setting this turns on app mode.                                                            |
+| `packageName`          | The local package's npm name. Used for self-reference detection. Falls back to `package.json` `name`; required if neither is available.              |
+| `groupBaseTypeAliases` | Equivalence sets for canonical base type identifiers when hoisting produces mismatches. See [Cross-package composition](#cross-package-composition). |
+
+| Library-mode-only field | Purpose                                                                                                               |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `manifestExportPath`    | Informational. The path your `package.json` `exports` points at for the manifest. Default `./generated/ioc-manifest`. |
+
+`composedManifests` and `manifestExportPath` are mutually exclusive — a config is either library or app mode.
+
+---
+
+## Cross-package composition
+
+Once you have more than one package in a monorepo, you typically have one or more apps that compose manifests from shared libraries. This is what app mode is for.
+
+### The model
+
+Each package generates its own manifest in library mode, scanning only its own source. The app's config declares which packages it composes with via `composedManifests`. Codegen produces an extra file in the app — `ioc-composed.ts` — that imports each package's manifest, intersects their cradle types, and emits compile-time assertions that every composed package's externals are satisfied.
+
+At runtime, the app passes the composed manifests array to `registerIocFromManifest`. Composition is set-like: ordering doesn't matter. Conflicts (two manifests supplying the same registration key) are hard errors by default, resolved via explicit `source` config.
+
+### A monorepo example
+
+```
+packages/
+  lib-storage/        # library mode
+    src/
+      ioc.config.ts
+      factories/
+      types/
+  lib-services/       # library mode
+    src/
+      ioc.config.ts
+      factories/
+      types/
+  app/                # app mode
+    src/
+      ioc.config.ts
+      bootstrap.ts
+      factories/
+```
+
+`lib-storage` registers `Storage` implementations. `lib-services` registers services that consume `Storage` (declared in their deps types — so `storage` appears in `lib-services`'s `IocExternals`). The app composes both and supplies anything neither library supplies.
+
+### App config
+
+```ts
+// packages/app/src/ioc.config.ts
+import { defineIocConfig } from "ioc-manifest";
+
+export default defineIocConfig({
+  discovery: {
+    scanDirs: "src",
+    generatedDir: "generated",
+  },
+  composedManifests: ["@example/lib-storage", "@example/lib-services"],
+  registrations: {
+    Storage: {
+      s3Storage: { default: true },
+    },
+  },
+});
+```
+
+### Required package exports
+
+Each composed package's `package.json` must expose two subpath exports:
+
+```jsonc
+{
+  "exports": {
+    ".": "./src/index.ts",
+    "./iocManifest": "./src/generated/ioc-manifest.js",
+    "./iocTypes": "./src/generated/ioc-registry.types.js",
+  },
+}
+```
+
+(Substitute `./dist/...` for published packages with a build step.)
+
+### Generated `ioc-composed.ts`
+
+```ts
+/* AUTO-GENERATED. DO NOT EDIT. */
+import { iocManifest as localManifest } from "./ioc-manifest.js";
+import { iocManifest as libStorageManifest } from "@example/lib-storage/iocManifest";
+import { iocManifest as libServicesManifest } from "@example/lib-services/iocManifest";
+
+import type { IocGeneratedCradle as LocalCradle } from "./ioc-registry.types.js";
+import type { IocGeneratedCradle as LibStorageCradle } from "@example/lib-storage/iocTypes";
+import type { IocGeneratedCradle as LibServicesCradle } from "@example/lib-services/iocTypes";
+import type { IocExternals as LibStorageExternals } from "@example/lib-storage/iocTypes";
+import type { IocExternals as LibServicesExternals } from "@example/lib-services/iocTypes";
+
+export const composedManifests = [
+  localManifest,
+  libStorageManifest,
+  libServicesManifest,
+] as const;
+
+export type AppCradle = LocalCradle & LibStorageCradle & LibServicesCradle;
+
+// Compile-time externals satisfaction assertions
+type _IocExpect<T extends true> = T;
+type _LibStorageExternalsSatisfied =
+  LibStorageExternals extends Pick<AppCradle, keyof LibStorageExternals>
+    ? true
+    : false;
+type _LibStorageExternalsAssert = _IocExpect<_LibStorageExternalsSatisfied>;
+type _LibServicesExternalsSatisfied =
+  LibServicesExternals extends Pick<AppCradle, keyof LibServicesExternals>
+    ? true
+    : false;
+type _LibServicesExternalsAssert = _IocExpect<_LibServicesExternalsSatisfied>;
+
+export const composedRegistrationOverrides = {
+  /* ... */
+};
+```
+
+If `lib-services` requires a `logger` and no manifest in the composition supplies it, `_LibServicesExternalsAssert` fails compilation with a TypeScript error pointing at the assertion line. You don't have to run anything to find out you forgot something.
+
+### App bootstrap
+
+```ts
+import { createContainer } from "awilix";
+import { registerIocFromManifest } from "ioc-manifest";
+import {
+  composedManifests,
+  composedRegistrationOverrides,
+  type AppCradle,
+} from "./generated/ioc-composed.js";
+
+const container = createContainer<AppCradle>();
+registerIocFromManifest(
+  container,
+  composedManifests,
+  composedRegistrationOverrides,
+);
+
+const uploadService = container.resolve("uploadService");
+```
+
+### Resolving same-key conflicts
+
+If two composed manifests both supply the same Awilix registration key, composition fails with a hard error naming both manifests. Resolve via the `source` field:
+
+```ts
+registrations: {
+  AlbumRepository: {
+    albumRepository: { source: "local" }, // or "@example/lib-services"
+  },
+}
+```
+
+`source: "local"` picks the app's own factory; a package name picks that package's registration. There's no last-write-wins or array-position semantics — you decide explicitly which manifest's registration wins.
+
+### Groups across manifests
+
+If multiple composed packages declare contributors to the same group (e.g. several packages register `DiscountStrategy` implementations and all declare a `discountStrategies` collection group), the group merges across manifests. `container.resolve("discountStrategies")` returns the union.
+
+For this to work, all contributors must reference the same canonical base type — typically by importing it from a shared contracts package. If npm hoisting produces a single physical file for the base type, identity matching works automatically.
+
+In rare cases (version skew, peer-dep conflicts, nested installs) two contributors may end up with different physical paths for what is structurally the same type. The library reports this with a clear error and a remediation hint, including the exact config block to paste:
+
+```ts
+// in the app's ioc.config.ts
+groupBaseTypeAliases: {
+  discountStrategies: [
+    "/path/to/a.ts:DiscountStrategy",
+    "/path/to/b.ts:DiscountStrategy",
+  ],
+}
+```
+
+The library treats the listed identifiers as equivalent. This is an escape hatch, not a normal-path mechanism.
 
 ---
 
@@ -304,20 +534,105 @@ This was a deliberate design choice (and a painful one to get right). There's no
 
 ```bash
 npx ioc                       # prints help
-npx ioc generate              # discover factories, emit manifest + types
+npx ioc generate              # discover factories, emit manifest + types (and ioc-composed.ts in app mode)
 npx ioc generate -c ./ioc.config.test.ts   # generate with a specific config
 npx ioc inspect               # loads the generated manifest and prints a summary
 npx ioc inspect --discovery   # re-runs discovery without reading the manifest
-npx ioc inspect --config ./src/ioc.config.ts --project ./packages/api
+npx ioc validate              # app mode: cross-manifest checks against composedManifests
+npx ioc validate --json       # machine-readable issue list
 ```
 
 | Flag                       | Purpose                                                                                 |
 | -------------------------- | --------------------------------------------------------------------------------------- |
 | `--discovery`              | (inspect only) Re-run factory discovery and planning; don't read the generated manifest |
+| `--json`                   | (validate only) Emit issues as JSON                                                     |
 | `--config PATH`, `-c PATH` | Explicit path to `ioc.config.ts`                                                        |
 | `--project PATH`           | Project directory for config resolution (default: cwd)                                  |
 
 Set `IOC_DEBUG=1` for full stack traces on errors.
+
+### `ioc validate`
+
+A separate command from `generate` because they have different audiences. `generate` runs frequently during development and shouldn't fail on transient inconsistencies (a sibling package mid-refactor). `validate` is the pre-merge / pre-deploy gate.
+
+`validate` loads every composed manifest, runs every cross-manifest check at once, and reports all issues — not just the first. It does not modify any files; pure inspection. Exit code is non-zero if any error-severity issue is reported.
+
+Typical output for a failing run:
+
+```
+[app-config] registrations references unknown contract "Storge"
+  Known local contracts: Logger.
+  Known composed contracts: Logger, LoggingService, Storage, UploadService.
+  Did you mean: "Storage"?
+  Suggested fix: Fix the contract name in ioc.config.ts registrations, or add a factory for "Storge".
+
+Validation failed: 1 error, 0 warnings.
+```
+
+Library-mode invocations print an informational message and exit 0 — there's nothing cross-manifest to validate.
+
+Recommended workflow: `ioc generate` → `ioc validate` → `tsc --noEmit` → deploy.
+
+---
+
+## Testing
+
+The named-deps-type pattern at the factory site enables three levels of testing, each with the ergonomics that fit:
+
+### Factory-level (no container)
+
+Most unit tests don't need a container. Import the factory, import its deps type, hand-build a stub, call the factory:
+
+```ts
+import { buildValidateOperationService } from "../src/...";
+import type { ValidateOperationServiceDeps } from "../src/...";
+
+const deps: ValidateOperationServiceDeps = {
+  mediaItemReadRepository: {
+    /* stub */
+  },
+  grantReadRepository: {
+    /* stub */
+  },
+  albumMemberReadRepository: {
+    /* stub */
+  },
+};
+const svc = buildValidateOperationService(deps);
+```
+
+No container, no manifest, no awilix. TypeScript enforces what must be provided.
+
+### Container-level with mocked externals
+
+When you want the full container — testing wiring, lifetimes, multi-service interactions inside the package — register the package's manifest then fill `IocExternals` with `asValue` stubs:
+
+```ts
+import { createContainer, asValue } from "awilix";
+import { registerIocFromManifest } from "ioc-manifest";
+import { iocManifest } from "../src/generated/ioc-manifest.js";
+import type {
+  IocGeneratedCradle,
+  IocExternals,
+} from "../src/generated/ioc-registry.types.js";
+
+const container = createContainer<IocGeneratedCradle>();
+registerIocFromManifest(container, [iocManifest]);
+
+const externals: IocExternals = {
+  database: mockKnex,
+  logger: silentLogger,
+};
+for (const [k, v] of Object.entries(externals)) {
+  container.register({ [k]: asValue(v) });
+}
+```
+
+The `IocExternals` type makes the external surface a typed checklist: forget one and TypeScript errors; add a new external dep in the package and every test breaks until updated.
+
+### Test-specific manifest
+
+For shared stubs across many tests, write stub factories under `tests/stubs/` and a separate `ioc.config.test.ts` scanning both `src` and `tests/stubs`. Generate a test manifest. Use as above. Run with `npx ioc generate -c ./ioc.config.test.ts`.
 
 ---
 
@@ -327,7 +642,9 @@ Errors are designed to tell you exactly what went wrong and what to do about it.
 
 **Config errors** are prefixed `[ioc-config]` — unknown contracts in `registrations`, duplicate defaults, key collisions. These fail at generation time before any files are written.
 
-**Discovery errors** are prefixed `[ioc]` — duplicate registration keys, unresolvable contract types, overlapping scan directories with conflicting scopes.
+**Discovery errors** are prefixed `[ioc]` — duplicate registration keys, unresolvable contract types, overlapping scan directories with conflicting scopes, factories destructuring directly from `IocGeneratedCradle` (use named deps types instead).
+
+**Validation errors** are prefixed by category (`[externals]`, `[same-key-conflict]`, `[group-base-type]`, etc.) and emitted by `ioc validate`. Validate aggregates: a failing run reports every issue at once, not just the first.
 
 **Runtime resolution errors** use `IocResolutionError` with structured dependency chains:
 
@@ -402,9 +719,13 @@ groups: {
 Now `container.resolve("discountStrategies")` gives you `ReadonlyArray<DiscountStrategy>` — every implementation that's assignable to the base type, discovered automatically. Your strategy runner just iterates through the array:
 
 ```ts
+type PricingEngineDeps = {
+  discountStrategies: ReadonlyArray<DiscountStrategy>;
+};
+
 export const buildPricingEngine = ({
   discountStrategies,
-}: IocGeneratedCradle): PricingEngine => ({
+}: PricingEngineDeps): PricingEngine => ({
   applyDiscounts: (order) => {
     for (const strategy of discountStrategies) {
       if (strategy.applies(order)) {
@@ -417,6 +738,8 @@ export const buildPricingEngine = ({
 ```
 
 Add a sixth strategy? Just create the factory. It shows up in the group automatically — no registration changes.
+
+If you need strategies to run in a specific order, put ordering metadata on the strategy interface itself (e.g. a `priority` field) and sort at use time. The library never tries to order group members.
 
 #### Object groups: bundling related services
 
@@ -445,75 +768,29 @@ Now `container.resolve("readServices")` returns an object keyed by each contract
 
 #### Group validation
 
-The generator validates that group names don't collide with implementation keys, access keys, or collection keys. If a base type has no assignable implementations, generation fails with an actionable error.
-
-### Monorepo support (`importPrefix`)
-
-In a monorepo, factories in one package often return types defined in another. Without configuration, the generated manifest would emit deep relative paths like `../../../packages/shared/src/types/UserService.js` — fragile and ugly.
-
-`importPrefix` and `importMode` fix this. They tell the generator how to write import statements for factories discovered under a given scan root:
-
-```ts
-discovery: {
-  scanDirs: [
-    {
-      path: "packages/shared/src",
-      importPrefix: "@acme/shared",
-      importMode: "subpath",
-    },
-    {
-      path: "packages/api/src",
-      importPrefix: "@acme/api",
-      importMode: "subpath",
-    },
-  ],
-},
-```
-
-With `importMode: "subpath"`, a factory at `packages/shared/src/services/buildLogger.ts` gets imported as `@acme/shared/services/buildLogger.js` in the generated manifest — matching your package's published exports. With `importMode: "root"`, it would emit just `@acme/shared`.
-
-For contract type imports (the `import type` lines in `ioc-registry.types.ts`), use `workspacePackageImportBases` to achieve the same mapping:
-
-```ts
-discovery: {
-  scanDirs: "packages/api/src",
-  workspacePackageImportBases: [
-    { root: "packages/shared", importBase: "@acme/shared" },
-  ],
-},
-```
-
-This ensures the generated types file uses `import type { UserService } from "@acme/shared"` instead of a deep relative path into another package's source tree.
+The generator validates that group names don't collide with implementation keys, access keys, or collection keys. If a base type has no assignable implementations, generation fails with an actionable error. Cross-manifest group composition is covered in [Cross-package composition](#cross-package-composition).
 
 ### Environment-specific configs
 
-The separation between factory code and `ioc.config.ts` makes it straightforward to swap implementations by environment. Your factories don't change — the config is the only thing that differs:
+The separation between factory code and `ioc.config.ts` makes it straightforward to swap implementations by environment. Your factories don't change — the config (or the set of composed manifests) is the only thing that differs.
 
-```ts
-// ioc.config.ts (production)
-registrations: {
-  EmailService: {
-    sesEmailService: { default: true },
-  },
-  Cache: {
-    redisCache: { default: true, lifetime: "singleton" },
-  },
-},
+For a single-package app, point the generator at a different config:
+
+```bash
+npx ioc generate --config ./ioc.config.test.ts
 ```
 
+For a monorepo app, you can swap `composedManifests` entries to compose with mock packages in tests:
+
 ```ts
-// ioc.config.test.ts (testing)
-registrations: {
-  EmailService: {
-    mockEmailService: { default: true },
-  },
-  Cache: {
-    inMemoryCache: { default: true, lifetime: "transient" },
-  },
-},
+// ioc.config.test.ts
+composedManifests: [
+  "@example/lib-storage-mock",  // a sibling test-only package
+  "@example/lib-services",
+],
 ```
 
-Point the generator at a different config with `npx ioc generate --config ./ioc.config.test.ts` and you get a completely different wiring — all mocks, all stubs, whatever you need — without touching a single factory file.
+Either way, factory source code doesn't change.
 
 ---
 
@@ -523,13 +800,23 @@ Point the generator at a different config with `npx ioc generate --config ./ioc.
 
 **Contract not discovered** — the factory's return type must resolve to a named type (interface or type alias). The contract symbol must be imported or declared in the same file as the factory. Anonymous `{ foo: string }` return types are silently skipped.
 
-**Duplicate registration keys** — every implementation needs a globally unique Awilix key. If two factories produce the same key, rename the exports or use `registrations[Contract][impl].name` to override.
+**Factory destructures `IocGeneratedCradle`** — not allowed. Use a named local deps type instead. The error message names the factory and shows the correct pattern.
+
+**Duplicate registration keys within a manifest** — every implementation needs a globally unique Awilix key. If two factories produce the same key, rename the exports or use `registrations[Contract][impl].name` to override.
+
+**Duplicate registration keys across composed manifests** — composition errors with both manifest sources named. Resolve via `registrations[Contract][impl].source` in the app's `ioc.config`.
 
 **Overlapping scan directories with different scopes** — if a factory file matches multiple scan roots that specify different `scope` values, generation fails. Narrow the roots or set lifetimes per implementation in `registrations`.
 
-**`registrations` for unknown contracts** — keys in `registrations` must match discovered contract type names exactly. A typo fails with a list of what was actually discovered.
+**`registrations` for unknown contracts** — keys in `registrations` must match a discovered contract type name exactly. In app mode, that includes contracts from composed manifests. A typo fails with a list of what was actually discovered, locally and from composed packages.
 
-**`inspect` shows `lifetimeSource: factory-config`** — this means the lifetime came from `ioc.config`, not from the factory source file (the label is historical).
+**App mode codegen fails to resolve a composed package** — the package needs `./iocManifest` and `./iocTypes` subpath exports in its `package.json`. Until those are added, app codegen can't import the manifest.
+
+**`_<Pkg>ExternalsAssert` fails to compile** — a composed package's externals are not satisfied by the composition. Add a factory in the app (or in another composed package) that supplies the missing key, or compose another manifest that does.
+
+**Group base type mismatch across manifests** — caused by hoisting producing different physical paths for the same logical type. The error includes the remediation block to paste into `groupBaseTypeAliases`.
+
+**Library-mode invocation of `ioc validate`** — prints an informational message and exits 0. Validate is a cross-manifest tool; a library has no cross-manifest concerns to validate.
 
 ---
 
@@ -537,10 +824,12 @@ Point the generator at a different config with `npx ioc generate --config ./ioc.
 
 This package is **not** an IoC container. It is a codegen layer over Awilix that trades manual registration for convention.
 
-- **Factories are plain functions.** No decorators, no base classes, no `RESOLVER` symbols. A factory is an exported function that takes a cradle and returns a value.
+- **Factories are plain functions.** No decorators, no base classes, no `RESOLVER` symbols. A factory is an exported function that takes a named deps type and returns a value.
 - **Policy lives in one file.** Lifetimes, defaults, and key overrides are in `ioc.config.ts` — never scattered across factory sources. Looking at a factory tells you _what_ it builds; looking at the config tells you _how_ it's registered.
 - **Types are inferred, not declared.** The generator reads the TypeScript program to discover contracts, dependencies, and assignability. You don't maintain a parallel type registry.
-- **Errors fail fast and explain themselves.** Ambiguous defaults, key collisions, and missing contracts are caught at generation time with messages that name the problem and suggest the fix.
+- **Library packages own their boundary.** Each package generates its own manifest. What it supplies appears in `IocGeneratedCradle`; what it expects from outside appears in `IocExternals`. The contract is explicit and machine-readable.
+- **App-mode composition is set-like.** `registerIocFromManifest(container, [a, b, c])` is order-independent. Conflicts are hard errors with explicit resolution, never silent override.
+- **Errors fail fast and explain themselves.** Ambiguous defaults, key collisions, missing externals, and base-type mismatches are caught at generation, validation, or compile time — with messages that name the problem, suggest a fix, and where possible give you the exact config block to paste.
 - **Static imports, not runtime scanning.** The generated manifest is a plain TypeScript module with static imports. It works in dev with loose source files and in production with a single bundled file — no filesystem walking at runtime.
 
 ---
