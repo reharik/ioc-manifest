@@ -9,17 +9,27 @@ import {
 import type { DiscoveredFactory } from "../types.js";
 import {
   emitTypeReference,
+  formatTypeDisplay,
+  isUnresolvableDepsPropertyType,
   type EmitTypeReferenceContext,
 } from "./emitTypeReference.js";
 import type {
   DemandSupplyAnalysisResult,
   DemandSupplyCradleEntry,
+  FactorySourceLocation,
   EmittedTypeReference,
 } from "./types.js";
 
 export type { DemandSupplyAnalysisResult, DemandSupplyCradleEntry } from "./types.js";
 
 const normalizePath = (p: string): string => path.normalize(p);
+
+const typesMutuallyAgree = (
+  checker: ts.TypeChecker,
+  a: ts.Type,
+  b: ts.Type,
+): boolean =>
+  checker.isTypeAssignableTo(a, b) && checker.isTypeAssignableTo(b, a);
 
 const collectLocalSupplierKeys = (
   factories: readonly DiscoveredFactory[],
@@ -35,6 +45,21 @@ const collectLocalSupplierKeys = (
     }
   }
   return keys;
+};
+
+const factoryLocation = (
+  factory: DiscoveredFactory,
+  factoryDecl: ts.FunctionLike,
+  sourceFile: ts.SourceFile,
+): FactorySourceLocation => {
+  const pos =
+    factoryDecl.parameters[0]?.getStart() ?? factoryDecl.getStart();
+  const { line } = sourceFile.getLineAndCharacterOfPosition(pos);
+  return {
+    exportName: factory.exportName,
+    modulePath: factory.modulePath,
+    line: line + 1,
+  };
 };
 
 const collectDepsProperties = (
@@ -54,6 +79,34 @@ const collectDepsProperties = (
   }
 
   return out.sort((a, b) => a.name.localeCompare(b.name));
+};
+
+const formatTypeConflictError = (
+  key: string,
+  first: { factory: FactorySourceLocation; typeDisplay: string },
+  second: { factory: FactorySourceLocation; typeDisplay: string },
+  projectRoot: string,
+): string => {
+  const fmt = (loc: FactorySourceLocation, typeDisplay: string): string => {
+    const abs = path.join(projectRoot, loc.modulePath);
+    const rel = path.relative(projectRoot, abs).replace(/\\/g, "/");
+    return `  - Factory ${JSON.stringify(loc.exportName)} at ${rel}:${loc.line} declares ${key}: ${typeDisplay}`;
+  };
+
+  return `[ioc] Conflicting types for demanded key ${JSON.stringify(key)}:
+${fmt(first.factory, first.typeDisplay)}
+${fmt(second.factory, second.typeDisplay)}`;
+};
+
+const formatUnresolvableDepsError = (
+  projectRoot: string,
+  loc: FactorySourceLocation,
+  propName: string,
+  typeDisplay: string,
+): string => {
+  const abs = path.join(projectRoot, loc.modulePath);
+  const rel = path.relative(projectRoot, abs).replace(/\\/g, "/");
+  return `[ioc] Factory ${JSON.stringify(loc.exportName)} at ${rel}:${loc.line} references an unresolvable type in deps for property ${JSON.stringify(propName)}: ${typeDisplay}`;
 };
 
 const mergeEntry = (
@@ -84,7 +137,7 @@ export type AnalyzeDemandSupplyOptions = FactoryDiscoveryPaths & {
 };
 
 /**
- * Walks factories to collect demand/supply pairs and classify local vs external keys.
+ * Walks factories to collect demand/supply pairs and validate type agreement.
  */
 export const analyzeDemandSupply = (
   factories: readonly DiscoveredFactory[],
@@ -99,6 +152,11 @@ export const analyzeDemandSupply = (
   for (const sf of program.getSourceFiles()) {
     sourceFileByPath.set(normalizePath(sf.fileName), sf);
   }
+
+  const demandByKey = new Map<
+    string,
+    { type: ts.Type; factory: FactorySourceLocation; typeRef: EmittedTypeReference }
+  >();
 
   const cradleMap = new Map<string, DemandSupplyCradleEntry>();
 
@@ -117,6 +175,7 @@ export const analyzeDemandSupply = (
       continue;
     }
 
+    const loc = factoryLocation(factory, factoryDecl, sourceFile);
     const emitCtx: EmitTypeReferenceContext = {
       program,
       projectRoot,
@@ -159,14 +218,58 @@ export const analyzeDemandSupply = (
     );
     const props = collectDepsProperties(checker, depsType);
     for (const { name: propName, type: propType } of props) {
+      if (isUnresolvableDepsPropertyType(checker, propType, emitCtx)) {
+        throw new Error(
+          formatUnresolvableDepsError(
+            projectRoot,
+            loc,
+            propName,
+            formatTypeDisplay(checker, propType),
+          ),
+        );
+      }
+
       const typeRef = emitTypeReference(checker, propType, emitCtx);
       if (typeRef === undefined) {
-        continue;
+        throw new Error(
+          formatUnresolvableDepsError(
+            projectRoot,
+            loc,
+            propName,
+            formatTypeDisplay(checker, propType),
+          ),
+        );
       }
 
       const classification = localSupplierKeys.has(propName)
         ? "local"
         : "external";
+
+      const existing = demandByKey.get(propName);
+      if (existing !== undefined) {
+        if (!typesMutuallyAgree(checker, existing.type, propType)) {
+          throw new Error(
+            formatTypeConflictError(
+              propName,
+              {
+                factory: existing.factory,
+                typeDisplay: formatTypeDisplay(checker, existing.type),
+              },
+              {
+                factory: loc,
+                typeDisplay: formatTypeDisplay(checker, propType),
+              },
+              projectRoot,
+            ),
+          );
+        }
+      } else {
+        demandByKey.set(propName, {
+          type: propType,
+          factory: loc,
+          typeRef,
+        });
+      }
 
       mergeEntry(cradleMap, propName, typeRef, classification);
     }

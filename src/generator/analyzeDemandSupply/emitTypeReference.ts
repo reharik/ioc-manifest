@@ -185,3 +185,20 @@ export const emitTypeReference = (
 
   return { typeName, relImport, useDefaultImport };
 };
+
+export const formatTypeDisplay = (
+  checker: ts.TypeChecker,
+  type: ts.Type,
+): string => checker.typeToString(type, undefined, ts.TypeFormatFlags.NoTruncation);
+
+export const isUnresolvableDepsPropertyType = (
+  checker: ts.TypeChecker,
+  type: ts.Type,
+  ctx: EmitTypeReferenceContext,
+): boolean => {
+  const apparent = checker.getApparentType(type);
+  if (apparent.flags & (ts.TypeFlags.Any | ts.TypeFlags.TypeParameter)) {
+    return true;
+  }
+  return emitTypeReference(checker, type, ctx) === undefined;
+};
