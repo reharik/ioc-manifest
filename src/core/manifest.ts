@@ -1,3 +1,5 @@
+import type { ManifestSchemaVersion } from "../schemaVersion.js";
+
 export type IocModuleNamespace = Record<string, unknown>;
 
 /** Lifetime values stored in generated manifests (lowercase; maps to Awilix `Lifetime`). */
@@ -55,13 +57,14 @@ export type IocContractManifest = Record<
 
 /** Fixed top-level keys on the generated container manifest; group roots must not use these names. */
 export const IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS: ReadonlySet<string> =
-  new Set(["moduleImports", "contracts"]);
+  new Set(["manifestSchemaVersion", "moduleImports", "contracts"]);
 
 /**
  * Core shape every generated container manifest includes. Configured group roots are emitted
  * as additional top-level properties alongside these.
  */
 export type IocGeneratedContainerManifestCore = {
+  readonly manifestSchemaVersion: ManifestSchemaVersion;
   readonly moduleImports: readonly IocModuleNamespace[];
   readonly contracts: IocContractManifest;
 };

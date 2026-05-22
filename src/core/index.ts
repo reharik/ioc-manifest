@@ -21,3 +21,8 @@ export type {
 } from "./manifest.js";
 
 export { IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS } from "./manifest.js";
+
+export {
+  MANIFEST_SCHEMA_VERSION,
+  type ManifestSchemaVersion,
+} from "../schemaVersion.js";
