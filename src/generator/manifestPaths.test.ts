@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
@@ -8,51 +6,37 @@ import {
   emitBarePackageSpecifierFromNodeModulesPath,
   mapTypesPackageToRuntimePackage,
   normalizeEmittedModuleSpecifier,
-  resolveWorkspacePackageRoot,
+  resolveScanDirEntries,
 } from "./manifestPaths.js";
 
+describe("resolveScanDirEntries", () => {
+  describe("When a scanDir path resolves outside the package root", () => {
+    it("should throw a v2 cross-package error", () => {
+      const projectRoot = path.join(path.sep, "proj", "app");
+      assert.throws(
+        () =>
+          resolveScanDirEntries(projectRoot, [
+            { path: "../../packages/other/src" },
+          ]),
+        /scanDir.*resolves outside the package root.*composedManifests/,
+      );
+    });
+  });
+
+  describe("When a scanDir path stays inside the package root", () => {
+    it("should resolve absPath under projectRoot", () => {
+      const projectRoot = path.join(path.sep, "proj", "app");
+      const [entry] = resolveScanDirEntries(projectRoot, [{ path: "src" }]);
+      assert.strictEqual(
+        entry!.absPath,
+        path.normalize(path.join(projectRoot, "src")),
+      );
+    });
+  });
+});
+
 describe("computeManifestModuleSpecifier", () => {
-  describe("When the file is under a scan dir with importMode root", () => {
-    it("should return the import prefix only", () => {
-      const projectRoot = path.join(path.sep, "proj", "app");
-      const pkgRoot = path.join(projectRoot, "packages", "lib");
-      const file = path.join(pkgRoot, "src", "repo.ts");
-      const generatedDir = path.join(projectRoot, "generated");
-      const scanDirs = [
-        {
-          absPath: pkgRoot,
-          importPrefix: "@acme/lib",
-          importMode: "root" as const,
-        },
-      ];
-      assert.strictEqual(
-        computeManifestModuleSpecifier(file, generatedDir, scanDirs),
-        "@acme/lib",
-      );
-    });
-  });
-
-  describe("When the file is under a scan dir with importMode subpath", () => {
-    it("should return prefix plus posix path from scan root without extension plus .js", () => {
-      const projectRoot = path.join(path.sep, "proj", "app");
-      const pkgRoot = path.join(projectRoot, "packages", "lib");
-      const file = path.join(pkgRoot, "src", "repositories", "repo.ts");
-      const generatedDir = path.join(projectRoot, "generated");
-      const scanDirs = [
-        {
-          absPath: pkgRoot,
-          importPrefix: "@acme/lib",
-          importMode: "subpath" as const,
-        },
-      ];
-      assert.strictEqual(
-        computeManifestModuleSpecifier(file, generatedDir, scanDirs),
-        "@acme/lib/src/repositories/repo.js",
-      );
-    });
-  });
-
-  describe("When the file is only matched by a local scan dir without importPrefix", () => {
+  describe("When the file is under a local scan dir", () => {
     it("should emit a relative specifier from generatedDir", () => {
       const projectRoot = path.join(path.sep, "proj", "app");
       const srcRoot = path.join(projectRoot, "src");
@@ -101,57 +85,15 @@ describe("computeManifestModuleSpecifier", () => {
   });
 
   describe("When the declaration path is relative to projectRoot", () => {
-    it("should resolve it before workspace matching", () => {
+    it("should resolve it before emitting a relative import", () => {
       const projectRoot = path.join(path.sep, "proj", "app");
       const fileRel = path.join("src", "logger", "core.ts");
       const generatedDir = path.join(projectRoot, "generated");
-      const workspacePackageImportBases = [
-        {
-          absRoot: path.join(projectRoot, "src"),
-          importBase: "@pkg/logger",
-        },
-      ];
       assert.strictEqual(
         computeManifestModuleSpecifier(fileRel, generatedDir, [], {
           projectRoot,
-          workspacePackageImportBases,
         }),
-        "@pkg/logger",
-      );
-    });
-  });
-
-  describe("When the file is under a configured workspacePackageImportBases root", () => {
-    it("should emit the configured importBase instead of a long relative path", () => {
-      const projectRoot = path.join(path.sep, "proj", "app");
-      const file = path.join(
-        projectRoot,
-        "packages",
-        "foundation",
-        "infrastructure",
-        "src",
-        "logger",
-        "coreLogger.ts",
-      );
-      const generatedDir = path.join(projectRoot, "generated");
-      const scanDirs = [{ absPath: path.join(projectRoot, "src") }];
-      const workspacePackageImportBases = [
-        {
-          absRoot: path.join(
-            projectRoot,
-            "packages",
-            "foundation",
-            "infrastructure",
-            "src",
-          ),
-          importBase: "@packages/foundation/infrastructure",
-        },
-      ];
-      assert.strictEqual(
-        computeManifestModuleSpecifier(file, generatedDir, scanDirs, {
-          workspacePackageImportBases,
-        }),
-        "@packages/foundation/infrastructure",
+        "../src/logger/core.js",
       );
     });
   });
@@ -230,24 +172,6 @@ describe("mapTypesPackageToRuntimePackage", () => {
   });
 });
 
-describe("resolveWorkspacePackageRoot", () => {
-  describe("When projectRoot is an app package inside a monorepo", () => {
-    it("should resolve packages/ relative roots against an ancestor directory", () => {
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ioc-ws-"));
-      const repoRoot = path.join(tmp, "repo");
-      const pkgSrc = path.join(repoRoot, "packages", "shared", "src");
-      fs.mkdirSync(pkgSrc, { recursive: true });
-      const appRoot = path.join(repoRoot, "apps", "web");
-      fs.mkdirSync(appRoot, { recursive: true });
-      const resolved = resolveWorkspacePackageRoot(
-        appRoot,
-        "packages/shared/src",
-      );
-      assert.strictEqual(path.normalize(resolved), path.normalize(pkgSrc));
-    });
-  });
-});
-
 describe("normalizeEmittedModuleSpecifier", () => {
   describe("When the specifier is a bare single-segment package", () => {
     it("should strip .ts and .js extensions", () => {
@@ -273,7 +197,7 @@ describe("normalizeEmittedModuleSpecifier", () => {
     });
   });
 
-  describe("When the specifier is a workspace subpath import", () => {
+  describe("When the specifier is a bare subpath import", () => {
     it("should preserve the .js extension", () => {
       assert.strictEqual(
         normalizeEmittedModuleSpecifier("@acme/lib/src/repositories/repo.js"),

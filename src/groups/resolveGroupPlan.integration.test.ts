@@ -12,7 +12,6 @@ import { analyzeGroupPlan, buildGroupPlan } from "./resolveGroupPlan.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixtureDir = path.join(__dirname, "test-fixtures", "base-type-discovery");
-const packageScanFixtureRoot = path.join(__dirname, "test-fixtures", "package-scan-group");
 const projectRoot = path.resolve(__dirname, "..", "..");
 const srcDir = path.join(projectRoot, "src");
 const generatedDir = path.join(srcDir, "generated");
@@ -52,48 +51,6 @@ const runDiscoveryAndPlans = (): ResolvedContractRegistration[] => {
     projectRoot,
     "build",
     { projectRoot, scanDirs: [{ absPath: srcDir }], generatedDir },
-    undefined,
-  );
-  return buildRegistrationPlan(contractMap, undefined);
-};
-
-const pkgScanAppSrc = path.join(packageScanFixtureRoot, "app", "src");
-const pkgScanPkgRoot = path.join(packageScanFixtureRoot, "pkg");
-const pkgScanGeneratedDir = path.join(pkgScanAppSrc, "di", "generated");
-const pkgScanFactoriesPath = path.join(pkgScanAppSrc, "factories", "readFactories.ts");
-const pkgScanReadBasePath = path.join(pkgScanPkgRoot, "src", "readBase.ts");
-
-const makeProgramPackageScanGroup = (): ts.Program =>
-  ts.createProgram({
-    rootNames: [pkgScanFactoriesPath, pkgScanReadBasePath],
-    options: {
-      target: ts.ScriptTarget.ES2022,
-      module: ts.ModuleKind.ESNext,
-      moduleResolution: ts.ModuleResolutionKind.Bundler,
-      strict: true,
-      noEmit: true,
-    },
-  });
-
-const runPackageScanDiscoveryAndPlans = (): ResolvedContractRegistration[] => {
-  const program = makeProgramPackageScanGroup();
-  const { contractMap } = discoverFactories(
-    [pkgScanFactoriesPath],
-    program,
-    packageScanFixtureRoot,
-    "build",
-    {
-      projectRoot: packageScanFixtureRoot,
-      scanDirs: [
-        { absPath: pkgScanAppSrc },
-        {
-          absPath: pkgScanPkgRoot,
-          importPrefix: "@lib",
-          importMode: "subpath",
-        },
-      ],
-      generatedDir: pkgScanGeneratedDir,
-    },
     undefined,
   );
   return buildRegistrationPlan(contractMap, undefined);
@@ -215,36 +172,6 @@ describe("buildGroupPlan", () => {
           assert.ok(first.message.includes("ambiguous base type"));
         }
       }
-    });
-  });
-
-  describe("When contracts are declared in a workspace package (importPrefix subpath)", () => {
-    it("should resolve declared contract types for group assignability", () => {
-      const plans = runPackageScanDiscoveryAndPlans();
-      const program = makeProgramPackageScanGroup();
-      const result = buildGroupPlan(
-        {
-          pkgReads: { kind: "collection", baseType: "PkgReadBase" },
-        },
-        plans,
-        {
-          program,
-          generatedDir: pkgScanGeneratedDir,
-          scanDirs: [
-            { absPath: pkgScanAppSrc },
-            {
-              absPath: pkgScanPkgRoot,
-              importPrefix: "@lib",
-              importMode: "subpath",
-            },
-          ],
-        },
-      );
-      assert.ok(result);
-      const node = result!.manifest.pkgReads;
-      assert.ok(Array.isArray(node));
-      const keys = (node as { registrationKey: string }[]).map((x) => x.registrationKey);
-      assert.deepStrictEqual(keys, ["albumLike"]);
     });
   });
 });
