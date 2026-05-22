@@ -15,6 +15,7 @@ import {
   type ModuleFactoryManifestMetadata,
 } from "../core/manifest.js";
 import { MANIFEST_SCHEMA_VERSION } from "../schemaVersion.js";
+import type { ComposedRegistrationOverrides } from "./composedOverrides.js";
 
 type IndexedManifest = {
   readonly manifest: IocRegisterableManifest;
@@ -253,6 +254,113 @@ const throwRegistrationKeyConflict = (
   throw new Error(formatConflictingRegistrationKeyError(key, a, b));
 };
 
+const buildManifestIndexForSource = (
+  overrides: ComposedRegistrationOverrides | undefined,
+): ((source: string) => number) | undefined => {
+  const packages = overrides?.composedPackageNames;
+  if (packages === undefined) {
+    return undefined;
+  }
+  const indexByPackage = new Map<string, number>();
+  packages.forEach((pkg, i) => {
+    indexByPackage.set(pkg, i + 1);
+  });
+  return (source: string): number => {
+    if (source === "local") {
+      return 0;
+    }
+    const idx = indexByPackage.get(source);
+    if (idx === undefined) {
+      throw new Error(
+        `[ioc] internal error: source override references unknown package ${JSON.stringify(source)}`,
+      );
+    }
+    return idx;
+  };
+};
+
+const resolveSourceOverrideWinnerIndex = (
+  existing: KeyOwner & { kind: "implementation" },
+  incoming: KeyOwner & { kind: "implementation" },
+  overrides: ComposedRegistrationOverrides | undefined,
+  indexForSource: ((source: string) => number) | undefined,
+): number | undefined => {
+  if (indexForSource === undefined || overrides?.contracts === undefined) {
+    return undefined;
+  }
+
+  const resolveForOwner = (
+    owner: KeyOwner & { kind: "implementation" },
+  ): number | undefined => {
+    const source =
+      overrides.contracts?.[owner.contractName]?.sourceOverride?.[
+        owner.implementationName
+      ];
+    if (source === undefined) {
+      return undefined;
+    }
+    return indexForSource(source);
+  };
+
+  const fromExisting = resolveForOwner(existing);
+  const fromIncoming = resolveForOwner(incoming);
+
+  if (fromExisting !== undefined && fromIncoming !== undefined) {
+    if (fromExisting !== fromIncoming) {
+      throw new Error(
+        `[ioc] Conflicting source overrides for the same registration key across ${JSON.stringify(existing.contractName)}.${existing.implementationName} and ${JSON.stringify(incoming.contractName)}.${incoming.implementationName}.`,
+      );
+    }
+    return fromExisting;
+  }
+
+  return fromExisting ?? fromIncoming;
+};
+
+const removeImplementationFromMerged = (
+  mergedContracts: IocContractManifest,
+  owner: KeyOwner & { kind: "implementation" },
+): void => {
+  const bucket = mergedContracts[owner.contractName];
+  if (bucket === undefined) {
+    return;
+  }
+  delete bucket[owner.implementationName];
+  if (Object.keys(bucket).length === 0) {
+    delete mergedContracts[owner.contractName];
+  }
+};
+
+const applyAppDefaultOverrides = (
+  mergedContracts: IocContractManifest,
+  overrides: ComposedRegistrationOverrides | undefined,
+): void => {
+  if (overrides?.contracts === undefined) {
+    return;
+  }
+
+  for (const [contractName, spec] of Object.entries(overrides.contracts)) {
+    const winningName = spec.defaultImplementation;
+    if (winningName === undefined) {
+      continue;
+    }
+
+    const impls = mergedContracts[contractName];
+    if (impls === undefined) {
+      continue;
+    }
+
+    for (const [implName, meta] of Object.entries(impls)) {
+      if (implName === winningName) {
+        impls[implName] = { ...meta, default: true };
+      } else if (meta.default === true) {
+        const { default: _removed, ...rest } = meta;
+        impls[implName] = rest;
+      }
+    }
+  }
+};
+
 const throwGroupRootKeyConflict = (
   key: string,
   first: KeyOwner & { kind: "groupRoot" },
@@ -270,9 +378,11 @@ const throwGroupRootKeyConflict = (
  */
 export const composeManifests = (
   manifests: readonly IocRegisterableManifest[],
+  overrides?: ComposedRegistrationOverrides,
 ): IocRegisterableManifest => {
   const indexed = indexManifestsPreservingOriginalIndices(manifests);
   const sorted = sortIndexedManifestsForIteration(indexed);
+  const indexForSource = buildManifestIndexForSource(overrides);
 
   const mergedImports: IocModuleNamespace[] = [];
   const mergedContracts: IocContractManifest = {};
@@ -293,20 +403,35 @@ export const composeManifests = (
               originalIndex,
             });
           } else {
-            throwRegistrationKeyConflict(key, existing, {
+            const incomingOwner: KeyOwner & { kind: "implementation" } = {
               kind: "implementation",
               originalIndex,
               contractName,
               implementationName,
-            });
+            };
+            const winnerIndex = resolveSourceOverrideWinnerIndex(
+              existing,
+              incomingOwner,
+              overrides,
+              indexForSource,
+            );
+            if (winnerIndex === undefined) {
+              throwRegistrationKeyConflict(key, existing, incomingOwner);
+            }
+            if (originalIndex !== winnerIndex) {
+              continue;
+            }
+            removeImplementationFromMerged(mergedContracts, existing);
+            keyOwners.set(key, incomingOwner);
           }
+        } else {
+          keyOwners.set(key, {
+            kind: "implementation",
+            originalIndex,
+            contractName,
+            implementationName,
+          });
         }
-        keyOwners.set(key, {
-          kind: "implementation",
-          originalIndex,
-          contractName,
-          implementationName,
-        });
 
         let contractBucket = mergedContracts[contractName];
         if (contractBucket === undefined) {
@@ -346,6 +471,7 @@ export const composeManifests = (
     mergedImports.push(...manifest.moduleImports);
   }
 
+  applyAppDefaultOverrides(mergedContracts, overrides);
   applyCrossManifestDefaultPolicy(mergedContracts, sorted);
 
   return {
@@ -358,8 +484,9 @@ export const composeManifests = (
 
 export const prepareManifestsForRegistration = (
   manifests: readonly IocRegisterableManifest[],
+  overrides?: ComposedRegistrationOverrides,
 ): IocRegisterableManifest => {
   const indexed = indexManifestsPreservingOriginalIndices(manifests);
   validateManifestSchemaVersions(indexed);
-  return composeManifests(manifests);
+  return composeManifests(manifests, overrides);
 };
