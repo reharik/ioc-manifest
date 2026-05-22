@@ -9,13 +9,18 @@
 import {
   IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS,
   type IocContractManifest,
+  type IocGroupCollectionManifest,
+  type IocGroupLeafManifest,
   type IocGroupNodeManifest,
+  type IocGroupObjectManifest,
+  type IocGroupRootManifest,
   type IocModuleNamespace,
   type IocRegisterableManifest,
   type ModuleFactoryManifestMetadata,
 } from "../core/manifest.js";
 import { MANIFEST_SCHEMA_VERSION } from "../schemaVersion.js";
 import type { ComposedRegistrationOverrides } from "./composedOverrides.js";
+import { areCanonicalBaseTypeIdsEquivalent } from "./groupBaseTypeEquivalence.js";
 
 type IndexedManifest = {
   readonly manifest: IocRegisterableManifest;
@@ -135,16 +140,49 @@ export const formatConflictingRegistrationKeyError = (
     `Resolve by configuring "registrations.${a.contractName}.${a.implementationName}.source" in your app's ioc.config.`,
   ].join("\n");
 
-export const formatConflictingGroupRootKeyError = (
-  key: string,
+export const formatGroupKindMismatchError = (
+  groupName: string,
+  indexA: number,
+  kindA: string,
+  indexB: number,
+  kindB: string,
+): string =>
+  [
+    `[ioc] Group ${JSON.stringify(groupName)} declared with mismatched kinds across manifests:`,
+    `  - Manifest at index ${indexA}: kind ${JSON.stringify(kindA)}`,
+    `  - Manifest at index ${indexB}: kind ${JSON.stringify(kindB)}`,
+  ].join("\n");
+
+export const formatGroupBaseTypeMismatchError = (
+  groupName: string,
+  indexA: number,
+  baseTypeA: string,
+  idA: string,
+  indexB: number,
+  baseTypeB: string,
+  idB: string,
+): string =>
+  [
+    `[ioc] Group ${JSON.stringify(groupName)} declared with mismatched base types across manifests:`,
+    `  - Manifest at index ${indexA}: baseType ${JSON.stringify(baseTypeA)} (id: ${JSON.stringify(idA)})`,
+    `  - Manifest at index ${indexB}: baseType ${JSON.stringify(baseTypeB)} (id: ${JSON.stringify(idB)})`,
+    "If these refer to the same logical type (e.g. due to hoisting issues), add the following to your ioc.config.ts:",
+    "  groupBaseTypeAliases: {",
+    `    ${JSON.stringify(groupName)}: [${JSON.stringify(idA)}, ${JSON.stringify(idB)}],`,
+    "  }",
+  ].join("\n");
+
+export const formatObjectGroupKeyCollisionError = (
+  groupName: string,
+  objectKey: string,
   indexA: number,
   indexB: number,
 ): string =>
   [
-    `[ioc] Conflicting group root key ${JSON.stringify(key)} across manifests:`,
-    `  - Declared by manifest at index ${indexA}`,
-    `  - Declared by manifest at index ${indexB}`,
-    "Cross-manifest group composition is not yet supported; this will land in a future release.",
+    `[ioc] Object group ${JSON.stringify(groupName)} has duplicate key ${JSON.stringify(objectKey)} across manifests:`,
+    `  - Manifest at index ${indexA}`,
+    `  - Manifest at index ${indexB}`,
+    `Resolve by configuring registrations.<Contract>.<implementation>.source in your app's ioc.config.`,
   ].join("\n");
 
 export const formatConflictingDefaultDeclarationError = (
@@ -368,15 +406,119 @@ const applyAppDefaultOverrides = (
   }
 };
 
-const throwGroupRootKeyConflict = (
-  key: string,
-  first: KeyOwner & { kind: "groupRoot" },
-  second: KeyOwner & { kind: "groupRoot" },
-): never => {
-  const [a, b] = orderOwnersByOriginalIndex(first, second);
-  throw new Error(
-    formatConflictingGroupRootKeyError(key, a.originalIndex, b.originalIndex),
+const asGroupRootManifest = (value: unknown): IocGroupRootManifest => {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("kind" in value) ||
+    !("baseType" in value) ||
+    !("baseTypeId" in value) ||
+    !("members" in value)
+  ) {
+    throw new Error(
+      "[ioc] internal error: expected schema v2 group root (kind, baseType, baseTypeId, members)",
+    );
+  }
+  return value as IocGroupRootManifest;
+};
+
+const mergeCollectionMembers = (
+  a: IocGroupCollectionManifest,
+  b: IocGroupCollectionManifest,
+): IocGroupCollectionManifest => {
+  const byKey = new Map<string, IocGroupLeafManifest>();
+  for (const leaf of [...a, ...b]) {
+    byKey.set(leaf.registrationKey, leaf);
+  }
+  return [...byKey.values()].sort((x, y) =>
+    x.registrationKey.localeCompare(y.registrationKey),
   );
+};
+
+const mergeObjectGroupMembers = (
+  groupName: string,
+  a: IocGroupObjectManifest,
+  b: IocGroupObjectManifest,
+  indexA: number,
+  indexB: number,
+): IocGroupObjectManifest => {
+  const merged: IocGroupObjectManifest = { ...a };
+  for (const [key, leaf] of Object.entries(b)) {
+    if (merged[key] !== undefined) {
+      throw new Error(
+        formatObjectGroupKeyCollisionError(groupName, key, indexA, indexB),
+      );
+    }
+    merged[key] = leaf;
+  }
+  return merged;
+};
+
+const mergeGroupRootManifests = (
+  groupName: string,
+  existing: IocGroupRootManifest,
+  incoming: IocGroupRootManifest,
+  indexA: number,
+  indexB: number,
+  aliasSets: Readonly<Record<string, readonly string[]>> | undefined,
+): IocGroupRootManifest => {
+  if (existing.kind !== incoming.kind) {
+    throw new Error(
+      formatGroupKindMismatchError(
+        groupName,
+        indexA,
+        existing.kind,
+        indexB,
+        incoming.kind,
+      ),
+    );
+  }
+
+  if (
+    !areCanonicalBaseTypeIdsEquivalent(
+      existing.baseTypeId,
+      incoming.baseTypeId,
+      groupName,
+      aliasSets,
+    )
+  ) {
+    throw new Error(
+      formatGroupBaseTypeMismatchError(
+        groupName,
+        indexA,
+        existing.baseType,
+        existing.baseTypeId,
+        indexB,
+        incoming.baseType,
+        incoming.baseTypeId,
+      ),
+    );
+  }
+
+  if (existing.kind === "collection") {
+    return {
+      kind: "collection",
+      baseType: existing.baseType,
+      baseTypeId: existing.baseTypeId,
+      members: mergeCollectionMembers(
+        existing.members as IocGroupCollectionManifest,
+        incoming.members as IocGroupCollectionManifest,
+      ),
+    };
+  }
+
+  return {
+    kind: "object",
+    baseType: existing.baseType,
+    baseTypeId: existing.baseTypeId,
+    members: mergeObjectGroupMembers(
+      groupName,
+      existing.members as IocGroupObjectManifest,
+      incoming.members as IocGroupObjectManifest,
+      indexA,
+      indexB,
+    ),
+  };
 };
 
 /**
@@ -393,7 +535,9 @@ export const composeManifests = (
 
   const mergedImports: IocModuleNamespace[] = [];
   const mergedContracts: IocContractManifest = {};
-  const mergedGroupRoots: Record<string, IocGroupNodeManifest> = {};
+  const mergedGroupRoots: Record<string, IocGroupRootManifest> = {};
+  const groupRootContributorIndex = new Map<string, number>();
+  const aliasSets = overrides?.groups?.baseTypeAliases;
   const keyOwners = new Map<string, KeyOwner>();
 
   for (const { manifest, originalIndex } of sorted) {
@@ -455,24 +599,32 @@ export const composeManifests = (
     for (const groupKey of extractGroupRootKeys(manifest).sort((a, b) =>
       a.localeCompare(b),
     )) {
-      const existing = keyOwners.get(groupKey);
-      if (existing !== undefined) {
-        if (existing.kind === "groupRoot") {
-          throwGroupRootKeyConflict(groupKey, existing, {
-            kind: "groupRoot",
+      const incomingRoot = asGroupRootManifest(manifest[groupKey]);
+      const existingOwner = keyOwners.get(groupKey);
+      if (existingOwner !== undefined) {
+        if (existingOwner.kind === "groupRoot") {
+          const firstIndex = groupRootContributorIndex.get(groupKey)!;
+          mergedGroupRoots[groupKey] = mergeGroupRootManifests(
+            groupKey,
+            mergedGroupRoots[groupKey]!,
+            incomingRoot,
+            firstIndex,
             originalIndex,
-          });
+            aliasSets,
+          );
         } else {
-          throwRegistrationKeyConflict(groupKey, existing, {
+          throwRegistrationKeyConflict(groupKey, existingOwner, {
             kind: "implementation",
             originalIndex,
             contractName: "(group root)",
             implementationName: "(group root)",
           });
         }
+      } else {
+        keyOwners.set(groupKey, { kind: "groupRoot", originalIndex });
+        groupRootContributorIndex.set(groupKey, originalIndex);
+        mergedGroupRoots[groupKey] = incomingRoot;
       }
-      keyOwners.set(groupKey, { kind: "groupRoot", originalIndex });
-      mergedGroupRoots[groupKey] = manifest[groupKey] as IocGroupNodeManifest;
     }
 
     mergedImports.push(...manifest.moduleImports);

@@ -16,4 +16,7 @@ export type ComposedRegistrationOverrides = {
    */
   readonly composedPackageNames?: readonly string[];
   readonly contracts?: Readonly<Record<string, ComposedContractOverride>>;
+  readonly groups?: {
+    readonly baseTypeAliases?: Readonly<Record<string, readonly string[]>>;
+  };
 };

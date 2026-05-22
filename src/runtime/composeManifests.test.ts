@@ -8,7 +8,6 @@ import type {
 import { MANIFEST_SCHEMA_VERSION } from "../schemaVersion.js";
 import {
   composeManifests,
-  formatConflictingGroupRootKeyError,
   formatConflictingRegistrationKeyError,
   formatManifestSchemaVersionMismatchError,
   prepareManifestsForRegistration,
@@ -264,32 +263,36 @@ describe("composeManifests", () => {
     });
   });
 
-  describe("When two manifests declare the same group root key", () => {
-    it("should throw the group-root conflict message with original indices", () => {
-      const groupRoot = {
+  describe("When two manifests declare the same group root key with matching base type ids", () => {
+    it("should merge collection members from both manifests", () => {
+      const groupRootA = {
         kind: "collection" as const,
         baseType: "Widget",
         baseTypeId: "/fake/Widget.ts:Widget",
         members: [
-          {
-            contractName: "Widget",
-            registrationKey: "widget",
-          },
+          { contractName: "Widget", registrationKey: "widgetA" },
         ],
       };
-      const manifestA = baseManifest({}, [], { myGroup: groupRoot });
-      const manifestB = baseManifest({}, [], { myGroup: groupRoot });
-
-      assert.throws(
-        () => composeManifests([manifestA, manifestB]),
-        (err: unknown) => {
-          assert.ok(err instanceof Error);
-          assert.strictEqual(
-            err.message,
-            formatConflictingGroupRootKeyError("myGroup", 0, 1),
-          );
-          return true;
-        },
+      const groupRootB = {
+        kind: "collection" as const,
+        baseType: "Widget",
+        baseTypeId: "/fake/Widget.ts:Widget",
+        members: [
+          { contractName: "Widget", registrationKey: "widgetB" },
+        ],
+      };
+      const composed = composeManifests([
+        baseManifest({}, [], { myGroup: groupRootA }),
+        baseManifest({}, [], { myGroup: groupRootB }),
+      ]);
+      const merged = composed.myGroup as {
+        kind: string;
+        members: { registrationKey: string }[];
+      };
+      assert.strictEqual(merged.kind, "collection");
+      assert.deepStrictEqual(
+        merged.members.map((m) => m.registrationKey),
+        ["widgetA", "widgetB"],
       );
     });
   });
