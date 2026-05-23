@@ -16,7 +16,7 @@ import { discoverFactories } from "./discoverFactories/discoverFactories.js";
 import {
   createIocProgramForDiscovery,
   getDiscoveryTargetFiles,
-  reportDiscoveryProgramDiagnostics,
+  logDiscoveryProgramErrorDiagnosticsForFailure,
 } from "./iocProgramContext.js";
 import {
   mergeManifestOptionsWithIocConfig,
@@ -31,7 +31,11 @@ import {
 } from "./writeManifest.js";
 import type { ManifestRuntimePaths } from "./manifestPaths.js";
 import { buildGroupPlan } from "../groups/resolveGroupPlan.js";
-import { isAppMode, isLibraryMode, resolveManifestExportPath } from "../config/iocMode.js";
+import {
+  isAppMode,
+  isLibraryMode,
+  resolveManifestExportPath,
+} from "../config/iocMode.js";
 import { loadComposedManifestContractNames } from "./loadComposedManifestContracts.js";
 import { validateGroupBaseTypeAliasKeysAtCodegen } from "./loadComposedManifestGroups.js";
 import { buildComposedRegistrationOverridesFromConfig } from "./buildComposedRegistrationOverrides.js";
@@ -136,8 +140,8 @@ export const generateManifest = async (
     generatedDir,
   );
   const program = createIocProgramForDiscovery(projectRoot, files);
-  reportDiscoveryProgramDiagnostics(program, projectRoot, files);
 
+  try {
   const { contractMap, acceptedFactories } = discoverFactories(
     files,
     program,
@@ -211,7 +215,8 @@ export const generateManifest = async (
     const composedPackages = resolveComposedPackageSpecs(
       config.composedManifests!,
     );
-    const composedOverrides = buildComposedRegistrationOverridesFromConfig(config);
+    const composedOverrides =
+      buildComposedRegistrationOverridesFromConfig(config);
     composedOutPath = path.join(generatedDir, "ioc-composed.ts");
     const composedSource = buildComposedManifestSource({
       generatedDir,
@@ -259,9 +264,16 @@ export const generateManifest = async (
       console.log(`  - ${pkg} → import from '${pkg}/iocManifest'`);
     }
     if (composedOutPath !== undefined) {
-      console.log(
-        `Generated ${path.relative(projectRoot, composedOutPath)}`,
-      );
+      console.log(`Generated ${path.relative(projectRoot, composedOutPath)}`);
     }
+  }
+  } catch (error) {
+    logDiscoveryProgramErrorDiagnosticsForFailure(
+      program,
+      projectRoot,
+      files,
+      error,
+    );
+    throw error;
   }
 };

@@ -3,7 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { getDiscoveryTargetFiles } from "./iocProgramContext.js";
+import ts from "typescript";
+import {
+  formatDiscoveryProgramErrorDiagnostics,
+  getDiscoveryTargetFiles,
+  isCodegenFailureCausedByTypeScript,
+} from "./iocProgramContext.js";
 import { resolveManifestOptions } from "./manifestOptions.js";
 import { resolveScanDirEntries } from "./manifestPaths.js";
 
@@ -33,6 +38,101 @@ describe("getDiscoveryTargetFiles", () => {
       assert.deepStrictEqual(
         files.map((f) => path.basename(f)).sort(),
         ["keep.ts"],
+      );
+    });
+  });
+});
+
+describe("formatDiscoveryProgramErrorDiagnostics", () => {
+  describe("When a discovery file has a TypeScript error", () => {
+    it("should include that file in the formatted output", () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ioc-ts-diag-"));
+      const badPath = path.join(tmp, "bad.ts");
+      fs.writeFileSync(badPath, 'const x: number = "nope";');
+
+      const program = ts.createProgram({
+        rootNames: [badPath],
+        options: { strict: true },
+      });
+
+      const formatted = formatDiscoveryProgramErrorDiagnostics(
+        program,
+        tmp,
+        [badPath],
+      );
+
+      assert.ok(formatted.length > 0);
+      assert.match(formatted, /bad\.ts/);
+    });
+  });
+
+  describe("When errors exist only outside discovery root names", () => {
+    it("should return an empty string", () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ioc-ts-diag-"));
+      const badPath = path.join(tmp, "bad.ts");
+      const otherPath = path.join(tmp, "other.ts");
+      fs.writeFileSync(badPath, 'const x: number = "nope";');
+      fs.writeFileSync(otherPath, "export const ok = 1;");
+
+      const program = ts.createProgram({
+        rootNames: [badPath, otherPath],
+        options: { strict: true },
+      });
+
+      const formatted = formatDiscoveryProgramErrorDiagnostics(
+        program,
+        tmp,
+        [otherPath],
+      );
+
+      assert.equal(formatted, "");
+    });
+  });
+});
+
+describe("isCodegenFailureCausedByTypeScript", () => {
+  describe("When codegen failed due to type checking", () => {
+    it("should return true for file-not-in-program errors", () => {
+      assert.equal(
+        isCodegenFailureCausedByTypeScript(
+          new Error(
+            '[ioc] File is not in the TypeScript program (cannot type-check): "src/foo.ts".',
+          ),
+        ),
+        true,
+      );
+    });
+
+    it("should return true for unresolvable deps type errors", () => {
+      assert.equal(
+        isCodegenFailureCausedByTypeScript(
+          new Error(
+            '[ioc] Factory "buildFoo" at src/foo.ts:1 references an unresolvable type in deps for property "bar": unknown',
+          ),
+        ),
+        true,
+      );
+    });
+  });
+
+  describe("When codegen failed for non-type reasons", () => {
+    it("should return false for duplicate registration key errors", () => {
+      assert.equal(
+        isCodegenFailureCausedByTypeScript(
+          new Error('[ioc] Duplicate registration key "foo".'),
+        ),
+        false,
+      );
+    });
+
+    it("should return false for ioc-config validation errors", () => {
+      assert.equal(
+        isCodegenFailureCausedByTypeScript(
+          new Error(
+            "[ioc-config] registrations references unknown contract \"Missing\".",
+          ),
+        ),
+        false,
       );
     });
   });

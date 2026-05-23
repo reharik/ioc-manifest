@@ -81,10 +81,38 @@ export const createIocProgramForDiscovery = (
   return ts.createProgram({ rootNames, options: parsed.options });
 };
 
-const formatDiagnostics = (
-  diagnostics: readonly ts.Diagnostic[],
+const collectDiscoveryProgramErrorDiagnostics = (
+  program: ts.Program,
+  rootNames: readonly string[],
+): readonly ts.Diagnostic[] => {
+  const relevantRootFiles = new Set(
+    rootNames.map((fileName) => normalizePath(fileName)),
+  );
+
+  return ts.getPreEmitDiagnostics(program).filter((diagnostic) => {
+    if (diagnostic.category !== ts.DiagnosticCategory.Error) {
+      return false;
+    }
+    if (diagnostic.file === undefined) {
+      return true;
+    }
+    return relevantRootFiles.has(normalizePath(diagnostic.file.fileName));
+  });
+};
+
+/**
+ * Formatted TypeScript errors for discovery target files only (not warnings).
+ * Returns an empty string when there are no relevant errors.
+ */
+export const formatDiscoveryProgramErrorDiagnostics = (
+  program: ts.Program,
   projectRoot: string,
+  rootNames: readonly string[],
 ): string => {
+  const diagnostics = collectDiscoveryProgramErrorDiagnostics(
+    program,
+    rootNames,
+  );
   if (diagnostics.length === 0) {
     return "";
   }
@@ -98,40 +126,49 @@ const formatDiagnostics = (
   return ts.formatDiagnosticsWithColorAndContext(diagnostics, formatHost);
 };
 
-export const reportDiscoveryProgramDiagnostics = (
+/**
+ * True when codegen failed in a step where TypeScript program diagnostics are likely
+ * the root cause (as opposed to config, duplicate keys, etc.).
+ */
+export const isCodegenFailureCausedByTypeScript = (
+  error: unknown,
+): boolean => {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message;
+  return (
+    message.includes("not in the TypeScript program") ||
+    message.includes("cannot type-check") ||
+    message.includes("Conflicting types for demanded key") ||
+    message.includes("references an unresolvable type in deps")
+  );
+};
+
+/**
+ * Logs discovery-scoped TS errors when `error` is type-check related and diagnostics exist.
+ */
+export const logDiscoveryProgramErrorDiagnosticsForFailure = (
   program: ts.Program,
   projectRoot: string,
   rootNames: readonly string[],
+  error: unknown,
 ): void => {
-  const relevantRootFiles = new Set(
-    rootNames.map((fileName) => normalizePath(fileName)),
-  );
-
-  const diagnostics = ts.getPreEmitDiagnostics(program).filter((diagnostic) => {
-    if (diagnostic.file === undefined) {
-      return true;
-    }
-    return relevantRootFiles.has(normalizePath(diagnostic.file.fileName));
-  });
-
-  if (diagnostics.length === 0) {
+  if (!isCodegenFailureCausedByTypeScript(error)) {
     return;
   }
 
-  const errorDiagnostics = diagnostics.filter(
-    (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
+  const rendered = formatDiscoveryProgramErrorDiagnostics(
+    program,
+    projectRoot,
+    rootNames,
   );
-
-  const warningDiagnostics = diagnostics.filter(
-    (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Warning,
-  );
-
-  console.warn(
-    `[ioc] Continuing despite TypeScript diagnostics: ${errorDiagnostics.length} error(s), ${warningDiagnostics.length} warning(s).`,
-  );
-
-  const rendered = formatDiagnostics(diagnostics, projectRoot);
-  if (rendered.length > 0) {
-    console.warn(rendered);
+  if (rendered.length === 0) {
+    return;
   }
+
+  console.error(
+    `[ioc] TypeScript errors in discovery target file(s):\n${rendered}`,
+  );
 };

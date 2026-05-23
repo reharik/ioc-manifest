@@ -97,7 +97,17 @@ export const buildUserService = ({
 });
 ```
 
-The named deps type pattern is required — factories cannot destructure directly from `IocGeneratedCradle`. There's a real reason for this: the cradle is generated _from_ what your factories declare. Asking a factory to declare its inputs by referencing the cradle would be a chicken-and-egg loop. Naming the deps type at the factory site also makes each factory independently testable — see [Testing](#testing) below.
+The named-deps-type pattern is required. Factories cannot destructure directly from `IocGeneratedCradle`, and inline object literals (`({ foo, bar }: { foo: Foo; bar: Bar })`) aren't allowed either — codegen will reject both. The rule is: the first parameter must be a named `interface` or `type` alias.
+
+Three reasons:
+
+1. **The cradle is generated from your factories' declarations.** A factory declaring its inputs by referencing the cradle would be a chicken-and-egg loop — the cradle doesn't exist yet at the moment codegen reads the factory.
+
+2. **The deps type is the factory's testable contract.** Exporting `type UserServiceDeps = { ... }` means tests can `import type { UserServiceDeps }`, build a literal satisfying it, and call the factory directly with no container at all (see [Testing](#testing) below). Inline literals aren't importable — tests would have to reconstruct the same shape by hand in every file, and that drifts.
+
+3. **The deps type is documentation.** When someone opens the file, the named declaration sits at the top and says exactly what the factory consumes. Inline literals bury the contract inside the function signature, where it competes for attention with parameter names and the return type.
+
+The cost is one extra line per factory. That's the deal.
 
 ### 2. Configure
 

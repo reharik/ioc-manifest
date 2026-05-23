@@ -12,7 +12,7 @@ import { discoverFactories } from "../generator/discoverFactories/discoverFactor
 import {
   createIocProgramForDiscovery,
   getDiscoveryTargetFiles,
-  reportDiscoveryProgramDiagnostics,
+  logDiscoveryProgramErrorDiagnosticsForFailure,
 } from "../generator/iocProgramContext.js";
 import {
   mergeManifestOptionsWithIocConfig,
@@ -80,30 +80,39 @@ const runDiscoveryFromResolution = async (
     generatedDir,
   );
   const program = createIocProgramForDiscovery(projectRoot, files);
-  reportDiscoveryProgramDiagnostics(program, projectRoot, files);
 
-  const { contractMap, acceptedFactories, discoveryFiles } = discoverFactories(
-    files,
-    program,
-    projectRoot,
-    factoryExportPrefix,
-    { projectRoot, scanDirs, generatedDir },
-    config ?? undefined,
-    { collectFileRecords: true },
-  );
+  try {
+    const { contractMap, acceptedFactories, discoveryFiles } =
+      discoverFactories(
+        files,
+        program,
+        projectRoot,
+        factoryExportPrefix,
+        { projectRoot, scanDirs, generatedDir },
+        config ?? undefined,
+        { collectFileRecords: true },
+      );
 
-  const registrationPlan = buildRegistrationPlan(
-    contractMap,
-    config,
-    { projectRoot, scanDirs },
-  );
+    const registrationPlan = buildRegistrationPlan(contractMap, config, {
+      projectRoot,
+      scanDirs,
+    });
 
-  return {
-    discoveryFiles,
-    contractMap,
-    acceptedFactories,
-    registrationPlan,
-  };
+    return {
+      discoveryFiles,
+      contractMap,
+      acceptedFactories,
+      registrationPlan,
+    };
+  } catch (error) {
+    logDiscoveryProgramErrorDiagnosticsForFailure(
+      program,
+      projectRoot,
+      files,
+      error,
+    );
+    throw error;
+  }
 };
 
 /**
