@@ -273,6 +273,51 @@ Within a single package's `ioc.config`, the same `registrations` block continues
 
 When a package declares policy for its own factories that conflicts with another package's policy (no app override), composition errors. The app's explicit override always wins; un-overridden cross-package conflicts must be resolved before composition succeeds.
 
+### 7.1 Lifetime markers
+
+Packages may declare categorical lifetimes via marker interfaces instead of (or alongside) per-implementation overrides or directory-scoped defaults.
+
+```ts
+defineIocConfig({
+  lifetimeMarkers: {
+    IScoped: "scoped",
+    ITransient: "transient",
+    // Singleton is the default; a marker is optional.
+  },
+  // ...
+});
+```
+
+Each key is the name of an interface or type alias visible in the package's TypeScript program at codegen time. Each value is `singleton`, `scoped`, or `transient`. An empty object `{}` is treated as "no markers declared" and skips marker analysis entirely.
+
+For each discovered `build*` factory, codegen checks whether the factory's **return type** is structurally assignable to each configured marker (same `isTypeAssignableTo` machinery as groups). Transitive inheritance applies: if `UserReadService extends IGroupedInterfaceA extends IScoped`, a factory returning `UserReadService` matches `IScoped`.
+
+**Lifetime precedence** (highest first):
+
+1. `registrations[Contract][implementation].lifetime` — explicit per-implementation override
+2. Lifetime marker on return type — from `lifetimeMarkers`
+3. `discovery.scanDirs[].scope` for the factory's containing scan root — directory-scoped default
+4. Default: `singleton`
+
+If a factory matches **zero** markers, marker resolution does not apply (fall through). If it matches **one** marker, that marker's lifetime is used. If it matches **more than one** marker, codegen errors:
+
+```
+[ioc] Factory "buildRequestTracingLogger" at src/factories/buildRequestTracingLogger.ts:3 has multiple lifetime markers in its return type:
+  - "IScoped" → scoped
+  - "ITransient" → transient
+Lifetime is ambiguous. Either remove one marker from the type's inheritance chain, or set lifetime explicitly via registrations.<Contract>.<impl>.lifetime in your ioc.config.ts.
+```
+
+(The factory name in the message is the full export name, e.g. `buildRequestTracingLogger`.)
+
+**Library vs app mode.** Markers work in both modes. Each package resolves markers against its own factories during its own `ioc generate` run. Lifetimes are baked into the emitted manifest; a composing app does not re-run marker resolution on library factories. A library author's marker convention therefore propagates to consumers via lifetimes in the manifest, not via the consumer's `lifetimeMarkers` config.
+
+**Interaction with groups.** A marker interface can sit on a group base type (`DiscountStrategy extends IScoped`) so every group member inherits scoped lifetime without per-factory configuration. This subsumes a separate "group-level lifetime" feature.
+
+**Marker visibility.** Marker types must be declared in source files that TypeScript includes when building the discovery program (typically the same package's `src/`). Imported-only types from another package's compiled output may not resolve unless that source is part of the program.
+
+**Empty marker interfaces.** A marker declared as `interface IScoped {}` is structurally assignable from any object return type. Prefer explicit `extends IScoped` on service interfaces and/or a distinguishing marker member (brand field) when selective matching matters.
+
 ---
 
 ## 8. Groups across manifests
@@ -435,6 +480,7 @@ The `ioc.config.ts` schema changes as follows.
 | `manifestExportPath`                   | `string`                   | Optional. Path the manifest is exported from in the package's `package.json` exports. Default `./generated/ioc-manifest`. Library-mode only. |
 | `registrations[Contract][impl].source` | `'local' \| string`        | Resolves same-key conflicts at composition.                                                                                                  |
 | `groupBaseTypeAliases`                 | `Record<string, string[]>` | Optional. Declares equivalence sets of canonical base-type identifiers, for resolving diamond-dep mismatches (§14.4.1). App-mode only.       |
+| `lifetimeMarkers`                      | `Record<string, IocLifetime>` | Optional. Maps interface/type-alias names to lifetimes; factories whose return type is assignable to a marker inherit that lifetime (§7.1). Library and app mode. |
 
 ### 12.2 Removed
 
@@ -539,6 +585,10 @@ This option is _not_ shipped on day one. It is documented internally (here) as a
 ### 14.5 Circular composition
 
 Package A composes manifest from B, B composes from A. Conceptually nonsense — packages compose downward in the dependency graph — but the library should detect and reject this at validation time rather than allowing weird behavior.
+
+### 14.6 Directory-scoped lifetimes (legacy pattern)
+
+`discovery.scanDirs[].scope` remains supported but is considered a legacy pattern for expressing lifetime policy. It works when implementations are co-located by lifetime category (`src/services/`, `src/repos/`). Domain-organized codebases (`src/users/`, `src/orders/`) fit poorly. **`lifetimeMarkers` (§7.1) is the recommended pattern** for cross-cutting categorical lifetime policy. Directory scope is not deprecated; use it when directory layout genuinely mirrors lifetime boundaries.
 
 ---
 
