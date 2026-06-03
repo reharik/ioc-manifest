@@ -344,7 +344,7 @@ Under each contract name, keys are implementation names from discovery (`buildFo
 
 ### `lifetimeMarkers`
 
-Declare marker interfaces that map to Awilix lifetimes. Any factory whose return type is assignable to a marker inherits that lifetime automatically (see [Lifetime markers](#lifetime-markers) below).
+Declare marker interfaces that map to Awilix lifetimes. Any factory whose return type is assignable to a marker inherits that lifetime automatically.
 
 ```ts
 lifetimeMarkers: {
@@ -354,6 +354,8 @@ lifetimeMarkers: {
 ```
 
 Keys are interface or type-alias names visible in the package's TypeScript program at codegen. Values are `singleton`, `scoped`, or `transient`. An empty object `{}` skips marker analysis.
+
+> ⚠️ Markers must be **branded interfaces** with at least one distinguishing property. An empty marker (`interface IScoped {}`) is structurally assignable from every object type and will tag every factory in the package. See [Lifetime markers](#lifetime-markers) for the branded pattern.
 
 **Lifetime precedence** (highest first):
 
@@ -699,7 +701,26 @@ The basics — factory discovery, typed cradle, automatic collections — cover 
 
 When services are organized by domain (`src/users/`, `src/orders/`) rather than by lifetime category, folder-scoped lifetimes fit poorly. **Lifetime markers** express cross-cutting lifetime policy via marker interfaces — the same assignability machinery groups use.
 
-Declare markers in `ioc.config`:
+#### Defining a marker
+
+A marker is an interface with at least one distinguishing property. **An empty interface (`interface IScoped {}`) will not work** — it's structurally assignable from any object type, so it would tag every factory in the package with the marker's lifetime. Brand the marker explicitly:
+
+```ts
+// shared types
+export interface IScoped {
+  readonly __iocLifetimeScoped: true;
+}
+
+export interface ITransient {
+  readonly __iocLifetimeTransient: true;
+}
+```
+
+The branding property is a compile-time tag. It never appears at runtime — your implementations satisfy it via the type system without setting the field on the actual object.
+
+#### Declaring markers
+
+Map marker types to lifetimes in `ioc.config`:
 
 ```ts
 lifetimeMarkers: {
@@ -708,29 +729,57 @@ lifetimeMarkers: {
 },
 ```
 
-Tag implementations by extending or intersecting the marker on the return type. Transitive inheritance works: attach `IScoped` once on a group base type and every implementation assignable to that base inherits scoped lifetime.
+Keys are interface or type-alias names visible in the package's TypeScript program at codegen. Values are `singleton`, `scoped`, or `transient`. An empty object `{}` skips marker analysis.
 
-**Three attachment points:**
+#### Attaching markers to factories
+
+Three attachment points, in order of locality. The pattern that fits your code best is usually the right one.
+
+**Directly on the implementation type:**
 
 ```ts
-// 1. Direct on the implementation type
-interface RequestTracingLogger extends LoggingService, IScoped {}
+export interface RequestTracingLogger extends LoggingService, IScoped {
+  readonly __iocLifetimeScoped: true;
+}
+```
 
-// 2. On a shared contract
-interface LoggingService extends IScoped { /* ... */ }
+**On a shared contract** (every implementation of `LoggingService` becomes scoped):
 
-// 3. On a group base type (cleanest when already using groups)
-interface DiscountStrategy extends IScoped {
+```ts
+export interface LoggingService extends IScoped {
+  readonly __iocLifetimeScoped: true;
+  log: (msg: string) => void;
+}
+```
+
+**On a group base type** — the cleanest pattern when implementations are already collected as a group. Every implementation in the group inherits the lifetime automatically:
+
+```ts
+export interface DiscountStrategy extends IScoped {
+  readonly __iocLifetimeScoped: true;
   applies: (order: Order) => boolean;
   calculate: (order: Order) => number;
 }
 ```
 
-If a return type matches two markers, codegen errors and names both — silent first-wins would hide bugs. Override any marker with `registrations[Contract][impl].lifetime` when you need an exception.
+Transitive inheritance does the rest. You attach the marker once on the right level of abstraction; codegen finds it on every implementation downstream.
 
-Marker types must be declared in source files visible to the package's TypeScript program at codegen (typically the same package's `src/`). Library packages bake resolved lifetimes into their manifest; composing apps do not re-run marker resolution on library factories.
+#### Precedence
 
-**Note:** An empty marker interface (`interface IScoped {}`) is structurally assignable from any object return type. Prefer explicit `extends IScoped` on service interfaces and/or a distinguishing marker member when selective matching matters.
+For any factory, the lifetime resolves in this order (highest first):
+
+1. `registrations[Contract][impl].lifetime` — explicit per-impl override
+2. Lifetime marker on the return type
+3. `discovery.scanDirs[].scope` — folder-scoped default
+4. Default: `singleton`
+
+#### Multiple markers is a hard error
+
+If a return type matches two markers, codegen errors and names both. Silent first-wins would create the worst kind of bug — a service's lifetime quietly differs from what the developer intended. Resolve by removing one marker from the inheritance chain or setting the lifetime explicitly via `registrations`.
+
+#### Cross-package behavior
+
+Marker types must be declared in source files visible to the package's TypeScript program at codegen — typically the same package's `src/`. Library packages bake their resolved lifetimes into their manifest at _their_ codegen time; composing apps do not re-run marker resolution on library factories. A library's choice of marker is invisible to consumers; what they see is the resolved lifetime in the registration.
 
 ### Folder-scoped lifetimes
 
@@ -886,6 +935,8 @@ Either way, factory source code doesn't change.
 **Group base type mismatch across manifests** — caused by hoisting producing different physical paths for the same logical type. The error includes the remediation block to paste into `groupBaseTypeAliases`.
 
 **Library-mode invocation of `ioc validate`** — prints an informational message and exits 0. Validate is a cross-manifest tool; a library has no cross-manifest concerns to validate.
+
+**Every factory in the package got the same lifetime** — your marker interface is empty (`interface IScoped {}`), so it matches every object type. Add a distinguishing property like `readonly __iocLifetimeScoped: true` to the marker. See [Lifetime markers](#lifetime-markers).
 
 ---
 
