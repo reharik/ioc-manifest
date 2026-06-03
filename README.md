@@ -342,6 +342,26 @@ Under each contract name, keys are implementation names from discovery (`buildFo
 | ----------------- | ----------------------------------------------------------------------------------------------- |
 | `accessKey`       | Overrides the cradle property name for the default slot (e.g. `"database"` instead of `"knex"`) |
 
+### `lifetimeMarkers`
+
+Declare marker interfaces that map to Awilix lifetimes. Any factory whose return type is assignable to a marker inherits that lifetime automatically (see [Lifetime markers](#lifetime-markers) below).
+
+```ts
+lifetimeMarkers: {
+  IScoped: "scoped",
+  ITransient: "transient",
+},
+```
+
+Keys are interface or type-alias names visible in the package's TypeScript program at codegen. Values are `singleton`, `scoped`, or `transient`. An empty object `{}` skips marker analysis.
+
+**Lifetime precedence** (highest first):
+
+1. `registrations[Contract][implementation].lifetime`
+2. Lifetime marker on return type (`lifetimeMarkers`)
+3. `discovery.scanDirs[].scope` (folder-scoped default)
+4. Default: `singleton`
+
 ### App-mode fields
 
 These only apply in app mode (a package that composes manifests from other packages):
@@ -675,9 +695,48 @@ Missing dependencies, cyclic references, lifetime violations, and factory except
 
 The basics — factory discovery, typed cradle, automatic collections — cover most applications. The features below are things you can reach for when your app grows or your architecture demands more structure.
 
+### Lifetime markers
+
+When services are organized by domain (`src/users/`, `src/orders/`) rather than by lifetime category, folder-scoped lifetimes fit poorly. **Lifetime markers** express cross-cutting lifetime policy via marker interfaces — the same assignability machinery groups use.
+
+Declare markers in `ioc.config`:
+
+```ts
+lifetimeMarkers: {
+  IScoped: "scoped",
+  ITransient: "transient",
+},
+```
+
+Tag implementations by extending or intersecting the marker on the return type. Transitive inheritance works: attach `IScoped` once on a group base type and every implementation assignable to that base inherits scoped lifetime.
+
+**Three attachment points:**
+
+```ts
+// 1. Direct on the implementation type
+interface RequestTracingLogger extends LoggingService, IScoped {}
+
+// 2. On a shared contract
+interface LoggingService extends IScoped { /* ... */ }
+
+// 3. On a group base type (cleanest when already using groups)
+interface DiscountStrategy extends IScoped {
+  applies: (order: Order) => boolean;
+  calculate: (order: Order) => number;
+}
+```
+
+If a return type matches two markers, codegen errors and names both — silent first-wins would hide bugs. Override any marker with `registrations[Contract][impl].lifetime` when you need an exception.
+
+Marker types must be declared in source files visible to the package's TypeScript program at codegen (typically the same package's `src/`). Library packages bake resolved lifetimes into their manifest; composing apps do not re-run marker resolution on library factories.
+
+**Note:** An empty marker interface (`interface IScoped {}`) is structurally assignable from any object return type. Prefer explicit `extends IScoped` on service interfaces and/or a distinguishing marker member when selective matching matters.
+
 ### Folder-scoped lifetimes
 
-If you find yourself setting `lifetime: "scoped"` on dozens of individual services and repositories, you probably want folder-scoped lifetimes instead. Rather than annotating each factory, you tell the generator that everything under a directory defaults to a specific lifetime:
+Folder-scoped lifetimes are a **legacy pattern** for codebases where directory layout mirrors lifetime boundaries. For domain-organized code, prefer [lifetime markers](#lifetime-markers) instead.
+
+If implementations are co-located by lifetime category, you can default lifetimes by scan root:
 
 ```ts
 discovery: {
@@ -692,7 +751,7 @@ discovery: {
 
 This came out of a real pattern: in a GraphQL API, services and repositories are scoped to the request, infrastructure clients (database pools, caches) are singletons, and HTTP handlers are transient. Instead of repeating that in `registrations` for every single factory, you express it structurally — the directory _is_ the policy.
 
-Per-implementation overrides in `registrations` always take precedence, so you can still make exceptions when needed.
+Per-implementation overrides in `registrations` and lifetime markers take precedence over folder scope.
 
 ### Groups
 
