@@ -28,6 +28,18 @@ const main = (): void => {
     .filter((id) => id.length > 0)
     .sort((a, b) => a.localeCompare(b));
   console.log(`Loggers in group: ${loggerIds.join(", ")}`);
+
+  const scopeA = container.createScope();
+  const scopeB = container.createScope();
+  const scopedA1 = scopeA.resolve("requestTracingLogger");
+  const scopedA2 = scopeA.resolve("requestTracingLogger");
+  const scopedB1 = scopeB.resolve("requestTracingLogger");
+  console.log(
+    `Scoped requestTracingLogger same within scope: ${scopedA1 === scopedA2}`,
+  );
+  console.log(
+    `Scoped requestTracingLogger differs across scopes: ${scopedA1 !== scopedB1}`,
+  );
 };
 
 main();

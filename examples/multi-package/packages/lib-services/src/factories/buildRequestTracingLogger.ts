@@ -1,6 +1,7 @@
-import type { LoggingService } from "../types/LoggingService.js";
+import type { RequestTracingLogger } from "../types/RequestTracingLogger.js";
 
-export const buildRequestTracingLogger = (): LoggingService => ({
+export const buildRequestTracingLogger = (): RequestTracingLogger => ({
+  __iocLifetimeScoped: true,
   id: "requestTracingLogger",
   ping: () => "request-trace",
 });
