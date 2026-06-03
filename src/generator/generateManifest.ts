@@ -44,6 +44,7 @@ import {
   removeComposedManifestIfPresent,
   resolveComposedPackageSpecs,
 } from "./writeComposedManifest.js";
+import { resolveLifetimeMarkersForFactories } from "./resolveLifetimeMarkers.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../../package.json") as { name?: unknown };
@@ -159,10 +160,17 @@ export const generateManifest = async (
         )
       : undefined;
 
+  const markerLifetimesByFactoryKey = resolveLifetimeMarkersForFactories(
+    acceptedFactories,
+    config?.lifetimeMarkers,
+    { program, projectRoot, scanDirs },
+  );
+
   const plans = buildRegistrationPlan(contractMap, config, {
     projectRoot,
     scanDirs,
     composedContractNames,
+    markerLifetimesByFactoryKey,
   });
   const groupResult = buildGroupPlan(config?.groups, plans, {
     program,

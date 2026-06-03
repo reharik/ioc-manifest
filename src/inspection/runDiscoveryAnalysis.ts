@@ -21,6 +21,7 @@ import {
 } from "../generator/manifestOptions.js";
 import type { ManifestRuntimePaths } from "../generator/manifestPaths.js";
 import type { IocDiscoveryAnalysisFiles } from "../generator/discoverFactories/discoveryOutcomeTypes.js";
+import { resolveLifetimeMarkersForFactories } from "../generator/resolveLifetimeMarkers.js";
 
 export type DiscoveryAnalysisResult = {
   readonly discoveryFiles: IocDiscoveryAnalysisFiles;
@@ -93,9 +94,16 @@ const runDiscoveryFromResolution = async (
         { collectFileRecords: true },
       );
 
+    const markerLifetimesByFactoryKey = resolveLifetimeMarkersForFactories(
+      acceptedFactories,
+      config?.lifetimeMarkers,
+      { program, projectRoot, scanDirs },
+    );
+
     const registrationPlan = buildRegistrationPlan(contractMap, config, {
       projectRoot,
       scanDirs,
+      markerLifetimesByFactoryKey,
     });
 
     return {

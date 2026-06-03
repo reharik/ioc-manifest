@@ -30,6 +30,7 @@ import {
 /** Where resolved registration lifetime came from (inspect/debug only). `discovery-root` = `discovery.scanDirs[].scope`. */
 export type IocRegistrationLifetimeSource =
   | "factory-config"
+  | "lifetime-marker"
   | "discovery-root"
   | "default";
 
@@ -38,6 +39,8 @@ export type RegistrationPlanLifetimeContext = {
   scanDirs: readonly ResolvedScanDir[];
   /** Contract names from composed package manifests (app mode). */
   composedContractNames?: ComposedManifestContractNames;
+  /** Marker-resolved lifetimes keyed by `${modulePath}:${exportName}`. */
+  markerLifetimesByFactoryKey?: ReadonlyMap<string, IocLifetime>;
 };
 
 export type ResolvedImplementationEntry = {
@@ -203,8 +206,9 @@ const resolveLifetime = (factory: DiscoveredFactory): IocLifetime => {
  * Resolve Awilix lifetime for one implementation. Single precedence chain (no duplicate fallbacks):
  *
  * 1. `registrations[Contract][implementation].lifetime` → source `factory-config` in inspect output (means **ioc.config**, not factory source)
- * 2. Else discovery-root `discovery.scanDirs[].scope` for the factory file → source `discovery-root`
- * 3. Else {@link resolveLifetime} (existing behavior: merged factory lifetime or `singleton`) → source `default`
+ * 2. Else lifetime marker on return type → source `lifetime-marker`
+ * 3. Else discovery-root `discovery.scanDirs[].scope` for the factory file → source `discovery-root`
+ * 4. Else {@link resolveLifetime} (existing behavior: merged factory lifetime or `singleton`) → source `default`
  */
 const resolvePlanLifetime = (
   factory: DiscoveredFactory,
@@ -218,6 +222,20 @@ const resolvePlanLifetime = (
         ? { lifetimeSource: "factory-config" as const }
         : {}),
     };
+  }
+
+  if (lifetimeContext?.markerLifetimesByFactoryKey !== undefined) {
+    const markerLifetime = lifetimeContext.markerLifetimesByFactoryKey.get(
+      `${factory.modulePath}:${factory.exportName}`,
+    );
+    if (markerLifetime !== undefined) {
+      return {
+        lifetime: markerLifetime,
+        ...(lifetimeContext !== undefined
+          ? { lifetimeSource: "lifetime-marker" as const }
+          : {}),
+      };
+    }
   }
 
   if (lifetimeContext !== undefined) {

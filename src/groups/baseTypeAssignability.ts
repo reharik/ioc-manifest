@@ -123,6 +123,26 @@ export const resolveDeclaredBaseType = (
 };
 
 /**
+ * Whether `candidateType` is structurally assignable to a top-level type named `baseTypeName`
+ * in the program (excluding node_modules). Used by lifetime marker resolution and groups.
+ */
+export const isTypeAssignableToNamedBase = (
+  checker: ts.TypeChecker,
+  program: ts.Program,
+  candidateType: ts.Type,
+  baseTypeName: string,
+): { ok: true } | { ok: false; message: string } => {
+  const resolved = resolveDeclaredBaseType(program, checker, baseTypeName);
+  if (!resolved.ok) {
+    return resolved;
+  }
+  if (!checker.isTypeAssignableTo(candidateType, resolved.type)) {
+    return { ok: false, message: "not assignable" };
+  }
+  return { ok: true };
+};
+
+/**
  * Whether an implementation should appear in a **collection** group.
  *
  * Skips non-default implementations registered at the contract default slot key (`contractKey`).
