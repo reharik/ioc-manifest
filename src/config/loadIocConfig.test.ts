@@ -293,4 +293,54 @@ describe("resolveIocConfigPath", () => {
       );
     });
   });
+
+  describe("When lifetimeMarkers is an empty object", () => {
+    it("should accept the config", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-lifetime-markers-empty-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" }, lifetimeMarkers: {} };`,
+      );
+      const loaded = await loadIocConfig(cfg);
+      assert.deepEqual(loaded.lifetimeMarkers, {});
+    });
+  });
+
+  describe("When lifetimeMarkers has an invalid lifetime value", () => {
+    it("should reject the entry", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-lifetime-markers-bad-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default {
+          discovery: { scanDirs: "src" },
+          lifetimeMarkers: { IScoped: "request" },
+        };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /lifetimeMarkers\."IScoped" must be singleton \| scoped \| transient/,
+      );
+    });
+  });
+
+  describe("When lifetimeMarkers has duplicate lifetime values across keys", () => {
+    it("should accept the config", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-lifetime-markers-dup-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default {
+          discovery: { scanDirs: "src" },
+          lifetimeMarkers: { IScoped: "scoped", RequestScoped: "scoped" },
+        };`,
+      );
+      const loaded = await loadIocConfig(cfg);
+      assert.deepEqual(loaded.lifetimeMarkers, {
+        IScoped: "scoped",
+        RequestScoped: "scoped",
+      });
+    });
+  });
 });

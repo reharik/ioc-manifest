@@ -175,6 +175,11 @@ export type IocConfig = {
    * when diamond-dependency hoisting produces mismatched ids (§14.4.1).
    */
   groupBaseTypeAliases?: Record<string, string[]>;
+  /**
+   * Maps interface or type-alias names to lifetimes. A factory whose return type is assignable to
+   * a marker name inherits that marker's lifetime (see lifetime precedence in docs).
+   */
+  lifetimeMarkers?: Record<string, IocLifetime>;
 };
 
 export const defineIocConfig = (config: IocConfig): IocConfig => config;

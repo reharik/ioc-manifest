@@ -31,6 +31,7 @@ const TOP_LEVEL_KEYS = new Set([
   "registrations",
   "groups",
   "groupBaseTypeAliases",
+  "lifetimeMarkers",
 ]);
 
 const DISCOVERY_KEYS = new Set([
@@ -96,6 +97,49 @@ const validateGroupBaseTypeAliasesShape = (
         );
       }
       seen.add(id);
+    }
+  }
+};
+
+const BUILTIN_TYPE_NAMES = new Set([
+  "string",
+  "number",
+  "boolean",
+  "symbol",
+  "bigint",
+  "undefined",
+  "null",
+  "object",
+  "never",
+  "unknown",
+  "any",
+  "void",
+]);
+
+const validateLifetimeMarkersShape = (
+  value: unknown,
+  pathLabel: string,
+): void => {
+  if (!isRecord(value)) {
+    throw new Error(`[ioc-config] ${pathLabel} must be an object when set`);
+  }
+
+  for (const [markerName, lifetime] of Object.entries(value)) {
+    const entryPath = `${pathLabel}.${JSON.stringify(markerName)}`;
+    if (typeof markerName !== "string" || markerName.length === 0) {
+      throw new Error(
+        `[ioc-config] ${pathLabel} keys must be non-empty strings`,
+      );
+    }
+    if (BUILTIN_TYPE_NAMES.has(markerName)) {
+      console.warn(
+        `[ioc-config] warning: ${entryPath} uses a built-in type name ${JSON.stringify(markerName)}; prefer a dedicated marker interface`,
+      );
+    }
+    if (!isIocLifetime(lifetime)) {
+      throw new Error(
+        `[ioc-config] ${entryPath} must be singleton | scoped | transient`,
+      );
     }
   }
 };
@@ -487,6 +531,13 @@ const validateIocConfig = async (
     validateGroupBaseTypeAliasesShape(
       raw.groupBaseTypeAliases,
       `${sourceLabel} groupBaseTypeAliases`,
+    );
+  }
+
+  if (raw.lifetimeMarkers !== undefined) {
+    validateLifetimeMarkersShape(
+      raw.lifetimeMarkers,
+      `${sourceLabel} lifetimeMarkers`,
     );
   }
 
