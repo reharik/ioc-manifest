@@ -21,6 +21,21 @@ const otherMarkerPath = path.join(
   "nominal-assignability",
   "other-marker.ts",
 );
+const importedHeritageFixtureDir = path.join(
+  __dirname,
+  "..",
+  "generator",
+  "test-fixtures",
+  "imported-nominal-heritage",
+);
+const importedBaseTypesPath = path.join(
+  importedHeritageFixtureDir,
+  "base-types.ts",
+);
+const importedServiceTypesPath = path.join(
+  importedHeritageFixtureDir,
+  "service-types.ts",
+);
 
 const makeProgram = (roots: readonly string[]): ts.Program =>
   ts.createProgram({
@@ -131,6 +146,24 @@ describe("isNominallyAssignable", () => {
         isNominallyAssignable(checker, leaf, otherBase),
         false,
       );
+    });
+  });
+
+  describe("When heritage references an imported base interface", () => {
+    it("should match transitively to the root marker across the import site", () => {
+      const program = makeProgram([
+        importedBaseTypesPath,
+        importedServiceTypesPath,
+      ]);
+      const checker = program.getTypeChecker();
+      const base = declaredType(checker, program, "MarkerBase");
+      const service = declaredTypeInFile(
+        checker,
+        program,
+        importedServiceTypesPath,
+        "Service",
+      );
+      assert.strictEqual(isNominallyAssignable(checker, service, base), true);
     });
   });
 });
