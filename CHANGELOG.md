@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.3] - 2026-06-04
+
+### Fixed
+
+- **Composed package export resolution now respects `customConditions`.** When loading another package's `iocManifest` and `iocTypes` subpath exports for app-mode codegen, the resolver now honors `customConditions` from the user's tsconfig. Previously, conditional exports without an `import` condition would silently resolve to `types` (`.d.ts` files), causing stale or incorrect manifest data.
+
+### Added
+
+- **`loadIocTsconfigContext` helper** centralizes tsconfig parsing so both program construction and export resolution consume the same parsed options. No public API change; internal refactor that closes a class of "config option not threaded through" bugs.
+
+### Changed
+
+- The resolver no longer falls back to the `types` condition for value loading. `.d.ts` files don't contain manifest values; falling back to them produced confusing errors. Now errors with guidance to add a `development`, `import`, or `default` condition when only `types` is declared.
+
 ## [1.1.2] - 2026-06-04
 
 ### Fixed
