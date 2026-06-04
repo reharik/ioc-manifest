@@ -76,4 +76,38 @@ describe("same-file deps property imports", () => {
       assert.match(typesSource, /\bconfig:\s*Config;/);
     });
   });
+
+  describe("When return and deps types are declared in the same factory file", () => {
+    it("should merge Config and SomeService into one import line", () => {
+      const program = makeProgram();
+      const result = analyzeDemandSupply(factories, {
+        program,
+        projectRoot,
+        scanDirs,
+        generatedDir,
+      });
+
+      const { typesSource } = buildManifestArtifactSources(
+        factories,
+        [],
+        undefined,
+        path.join(generatedDir, "ioc-manifest.ts"),
+        "ioc-manifest",
+        { demandSupply: result },
+      );
+
+      const importLines = typesSource
+        .split("\n")
+        .filter((line) => line.includes("buildSameFileDeps.js"));
+      assert.strictEqual(
+        importLines.length,
+        1,
+        `expected one import from factory file, got:\n${importLines.join("\n")}`,
+      );
+      const line = importLines[0] ?? "";
+      assert.match(line, /\bConfig\b/);
+      assert.match(line, /\bSomeService\b/);
+      assert.match(line, /^import type \{[^}]+\} from "/);
+    });
+  });
 });
