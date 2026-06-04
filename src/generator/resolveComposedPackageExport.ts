@@ -143,7 +143,7 @@ export const resolvePackageExportPath = (
     );
   }
 
-  const { rel } = pickExportRelativePath(
+  const { rel, condition } = pickExportRelativePath(
     entry,
     exportSubpath,
     packageName,
@@ -152,7 +152,8 @@ export const resolvePackageExportPath = (
   const resolved = path.join(pkgDir, rel);
   if (!fs.existsSync(resolved)) {
     throw new Error(
-      `[ioc-config] ${JSON.stringify(packageName)} export ${JSON.stringify(exportSubpath)} points to missing file ${JSON.stringify(rel)} (run \`ioc generate\` in that package)`,
+      `[ioc] Resolved subpath export for ${JSON.stringify(`${packageName}${exportSubpath}`)} to ${JSON.stringify(rel)} (condition: ${JSON.stringify(condition)}), but the file does not exist.\n` +
+        `This usually means "ioc generate" has not been run for that package yet, or its generatedDir is misconfigured.`,
     );
   }
   return resolved;
