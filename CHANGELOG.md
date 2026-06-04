@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.4] - 2026-06-04
+
+### Fixed
+
+- **Deps-property types declared in the factory file now get correct imports** in generated `ioc-registry.types.ts`. Previously, if a factory declared its deps type _and_ the deps' property types in the same file as the factory (e.g. `type Config = { ... }; type Deps = { config: Config };` alongside `buildFoo`), the property types were referenced in `IocExternals` without an import statement, causing TS2304 errors at consumer compile time. Now those types are correctly imported.
+- Multiple same-file types referenced by a single factory are merged into a single import line.
+
+### Notes
+
+- Anonymous structural types (e.g. branded primitives like `string & { __brand: "X" }`) continue to inline correctly. Only top-level named types (`type`, `interface`, `enum`) declared in the factory file now trigger imports — the case where the named declaration is genuinely required at the import site.
+
 ## [1.1.3] - 2026-06-04
 
 ### Fixed
