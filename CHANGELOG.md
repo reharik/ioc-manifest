@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.5] - 2026-06-04
+
+### Fixed
+
+- **Composed package export paths ending in `.js` now resolve to on-disk TypeScript source.** When `package.json` `exports` point at a `.js` path (the modern TypeScript convention where import specifiers use `.js` but the file on disk is `.ts`), existence checks and manifest loading use the matching `.ts`, `.tsx`, `.mts`, or `.cts` file. Same mapping applies to `.mjs` → `.mts` and `.cjs` → `.cts`.
+- **Export resolution "file does not exist" errors now display the subpath import cleanly** (e.g. `@packages/media-core/iocManifest`) instead of concatenating package name and subpath into a malformed name like `@packages/media-core./iocManifest`.
+
 ## [1.1.4] - 2026-06-04
 
 ### Fixed
