@@ -12,10 +12,9 @@ const fixtureRoot = path.join(__dirname, "../test-fixtures/cross-package-bare");
 const appDir = path.join(fixtureRoot, "app");
 const projectRoot = appDir;
 const generatedDir = path.join(appDir, "generated");
-const factoryFile = path.join(appDir, "src/buildService.ts");
 const scanDirs = [{ absPath: path.join(appDir, "src") }];
 
-const makeProgram = (): ts.Program => {
+const loadFixtureProgram = (rootNames: string[]): ts.Program => {
   const configPath = path.join(fixtureRoot, "tsconfig.json");
   const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
   assert.ok(!configFile.error);
@@ -27,14 +26,13 @@ const makeProgram = (): ts.Program => {
     configPath,
   );
   assert.strictEqual(parsed.errors.length, 0);
-  return ts.createProgram({
-    rootNames: [factoryFile],
-    options: parsed.options,
-  });
+  return ts.createProgram({ rootNames, options: parsed.options });
 };
 
 const depsPropertyType = (
   program: ts.Program,
+  factoryFile: string,
+  exportName: string,
   propName: string,
 ): ts.Type => {
   const checker = program.getTypeChecker();
@@ -44,12 +42,12 @@ const depsPropertyType = (
     (s) =>
       ts.isVariableStatement(s) &&
       s.declarationList.declarations.some(
-        (d) => ts.isIdentifier(d.name) && d.name.text === "buildSomeService",
+        (d) => ts.isIdentifier(d.name) && d.name.text === exportName,
       ),
   );
   assert.ok(stmt && ts.isVariableStatement(stmt));
   const decl = stmt.declarationList.declarations.find(
-    (d) => ts.isIdentifier(d.name) && d.name.text === "buildSomeService",
+    (d) => ts.isIdentifier(d.name) && d.name.text === exportName,
   );
   assert.ok(decl?.initializer && ts.isArrowFunction(decl.initializer));
   const param = decl.initializer.parameters[0];
@@ -61,22 +59,39 @@ const depsPropertyType = (
   return checker.getTypeOfSymbol(prop);
 };
 
+const emitDepsImport = (
+  factoryRel: string,
+  exportName: string,
+  propName: string,
+): EmittedTypeReference => {
+  const factoryFile = path.join(appDir, "src", factoryRel);
+  const program = loadFixtureProgram([factoryFile]);
+  const checker = program.getTypeChecker();
+  const sf = program.getSourceFile(factoryFile);
+  assert.ok(sf);
+  const ref = emitTypeReference(
+    checker,
+    depsPropertyType(program, factoryFile, exportName, propName),
+    {
+      program,
+      projectRoot,
+      scanDirs,
+      generatedDir,
+      contextSourceFile: sf,
+    },
+  );
+  assert.ok(ref);
+  return ref;
+};
+
+type EmittedTypeReference = NonNullable<
+  ReturnType<typeof emitTypeReference>
+>;
+
 describe("cross-package bare import recovery", () => {
   describe("When a factory imports a type via a path-mapped bare specifier", () => {
     it("should emit the bare specifier instead of a deep relative path", () => {
-      const program = makeProgram();
-      const checker = program.getTypeChecker();
-      const sf = program.getSourceFile(factoryFile);
-      assert.ok(sf);
-      const propType = depsPropertyType(program, "mediaStorage");
-      const ref = emitTypeReference(checker, propType, {
-        program,
-        projectRoot,
-        scanDirs,
-        generatedDir,
-        contextSourceFile: sf,
-      });
-      assert.ok(ref);
+      const ref = emitDepsImport("buildService.ts", "buildSomeService", "mediaStorage");
       assert.strictEqual(ref.typeName, "MediaStorage");
       assert.strictEqual(ref.imports.length, 1);
       const imp = ref.imports[0];
@@ -91,7 +106,8 @@ describe("cross-package bare import recovery", () => {
     });
 
     it("should preserve bare specifier in ioc-registry.types.ts via writeManifest", async () => {
-      const program = makeProgram();
+      const factoryFile = path.join(appDir, "src/buildService.ts");
+      const program = loadFixtureProgram([factoryFile]);
       const factories = [
         {
           contractName: "SomeService",
@@ -129,6 +145,49 @@ describe("cross-package bare import recovery", () => {
         /import type \{ MediaStorage \} from "@test\/lib-foo";/,
       );
       assert.ok(!typesSource.includes("packages/lib-foo"));
+    });
+  });
+
+  describe("When the factory uses import variants for cross-package types", () => {
+    it("should preserve bare specifier for renamed type-only imports and emit the export name", () => {
+      const ref = emitDepsImport(
+        "buildRenamedImport.ts",
+        "buildRenamedService",
+        "mediaStorage",
+      );
+      assert.strictEqual(ref.typeName, "MediaStorage");
+      assert.strictEqual(ref.imports[0]?.relImport, "@test/lib-foo");
+      assert.strictEqual(ref.imports[0]?.useDefaultImport, false);
+    });
+
+    it("should preserve subpath bare specifiers", () => {
+      const ref = emitDepsImport(
+        "buildSubpathImport.ts",
+        "buildSubpathService",
+        "item",
+      );
+      assert.strictEqual(ref.typeName, "SubpathType");
+      assert.strictEqual(ref.imports[0]?.relImport, "@test/lib-foo/subpath");
+    });
+
+    it("should recover bare specifiers from import { type Name } syntax", () => {
+      const ref = emitDepsImport(
+        "buildTypeOnlyImport.ts",
+        "buildTypeOnlyService",
+        "mediaStorage",
+      );
+      assert.strictEqual(ref.imports[0]?.relImport, "@test/lib-foo");
+    });
+
+    it("should recover default-import bare specifiers and emit a default import", () => {
+      const ref = emitDepsImport(
+        "buildDefaultImport.ts",
+        "buildDefaultService",
+        "widget",
+      );
+      assert.strictEqual(ref.imports[0]?.relImport, "@test/lib-foo/default");
+      assert.strictEqual(ref.imports[0]?.useDefaultImport, true);
+      assert.strictEqual(ref.typeName, "DefaultWidget");
     });
   });
 });

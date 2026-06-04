@@ -8,7 +8,8 @@
     "baseUrl": ".",
     "paths": {
       "@test/lib-foo": ["packages/lib-foo/src/index.ts"],
-      "@test/lib-foo/subpath": ["packages/lib-foo/src/subpath.ts"]
+      "@test/lib-foo/subpath": ["packages/lib-foo/src/subpath.ts"],
+      "@test/lib-foo/default": ["packages/lib-foo/src/default.ts"]
     }
   },
   "include": ["app/**/*.ts", "packages/**/*.ts"]

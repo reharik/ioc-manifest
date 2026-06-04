@@ -4,7 +4,11 @@ import {
   computeManifestModuleSpecifier,
   type FactoryDiscoveryPaths,
 } from "../manifestPaths.js";
-import { tryRecoverPreferredModuleSpecifier } from "../recoverPreferredModuleSpecifier.js";
+import {
+  factoryBareImportLocalBindingName,
+  factoryImportsTypeAsDefaultBareImport,
+  tryRecoverPreferredModuleSpecifier,
+} from "../recoverPreferredModuleSpecifier.js";
 import { cradleTypeImportUsesDefaultExport } from "../contractTypeSourceFile.js";
 import type { EmittedTypeReference, TypeImportSpec } from "./types.js";
 
@@ -229,7 +233,17 @@ const emitNamedTypeImport = (
 ): EmitInnerResult => {
   const apparent = checker.getApparentType(type);
   const typeDisplay = formatType(checker, apparent);
-  const importName = importSymbolNameFromType(checker, apparent);
+  let importName = importSymbolNameFromType(checker, apparent);
+  if (importName === "default") {
+    const localName = factoryBareImportLocalBindingName(
+      checker,
+      apparent,
+      ctx.contextSourceFile,
+    );
+    if (localName !== undefined) {
+      importName = localName;
+    }
+  }
   const declSource = getTypeDeclarationSourceFile(checker, apparent);
 
   if (
@@ -267,7 +281,12 @@ const emitNamedTypeImport = (
   assertNotTypescriptPackageImport(importName, relImport, declSource.fileName);
 
   const useDefaultImport =
-    cradleTypeImportUsesDefaultExport(declSource, importName) ?? false;
+    factoryImportsTypeAsDefaultBareImport(
+      checker,
+      apparent,
+      ctx.contextSourceFile,
+    ) ||
+    (cradleTypeImportUsesDefaultExport(declSource, importName) ?? false);
 
   return {
     typeName: importName,

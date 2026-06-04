@@ -81,11 +81,18 @@ const recoverFromSameFileImport = (
   return undefined;
 };
 
-const recoverFromFactoryBareImports = (
+type FactoryBareImportMatch = {
+  moduleSpecifier: string;
+  useDefaultImport: boolean;
+  /** Local binding name in the factory import (`import { X as Y }` → `Y`). */
+  localBindingName: string;
+};
+
+const findFactoryBareImportForSymbol = (
   checker: ts.TypeChecker,
   targetSymbol: ts.Symbol,
   factorySourceFile: ts.SourceFile,
-): string | undefined => {
+): FactoryBareImportMatch | undefined => {
   for (const stmt of factorySourceFile.statements) {
     if (!ts.isImportDeclaration(stmt)) {
       continue;
@@ -107,7 +114,11 @@ const recoverFromFactoryBareImports = (
             bindingSym !== undefined &&
             symbolsMatch(checker, bindingSym, targetSymbol)
           ) {
-            return spec.text;
+            return {
+              moduleSpecifier: spec.text,
+              useDefaultImport: false,
+              localBindingName: el.name.text,
+            };
           }
         }
       }
@@ -120,12 +131,24 @@ const recoverFromFactoryBareImports = (
         bindingSym !== undefined &&
         symbolsMatch(checker, bindingSym, targetSymbol)
       ) {
-        return spec.text;
+        return {
+          moduleSpecifier: spec.text,
+          useDefaultImport: true,
+          localBindingName: clause.name.text,
+        };
       }
     }
   }
   return undefined;
 };
+
+const recoverFromFactoryBareImports = (
+  checker: ts.TypeChecker,
+  targetSymbol: ts.Symbol,
+  factorySourceFile: ts.SourceFile,
+): string | undefined =>
+  findFactoryBareImportForSymbol(checker, targetSymbol, factorySourceFile)
+    ?.moduleSpecifier;
 
 /**
  * Recovers the module specifier a factory already uses for a type: same-file import re-exports,
@@ -171,3 +194,39 @@ export const tryRecoverPreferredModuleSpecifier = (
     factorySourceFile,
   );
 };
+
+const findFactoryBareImportForType = (
+  checker: ts.TypeChecker,
+  type: ts.Type,
+  factorySourceFile: ts.SourceFile,
+): FactoryBareImportMatch | undefined => {
+  const typeSymbol = resolveTypeSymbol(checker, type);
+  if (typeSymbol === undefined) {
+    return undefined;
+  }
+  return findFactoryBareImportForSymbol(
+    checker,
+    typeSymbol,
+    factorySourceFile,
+  );
+};
+
+/** True when the factory file default-imports this type from a bare module specifier. */
+export const factoryImportsTypeAsDefaultBareImport = (
+  checker: ts.TypeChecker,
+  type: ts.Type,
+  factorySourceFile: ts.SourceFile,
+): boolean =>
+  findFactoryBareImportForType(checker, type, factorySourceFile)
+    ?.useDefaultImport === true;
+
+/**
+ * Local name from the factory's matching bare import (e.g. default import binding). Used when the
+ * checker symbol name is `default` but generated code should use the factory's binding.
+ */
+export const factoryBareImportLocalBindingName = (
+  checker: ts.TypeChecker,
+  type: ts.Type,
+  factorySourceFile: ts.SourceFile,
+): string | undefined =>
+  findFactoryBareImportForType(checker, type, factorySourceFile)?.localBindingName;
