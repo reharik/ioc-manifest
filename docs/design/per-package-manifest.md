@@ -292,7 +292,7 @@ defineIocConfig({
 
 Each key is the name of an interface or type alias visible in the package's TypeScript program at codegen time. Each value is `singleton`, `scoped`, or `transient`. An empty object `{}` is treated as "no markers declared" and skips marker analysis entirely.
 
-For each discovered `build*` factory, codegen checks whether the factory's **return type** is structurally assignable to each configured marker (same `isTypeAssignableTo` machinery as groups). Transitive inheritance applies: if `UserReadService extends IGroupedInterfaceA extends IScoped`, a factory returning `UserReadService` matches `IScoped`.
+For each discovered `build*` factory, codegen checks whether the factory's **return type** nominally declares heritage to each configured marker (via `extends` on interfaces or `&` on type-alias intersections — not structural shape matching). Transitive inheritance applies: if `UserReadService extends IGroupedInterfaceA extends IScoped`, a factory returning `UserReadService` matches `IScoped`.
 
 **Lifetime precedence** (highest first):
 
@@ -318,7 +318,13 @@ Lifetime is ambiguous. Either remove one marker from the type's inheritance chai
 
 **Marker visibility.** Marker types must be declared in source files that TypeScript includes when building the discovery program (typically the same package's `src/`). Imported-only types from another package's compiled output may not resolve unless that source is part of the program.
 
-**Empty marker interfaces.** A marker declared as `interface IScoped {}` is structurally assignable from any object return type. Prefer explicit `extends IScoped` on service interfaces and/or a distinguishing marker member (brand field) when selective matching matters.
+**Empty marker interfaces.** A marker declared as `interface IScoped {}` is valid. Membership requires an explicit `extends IScoped` (or transitive `extends` chain, or `type Foo = Bar & IScoped`) on the factory return type — not structural assignability of `{}`.
+
+### 7.2 Nominal vs structural matching
+
+Groups (§8) and lifetime markers (§7.1) use **nominal** membership: a type belongs to a base or marker only when its declaration says so via `extends` or type-alias `&` intersection. Structural assignability (`isTypeAssignableTo`) is still used elsewhere (contract return-type validation, deps-property emission) but not for group or marker membership.
+
+Users upgrading from releases that required branded marker properties can remove those brands; `extends IScoped` alone is sufficient. Branded markers continue to work if left in place.
 
 ---
 
@@ -347,7 +353,7 @@ groups: {
 }
 ```
 
-Codegen runs the assignability check against the package's local implementations only and records the group definition plus matching local impls in the manifest.
+Codegen runs **nominal** membership (declared `extends` / intersection heritage, same rules as §7.2) against the package's local implementations only and records the group definition plus matching local impls in the manifest. An empty local membership emits `[ioc-warn]` but does not fail codegen — implementations may live in other composed packages.
 
 At composition, group definitions merge by name. Same name + same canonical base type → contributions union. Same name + different canonical base type → error. The merged group is registered in the container; `container.resolve('discountStrategies')` returns the union.
 
