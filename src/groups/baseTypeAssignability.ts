@@ -122,9 +122,169 @@ export const resolveDeclaredBaseType = (
   return { ok: true, type: loneType };
 };
 
+const getNamedSymbolForType = (type: ts.Type): ts.Symbol | undefined => {
+  const sym = type.aliasSymbol ?? type.getSymbol();
+  if (sym === undefined) {
+    return undefined;
+  }
+  if (sym.flags & ts.SymbolFlags.Transient) {
+    return undefined;
+  }
+  return sym;
+};
+
+const typeNodeDeclaresNominalHeritageToBase = (
+  checker: ts.TypeChecker,
+  typeNode: ts.TypeNode,
+  baseSym: ts.Symbol,
+  visited: Set<ts.Symbol>,
+): boolean => {
+  if (ts.isIntersectionTypeNode(typeNode)) {
+    for (const part of typeNode.types) {
+      if (
+        typeNodeDeclaresNominalHeritageToBase(checker, part, baseSym, visited)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  if (ts.isTypeReferenceNode(typeNode)) {
+    const heritageSym = checker.getSymbolAtLocation(typeNode.typeName);
+    if (heritageSym === undefined) {
+      return false;
+    }
+    return symbolDeclaresNominalHeritageToBase(
+      checker,
+      heritageSym,
+      baseSym,
+      visited,
+    );
+  }
+
+  return false;
+};
+
+const symbolDeclaresNominalHeritageToBase = (
+  checker: ts.TypeChecker,
+  candidateSym: ts.Symbol,
+  baseSym: ts.Symbol,
+  visited: Set<ts.Symbol>,
+): boolean => {
+  if (candidateSym === baseSym) {
+    return true;
+  }
+  if (visited.has(candidateSym)) {
+    return false;
+  }
+  visited.add(candidateSym);
+
+  for (const decl of candidateSym.declarations ?? []) {
+    if (ts.isInterfaceDeclaration(decl)) {
+      for (const clause of decl.heritageClauses ?? []) {
+        for (const heritageType of clause.types) {
+          const heritageSym = checker.getSymbolAtLocation(
+            heritageType.expression,
+          );
+          if (heritageSym === undefined) {
+            continue;
+          }
+          if (heritageSym === baseSym) {
+            return true;
+          }
+          if (
+            symbolDeclaresNominalHeritageToBase(
+              checker,
+              heritageSym,
+              baseSym,
+              visited,
+            )
+          ) {
+            return true;
+          }
+        }
+      }
+      continue;
+    }
+
+    if (ts.isTypeAliasDeclaration(decl)) {
+      if (
+        typeNodeDeclaresNominalHeritageToBase(
+          checker,
+          decl.type,
+          baseSym,
+          visited,
+        )
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+};
+
+/**
+ * Whether `candidate` declares (transitively) nominal heritage to `base` via `extends` or
+ * type-alias intersection — not structural shape matching.
+ */
+export const isNominallyAssignable = (
+  checker: ts.TypeChecker,
+  candidate: ts.Type,
+  base: ts.Type,
+): boolean => {
+  const baseSym = getNamedSymbolForType(base);
+  if (baseSym === undefined) {
+    return false;
+  }
+  const candidateSym = getNamedSymbolForType(candidate);
+  if (candidateSym === undefined) {
+    return false;
+  }
+  if (candidateSym === baseSym) {
+    return true;
+  }
+  const visited = new Set<ts.Symbol>();
+  return symbolDeclaresNominalHeritageToBase(
+    checker,
+    candidateSym,
+    baseSym,
+    visited,
+  );
+};
+
+const getContractDeclaredTypeRaw = (
+  checker: ts.TypeChecker,
+  program: ts.Program,
+  generatedDir: string,
+  scanDirs: readonly ResolvedScanDir[],
+  plan: ResolvedContractRegistration,
+): ts.Type | undefined => {
+  const sourceFile = resolveContractTypeSourceFile(
+    program,
+    generatedDir,
+    plan.contractTypeRelImport,
+    scanDirs,
+    plan.contractName,
+  );
+  if (sourceFile === undefined) {
+    return undefined;
+  }
+  const decl = getTopLevelTypeDeclaration(sourceFile, plan.contractName);
+  if (decl === undefined) {
+    return undefined;
+  }
+  const sym = checker.getSymbolAtLocation(decl.name);
+  if (sym === undefined) {
+    return undefined;
+  }
+  return checker.getDeclaredTypeOfSymbol(sym);
+};
+
 /**
  * Whether `candidateType` is structurally assignable to a top-level type named `baseTypeName`
- * in the program (excluding node_modules). Used by lifetime marker resolution and groups.
+ * in the program (excluding node_modules). Used for contract-shape validation, not group membership.
  */
 export const isTypeAssignableToNamedBase = (
   checker: ts.TypeChecker,
