@@ -117,8 +117,8 @@ describe("buildGroupPlan", () => {
     });
   });
 
-  describe("When nothing matches the base type", () => {
-    it("should report group_no_matches via analyzeGroupPlan", () => {
+  describe("When nothing nominally matches the base type", () => {
+    it("should emit an empty collection group via analyzeGroupPlan", () => {
       const plans = runDiscoveryAndPlans();
       const ctx = discoveryCtx(makeProgram());
       const analysis = analyzeGroupPlan(
@@ -128,9 +128,11 @@ describe("buildGroupPlan", () => {
         plans,
         ctx,
       );
-      assert.strictEqual(analysis.ok, false);
-      if (!analysis.ok) {
-        assert.strictEqual(analysis.issues[0]?.kind, "group_no_matches");
+      assert.strictEqual(analysis.ok, true);
+      if (analysis.ok) {
+        const root = analysis.manifest?.empty;
+        assert.ok(root);
+        assert.deepStrictEqual(root.members, []);
       }
     });
   });

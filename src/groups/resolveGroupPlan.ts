@@ -61,7 +61,6 @@ export type GroupPlanIssue =
   | { kind: "groups_not_object" }
   | { kind: "group_invalid_entry"; groupName: string }
   | { kind: "group_unknown_base_type"; groupName: string; message: string }
-  | { kind: "group_no_matches"; groupName: string; baseType: string }
   | {
       kind: "group_duplicate_contract_key";
       groupName: string;
@@ -200,9 +199,6 @@ export const formatGroupPlanIssue = (issue: GroupPlanIssue): string => {
     case "group_unknown_base_type":
       return `[ioc-config] groups.${JSON.stringify(issue.groupName)}: ${issue.message}`;
 
-    case "group_no_matches":
-      return `[ioc-config] groups.${JSON.stringify(issue.groupName)}: no implementations found for base type ${JSON.stringify(issue.baseType)}`;
-
     case "group_duplicate_contract_key":
       return `[ioc-config] groups.${JSON.stringify(issue.groupName)}: duplicate contract key ${JSON.stringify(issue.contractKey)} in object group`;
 
@@ -315,10 +311,13 @@ const runGroupPlan = (
       );
 
       if (objectMembers.length === 0) {
-        issues.push({
-          kind: "group_no_matches",
+        reserved.add(groupName);
+        groupPlans.push({
           groupName,
+          kind: "object",
           baseType: entry.baseType,
+          baseTypeId: canonical.baseTypeId,
+          members: [],
         });
         continue;
       }
@@ -351,10 +350,13 @@ const runGroupPlan = (
     );
 
     if (members.length === 0) {
-      issues.push({
-        kind: "group_no_matches",
+      reserved.add(groupName);
+      groupPlans.push({
         groupName,
+        kind: "collection",
         baseType: entry.baseType,
+        baseTypeId: canonical.baseTypeId,
+        members: [],
       });
       continue;
     }

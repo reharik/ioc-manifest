@@ -104,18 +104,6 @@ describe("groupPlanToManifestRoot", () => {
 });
 
 describe("formatGroupPlanIssue", () => {
-  describe("When issue is group_no_matches", () => {
-    it("should mention the group name and base type", () => {
-      const msg = formatGroupPlanIssue({
-        kind: "group_no_matches",
-        groupName: "empty",
-        baseType: "NoSuch",
-      });
-      assert.ok(msg.includes("empty"));
-      assert.ok(msg.includes("NoSuch"));
-    });
-  });
-
   describe("When issue is group_duplicate_contract_key", () => {
     it("should mention the duplicate contract key", () => {
       const msg = formatGroupPlanIssue({
