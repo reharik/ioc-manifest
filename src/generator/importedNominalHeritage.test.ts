@@ -89,7 +89,7 @@ describe("imported nominal heritage", () => {
       const keys = groupResult!.manifest.services.members
         .map((member) => member.registrationKey)
         .sort();
-      assert.deepStrictEqual(keys, ["serviceContract"]);
+      assert.deepStrictEqual(keys, ["service"]);
     });
   });
 });

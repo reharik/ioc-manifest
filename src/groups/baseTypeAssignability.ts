@@ -132,6 +132,17 @@ const getNamedSymbolForType = (type: ts.Type): ts.Symbol | undefined => {
   return sym;
 };
 
+const resolveCanonicalSymbol = (
+  checker: ts.TypeChecker,
+  sym: ts.Symbol,
+): ts.Symbol => {
+  let resolved = sym;
+  while ((resolved.flags & ts.SymbolFlags.Alias) !== 0) {
+    resolved = checker.getAliasedSymbol(resolved);
+  }
+  return resolved;
+};
+
 const typeNodeDeclaresNominalHeritageToBase = (
   checker: ts.TypeChecker,
   typeNode: ts.TypeNode,
@@ -171,15 +182,17 @@ const symbolDeclaresNominalHeritageToBase = (
   baseSym: ts.Symbol,
   visited: Set<ts.Symbol>,
 ): boolean => {
-  if (candidateSym === baseSym) {
+  const canonicalCandidate = resolveCanonicalSymbol(checker, candidateSym);
+  const canonicalBase = resolveCanonicalSymbol(checker, baseSym);
+  if (canonicalCandidate === canonicalBase) {
     return true;
   }
-  if (visited.has(candidateSym)) {
+  if (visited.has(canonicalCandidate)) {
     return false;
   }
-  visited.add(candidateSym);
+  visited.add(canonicalCandidate);
 
-  for (const decl of candidateSym.declarations ?? []) {
+  for (const decl of canonicalCandidate.declarations ?? []) {
     if (ts.isInterfaceDeclaration(decl)) {
       for (const clause of decl.heritageClauses ?? []) {
         for (const heritageType of clause.types) {
@@ -189,14 +202,18 @@ const symbolDeclaresNominalHeritageToBase = (
           if (heritageSym === undefined) {
             continue;
           }
-          if (heritageSym === baseSym) {
+          const canonicalHeritage = resolveCanonicalSymbol(
+            checker,
+            heritageSym,
+          );
+          if (canonicalHeritage === canonicalBase) {
             return true;
           }
           if (
             symbolDeclaresNominalHeritageToBase(
               checker,
-              heritageSym,
-              baseSym,
+              canonicalHeritage,
+              canonicalBase,
               visited,
             )
           ) {
@@ -241,14 +258,16 @@ export const isNominallyAssignable = (
   if (candidateSym === undefined) {
     return false;
   }
-  if (candidateSym === baseSym) {
+  const canonicalBase = resolveCanonicalSymbol(checker, baseSym);
+  const canonicalCandidate = resolveCanonicalSymbol(checker, candidateSym);
+  if (canonicalCandidate === canonicalBase) {
     return true;
   }
   const visited = new Set<ts.Symbol>();
   return symbolDeclaresNominalHeritageToBase(
     checker,
-    candidateSym,
-    baseSym,
+    canonicalCandidate,
+    canonicalBase,
     visited,
   );
 };
