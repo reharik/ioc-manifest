@@ -16,6 +16,7 @@ import { discoverFactories } from "./discoverFactories/discoverFactories.js";
 import {
   createIocProgramForDiscovery,
   getDiscoveryTargetFiles,
+  loadIocTsconfigContext,
   logDiscoveryProgramErrorDiagnosticsForFailure,
 } from "./iocProgramContext.js";
 import {
@@ -140,7 +141,8 @@ export const generateManifest = async (
     excludePatterns,
     generatedDir,
   );
-  const program = createIocProgramForDiscovery(projectRoot, files);
+  const tsconfigContext = loadIocTsconfigContext(projectRoot);
+  const program = createIocProgramForDiscovery(projectRoot, files, tsconfigContext);
 
   try {
   const { contractMap, acceptedFactories } = discoverFactories(
@@ -157,6 +159,7 @@ export const generateManifest = async (
       ? await loadComposedManifestContractNames(
           projectRoot,
           config.composedManifests!,
+          tsconfigContext.customConditions,
         )
       : undefined;
 
@@ -220,6 +223,7 @@ export const generateManifest = async (
       resolvedProjectRoot,
       config,
       configPath,
+      tsconfigContext.customConditions,
     );
     const composedPackages = resolveComposedPackageSpecs(
       config.composedManifests!,

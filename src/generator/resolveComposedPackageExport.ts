@@ -5,12 +5,73 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export type PackageExportsEntry =
-  | string
-  | {
-      readonly import?: string;
-      readonly types?: string;
-    };
+export type ConditionalPackageExportsEntry = {
+  readonly [condition: string]: string | undefined;
+};
+
+export type PackageExportsEntry = string | ConditionalPackageExportsEntry;
+
+export type ResolvePackageExportOptions = {
+  readonly customConditions?: readonly string[];
+};
+
+const VALUE_LOAD_FALLBACK_CONDITIONS = ["import", "default"] as const;
+
+export const buildValueLoadConditionOrder = (
+  customConditions?: readonly string[],
+): readonly string[] => {
+  const order: string[] = [];
+  if (customConditions !== undefined && customConditions.length > 0) {
+    order.push(...customConditions);
+  }
+  for (const condition of VALUE_LOAD_FALLBACK_CONDITIONS) {
+    order.push(condition);
+  }
+  return order;
+};
+
+const listLoadableExportConditions = (
+  entry: ConditionalPackageExportsEntry,
+): readonly string[] =>
+  Object.keys(entry).filter(
+    (condition) =>
+      condition !== "types" && typeof entry[condition] === "string",
+  );
+
+export const pickExportRelativePath = (
+  entry: PackageExportsEntry,
+  exportSubpath: string,
+  packageName: string,
+  customConditions?: readonly string[],
+): { readonly rel: string; readonly condition: string } => {
+  if (typeof entry === "string") {
+    return { rel: entry, condition: "default" };
+  }
+
+  const order = buildValueLoadConditionOrder(customConditions);
+  for (const condition of order) {
+    const rel = entry[condition];
+    if (typeof rel === "string" && rel.length > 0) {
+      return { rel, condition };
+    }
+  }
+
+  const available = listLoadableExportConditions(entry);
+  if (available.length === 0) {
+    const declared = Object.keys(entry).filter(
+      (condition) => typeof entry[condition] === "string",
+    );
+    if (declared.length > 0 && declared.every((condition) => condition === "types")) {
+      throw new Error(
+        `[ioc] Cannot resolve subpath export ${JSON.stringify(exportSubpath)} for ${JSON.stringify(packageName)}: export only declares ${JSON.stringify(declared)} (${JSON.stringify(entry.types)}). Add a source-pointing condition such as "development" or "default" for manifest loading.`,
+      );
+    }
+  }
+
+  throw new Error(
+    `[ioc-config] ${JSON.stringify(packageName)} must export ${JSON.stringify(exportSubpath)} in package.json (see design doc §6.1)`,
+  );
+};
 
 export const findPackageDirectory = (
   projectRoot: string,
@@ -60,6 +121,7 @@ export const resolvePackageExportPath = (
   projectRoot: string,
   packageName: string,
   exportSubpath: string,
+  options?: ResolvePackageExportOptions,
 ): string => {
   const pkgDir = findPackageDirectory(projectRoot, packageName);
   const pkgJsonPath = path.join(pkgDir, "package.json");
@@ -67,15 +129,18 @@ export const resolvePackageExportPath = (
     exports?: Record<string, PackageExportsEntry>;
   };
   const entry = pkg.exports?.[exportSubpath];
-  const rel =
-    typeof entry === "string"
-      ? entry
-      : entry?.import ?? entry?.types;
-  if (typeof rel !== "string") {
+  if (entry === undefined) {
     throw new Error(
       `[ioc-config] ${JSON.stringify(packageName)} must export ${JSON.stringify(exportSubpath)} in package.json (see design doc §6.1)`,
     );
   }
+
+  const { rel } = pickExportRelativePath(
+    entry,
+    exportSubpath,
+    packageName,
+    options?.customConditions,
+  );
   const resolved = path.join(pkgDir, rel);
   if (!fs.existsSync(resolved)) {
     throw new Error(

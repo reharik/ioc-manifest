@@ -93,6 +93,7 @@ const readContractNamesFromManifestFile = (
 export const loadComposedManifestContractNames = async (
   projectRoot: string,
   composedPackageNames: readonly string[],
+  customConditions?: readonly string[],
 ): Promise<ComposedManifestContractNames> => {
   const byPackage = new Map<string, ReadonlySet<string>>();
   const all = new Set<string>();
@@ -102,6 +103,7 @@ export const loadComposedManifestContractNames = async (
       projectRoot,
       packageName,
       "./iocManifest",
+      { customConditions },
     );
     const names = readContractNamesFromManifestFile(manifestPath);
     const nameSet = new Set(names);

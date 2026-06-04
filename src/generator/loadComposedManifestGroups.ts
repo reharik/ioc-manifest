@@ -69,6 +69,7 @@ export type ComposedManifestGroupNames = {
 export const loadComposedManifestGroupNames = async (
   projectRoot: string,
   composedPackageNames: readonly string[],
+  customConditions?: readonly string[],
 ): Promise<ComposedManifestGroupNames> => {
   const all = new Set<string>();
 
@@ -77,6 +78,7 @@ export const loadComposedManifestGroupNames = async (
       projectRoot,
       packageName,
       "./iocManifest",
+      { customConditions },
     );
     const content = fs.readFileSync(manifestPath, "utf8");
     for (const key of extractGroupRootKeysFromManifestSource(
@@ -97,6 +99,7 @@ export const collectDeclaredGroupNamesForApp = async (
     composedManifests?: string[];
     groupBaseTypeAliases?: Record<string, string[]>;
   },
+  customConditions?: readonly string[],
 ): Promise<ReadonlySet<string>> => {
   const names = new Set<string>(Object.keys(config.groups ?? {}));
 
@@ -104,6 +107,7 @@ export const collectDeclaredGroupNamesForApp = async (
     const composed = await loadComposedManifestGroupNames(
       projectRoot,
       config.composedManifests,
+      customConditions,
     );
     for (const name of composed.all) {
       names.add(name);
@@ -121,13 +125,18 @@ export const validateGroupBaseTypeAliasKeysAtCodegen = async (
     groupBaseTypeAliases?: Record<string, string[]>;
   },
   sourceLabel: string,
+  customConditions?: readonly string[],
 ): Promise<void> => {
   const aliases = config.groupBaseTypeAliases;
   if (aliases === undefined) {
     return;
   }
 
-  const declared = await collectDeclaredGroupNamesForApp(projectRoot, config);
+  const declared = await collectDeclaredGroupNamesForApp(
+    projectRoot,
+    config,
+    customConditions,
+  );
 
   for (const groupName of Object.keys(aliases)) {
     if (!declared.has(groupName)) {

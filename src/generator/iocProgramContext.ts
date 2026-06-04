@@ -36,14 +36,18 @@ export const getDiscoveryTargetFiles = async (
   return unique.sort((a, b) => a.localeCompare(b));
 };
 
+export type IocTsconfigContext = {
+  readonly options: ts.CompilerOptions;
+  readonly customConditions: readonly string[] | undefined;
+};
+
 /**
- * Loads the workspace `tsconfig.json` and creates a program over `rootNames` only (typically
- * discovery targets). Compiler options (paths, module resolution) match your project build.
+ * Parses the workspace `tsconfig.json` once. `customConditions` is returned only when
+ * non-empty in compiler options (no synthetic defaults).
  */
-export const createIocProgramForDiscovery = (
+export const loadIocTsconfigContext = (
   projectRoot: string,
-  rootNames: string[],
-): ts.Program => {
+): IocTsconfigContext => {
   const formatHost: ts.FormatDiagnosticsHost = {
     getCanonicalFileName: (f) => f,
     getCurrentDirectory: () => projectRoot,
@@ -79,7 +83,26 @@ export const createIocProgramForDiscovery = (
     throw new Error(`[ioc] tsconfig parse errors:\n${msg}`);
   }
 
-  return ts.createProgram({ rootNames, options: parsed.options });
+  const rawCustomConditions = parsed.options.customConditions;
+  const customConditions =
+    rawCustomConditions !== undefined && rawCustomConditions.length > 0
+      ? rawCustomConditions
+      : undefined;
+
+  return { options: parsed.options, customConditions };
+};
+
+/**
+ * Loads the workspace `tsconfig.json` and creates a program over `rootNames` only (typically
+ * discovery targets). Compiler options (paths, module resolution) match your project build.
+ */
+export const createIocProgramForDiscovery = (
+  projectRoot: string,
+  rootNames: string[],
+  tsconfig?: IocTsconfigContext,
+): ts.Program => {
+  const ctx = tsconfig ?? loadIocTsconfigContext(projectRoot);
+  return ts.createProgram({ rootNames, options: ctx.options });
 };
 
 const collectDiscoveryProgramErrorDiagnostics = (

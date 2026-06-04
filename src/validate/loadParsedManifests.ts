@@ -7,6 +7,7 @@ import type { IocConfig } from "../config/iocConfig.js";
 import { LOCAL_PACKAGE_IDENTIFIER } from "../config/packageIdentifier.js";
 import { loadComposedManifestContractNames } from "../generator/loadComposedManifestContracts.js";
 import { collectDeclaredGroupNamesForApp } from "../generator/loadComposedManifestGroups.js";
+import { loadIocTsconfigContext } from "../generator/iocProgramContext.js";
 import {
   findPackageDirectory,
   readPackageJsonName,
@@ -78,6 +79,7 @@ export const loadValidateContext = async (
   config: IocConfig,
 ): Promise<LoadValidateContextResult> => {
   const composedPackageNames = config.composedManifests ?? [];
+  const tsconfigContext = loadIocTsconfigContext(projectRoot);
   const base = resolveManifestOptions({ paths: { projectRoot } });
   const options = mergeManifestOptionsWithIocConfig(base, config);
 
@@ -122,11 +124,13 @@ export const loadValidateContext = async (
         projectRoot,
         packageName,
         "./iocManifest",
+        { customConditions: tsconfigContext.customConditions },
       );
       const typesPath = resolvePackageExportPath(
         projectRoot,
         packageName,
         "./iocTypes",
+        { customConditions: tsconfigContext.customConditions },
       );
       const pkgRoot = findPackageDirectory(projectRoot, packageName);
       const label = readPackageJsonName(pkgRoot, packageName);
@@ -150,6 +154,7 @@ export const loadValidateContext = async (
     const loaded = await loadComposedManifestContractNames(
       projectRoot,
       composedPackageNames,
+      tsconfigContext.customConditions,
     );
     for (const name of loaded.all) {
       composedContractNames.add(name);
@@ -169,6 +174,7 @@ export const loadValidateContext = async (
   const declaredGroupNames = await collectDeclaredGroupNamesForApp(
     projectRoot,
     config,
+    tsconfigContext.customConditions,
   );
 
   return {
