@@ -20,13 +20,19 @@ import type {
   IocGroupsManifest,
   ModuleFactoryManifestMetadata,
 } from "../core/manifest.js";
-import type { ResolvedScanDir } from "./manifestPaths.js";
+import {
+  formatRelativeImportEscapesPackageRootWarning,
+  relativeImportEscapesPackageRoot,
+  type ResolvedScanDir,
+} from "./manifestPaths.js";
 import { MANIFEST_SCHEMA_VERSION } from "../schemaVersion.js";
 
 export type IocRegistryTypesBuildContext = {
   program: ts.Program;
   generatedDir: string;
   scanDirs: readonly ResolvedScanDir[];
+  /** Package root for escape warnings on generated relative imports. */
+  projectRoot: string;
 };
 
 export type WriteManifestOptions = {
@@ -458,6 +464,25 @@ const buildImportLinesFromBuckets = (
   return importLines;
 };
 
+const warnOnRelativeImportsEscapingPackageRoot = (
+  relImports: Iterable<string>,
+  generatedDir: string,
+  packageRoot: string,
+): void => {
+  const warned = new Set<string>();
+  for (const relImport of relImports) {
+    if (warned.has(relImport)) {
+      continue;
+    }
+    if (
+      relativeImportEscapesPackageRoot(relImport, generatedDir, packageRoot)
+    ) {
+      console.warn(formatRelativeImportEscapesPackageRootWarning(relImport));
+      warned.add(relImport);
+    }
+  }
+};
+
 const buildCradleTypeSource = (
   plans: ResolvedContractRegistration[],
   groupsManifest: IocGroupsManifest | undefined,
@@ -513,6 +538,14 @@ const buildCradleTypeSource = (
   }
 
   const importLines = buildImportLinesFromBuckets(grouped);
+
+  if (registryTypesBuildContext?.projectRoot !== undefined) {
+    warnOnRelativeImportsEscapingPackageRoot(
+      grouped.keys(),
+      registryTypesBuildContext.generatedDir,
+      registryTypesBuildContext.projectRoot,
+    );
+  }
 
   const demandSupplyKeys = new Set(demandSupply.entries.map((e) => e.key));
   const cradleProperties: { key: string; line: string }[] = [];

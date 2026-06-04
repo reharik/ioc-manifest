@@ -239,6 +239,31 @@ export const emitBarePackageSpecifierFromNodeModulesPath = (
   return pkg;
 };
 
+/**
+ * True when a relative import resolved from `generatedDir` lands outside `packageRoot`.
+ */
+export const relativeImportEscapesPackageRoot = (
+  relImport: string,
+  generatedDir: string,
+  packageRoot: string,
+): boolean => {
+  if (!relImport.startsWith(".")) {
+    return false;
+  }
+  const withoutJs = relImport.replace(/\.js$/i, "");
+  const resolved = path.normalize(path.resolve(generatedDir, withoutJs));
+  const rel = path.relative(path.normalize(packageRoot), resolved);
+  return rel.startsWith("..") || path.isAbsolute(rel);
+};
+
+export const formatRelativeImportEscapesPackageRootWarning = (
+  relImport: string,
+): string =>
+  `[ioc-warn] Generated import ${JSON.stringify(relImport)} escapes the package root.\n` +
+  `This usually means a factory imports a type via a deep relative path instead of the\n` +
+  `package's public API. Consider importing via the bare package specifier (e.g.\n` +
+  `"@packages/other-package") in the factory source.`;
+
 const isBarePackageModuleSpecifier = (spec: string): boolean => {
   if (spec.length === 0) {
     return false;

@@ -192,6 +192,7 @@ export const generateManifest = async (
       program,
       generatedDir,
       scanDirs,
+      projectRoot,
     },
   };
 
