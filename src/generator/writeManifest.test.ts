@@ -50,8 +50,13 @@ const mkDemandSupplyFromPlans = (
         key: impl.registrationKey,
         typeRef: {
           typeName: plan.contractName,
-          relImport: plan.contractTypeRelImport,
-          useDefaultImport: false,
+          imports: [
+            {
+              typeName: plan.contractName,
+              relImport: plan.contractTypeRelImport,
+              useDefaultImport: false,
+            },
+          ],
         },
         classification: "local",
       });
@@ -244,8 +249,13 @@ describe("writeManifest", () => {
             key: "database",
             typeRef: {
               typeName: "Database",
-              relImport: "../fixtures/contracts.js",
-              useDefaultImport: false,
+              imports: [
+                {
+                  typeName: "Database",
+                  relImport: "../fixtures/contracts.js",
+                  useDefaultImport: false,
+                },
+              ],
             },
             classification: "external",
           },
@@ -253,8 +263,13 @@ describe("writeManifest", () => {
             key: "logger",
             typeRef: {
               typeName: "Logger",
-              relImport: "../fixtures/contracts.js",
-              useDefaultImport: false,
+              imports: [
+                {
+                  typeName: "Logger",
+                  relImport: "../fixtures/contracts.js",
+                  useDefaultImport: false,
+                },
+              ],
             },
             classification: "external",
           },
@@ -262,8 +277,13 @@ describe("writeManifest", () => {
             key: "userService",
             typeRef: {
               typeName: "UserService",
-              relImport: "../fixtures/contracts.js",
-              useDefaultImport: false,
+              imports: [
+                {
+                  typeName: "UserService",
+                  relImport: "../fixtures/contracts.js",
+                  useDefaultImport: false,
+                },
+              ],
             },
             classification: "local",
           },

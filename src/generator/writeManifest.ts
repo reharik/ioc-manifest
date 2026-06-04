@@ -470,12 +470,14 @@ const buildCradleTypeSource = (
   >();
 
   for (const entry of demandSupply.entries) {
-    addTypeImport(
-      grouped,
-      entry.typeRef.relImport,
-      entry.typeRef.typeName,
-      entry.typeRef.useDefaultImport,
-    );
+    for (const imp of entry.typeRef.imports) {
+      addTypeImport(
+        grouped,
+        imp.relImport,
+        imp.typeName,
+        imp.useDefaultImport,
+      );
+    }
   }
 
   if (registryTypesBuildContext !== undefined) {

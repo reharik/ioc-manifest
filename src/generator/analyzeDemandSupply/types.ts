@@ -1,8 +1,15 @@
-/** Resolved type reference for emission in `ioc-registry.types.ts`. */
-export type EmittedTypeReference = {
+/** Import spec collected for generated `ioc-registry.types.ts`. */
+export type TypeImportSpec = {
   typeName: string;
   relImport: string;
   useDefaultImport: boolean;
+};
+
+/** Resolved type reference for emission in `ioc-registry.types.ts`. */
+export type EmittedTypeReference = {
+  /** Full property type text (may be compound, e.g. `string | Foo`). */
+  typeName: string;
+  imports: readonly TypeImportSpec[];
 };
 
 export type FactorySourceLocation = {

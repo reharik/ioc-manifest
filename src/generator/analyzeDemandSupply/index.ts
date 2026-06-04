@@ -11,6 +11,7 @@ import {
   emitTypeReference,
   formatTypeDisplay,
   isUnresolvableDepsPropertyType,
+  tryEmitTypeReference,
   type EmitTypeReferenceContext,
 } from "./emitTypeReference.js";
 import { validateNamedDepsType } from "./enforceNamedDepsType.js";
@@ -103,11 +104,11 @@ const formatUnresolvableDepsError = (
   projectRoot: string,
   loc: FactorySourceLocation,
   propName: string,
-  typeDisplay: string,
+  detail: string,
 ): string => {
   const abs = path.join(projectRoot, loc.modulePath);
   const rel = path.relative(projectRoot, abs).replace(/\\/g, "/");
-  return `[ioc] Factory ${JSON.stringify(loc.exportName)} at ${rel}:${loc.line} references an unresolvable type in deps for property ${JSON.stringify(propName)}: ${typeDisplay}`;
+  return `[ioc] Factory ${JSON.stringify(loc.exportName)} at ${rel}:${loc.line} references an unresolvable deps type for property ${JSON.stringify(propName)}: ${detail}`;
 };
 
 const mergeEntry = (
@@ -193,8 +194,13 @@ export const analyzeDemandSupply = (
         emitTypeReference(checker, returnType, emitCtx) ??
         ({
           typeName: factory.contractName,
-          relImport: factory.contractTypeRelImport,
-          useDefaultImport: false,
+          imports: [
+            {
+              typeName: factory.contractName,
+              relImport: factory.contractTypeRelImport,
+              useDefaultImport: false,
+            },
+          ],
         } satisfies EmittedTypeReference);
 
       mergeEntry(
@@ -232,17 +238,20 @@ export const analyzeDemandSupply = (
         );
       }
 
-      const typeRef = emitTypeReference(checker, propType, emitCtx);
-      if (typeRef === undefined) {
+      const emitted = tryEmitTypeReference(checker, propType, emitCtx, {
+        propertyName: propName,
+      });
+      if (!emitted.ok) {
         throw new Error(
           formatUnresolvableDepsError(
             projectRoot,
             loc,
             propName,
-            formatTypeDisplay(checker, propType),
+            emitted.message,
           ),
         );
       }
+      const typeRef = emitted.value;
 
       const classification = localSupplierKeys.has(propName)
         ? "local"
