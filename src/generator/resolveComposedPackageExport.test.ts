@@ -229,7 +229,8 @@ describe("resolvePackageExportPath", () => {
           assert.ok(error instanceof Error);
           assert.match(error.message, /file does not exist/);
           assert.match(error.message, /development/);
-          assert.match(error.message, /@test\/missing-src\.\/iocManifest/);
+          assert.match(error.message, /@test\/missing-src\/iocManifest/);
+          assert.doesNotMatch(error.message, /@test\/missing-src\.\//);
           assert.match(error.message, /ioc generate/);
           return true;
         },
