@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@test/lib-foo": ["packages/lib-foo/src/index.ts"],
+      "@test/lib-foo/subpath": ["packages/lib-foo/src/subpath.ts"]
+    }
+  },
+  "include": ["app/**/*.ts", "packages/**/*.ts"]
+}
