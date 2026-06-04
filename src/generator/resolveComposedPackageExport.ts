@@ -17,6 +17,16 @@ export type ResolvePackageExportOptions = {
 
 const VALUE_LOAD_FALLBACK_CONDITIONS = ["import", "default"] as const;
 
+const formatPackageSubpathImport = (
+  packageName: string,
+  exportSubpath: string,
+): string => {
+  const normalized = exportSubpath.startsWith("./")
+    ? exportSubpath.slice(2)
+    : exportSubpath;
+  return `${packageName}/${normalized}`;
+};
+
 const JS_SOURCE_EXTENSION_ALTERNATES = [".ts", ".tsx", ".mts", ".cts"] as const;
 
 const resolveTypeScriptSourceAlternate = (resolvedPath: string): string | undefined => {
@@ -187,7 +197,7 @@ export const resolvePackageExportPath = (
   const resolved = resolveExistingExportPath(declaredPath);
   if (!fs.existsSync(resolved)) {
     throw new Error(
-      `[ioc] Resolved subpath export for ${JSON.stringify(`${packageName}${exportSubpath}`)} to ${JSON.stringify(rel)} (condition: ${JSON.stringify(condition)}), but the file does not exist.\n` +
+      `[ioc] Resolved subpath export for ${JSON.stringify(formatPackageSubpathImport(packageName, exportSubpath))} to ${JSON.stringify(rel)} (condition: ${JSON.stringify(condition)}), but the file does not exist.\n` +
         `This usually means "ioc generate" has not been run for that package yet, or its generatedDir is misconfigured.`,
     );
   }
