@@ -4,6 +4,7 @@ import {
   computeManifestModuleSpecifier,
   type FactoryDiscoveryPaths,
 } from "../manifestPaths.js";
+import { tryRecoverPreferredModuleSpecifier } from "../recoverPreferredModuleSpecifier.js";
 import { cradleTypeImportUsesDefaultExport } from "../contractTypeSourceFile.js";
 import type { EmittedTypeReference, TypeImportSpec } from "./types.js";
 
@@ -132,63 +133,6 @@ const assertNotTypescriptPackageImport = (
       `[ioc] Codegen attempted to import ${JSON.stringify(typeName)} from the typescript package's lib files. This is a bug in ioc-manifest. Please file an issue with the factory and deps type that triggered this.`,
     );
   }
-};
-
-const walkToImportDeclaration = (
-  decl: ts.Node,
-): ts.ImportDeclaration | undefined => {
-  let node: ts.Node | undefined = decl;
-  while (node !== undefined) {
-    if (ts.isImportDeclaration(node)) {
-      return node;
-    }
-    node = node.parent;
-  }
-  return undefined;
-};
-
-const tryRecoverPreferredModuleSpecifier = (
-  checker: ts.TypeChecker,
-  type: ts.Type,
-  contextSourceFile: ts.SourceFile,
-): string | undefined => {
-  const t = checker.getApparentType(type);
-
-  if (t.isUnion() || t.isIntersection()) {
-    return undefined;
-  }
-
-  const trySymbol = (sym: ts.Symbol | undefined): string | undefined => {
-    if (sym === undefined) {
-      return undefined;
-    }
-    const decls = sym.declarations ?? [];
-    for (const decl of decls) {
-      if (decl.getSourceFile() !== contextSourceFile) {
-        continue;
-      }
-      const imp = walkToImportDeclaration(decl);
-      if (imp !== undefined && ts.isStringLiteralLike(imp.moduleSpecifier)) {
-        return imp.moduleSpecifier.text;
-      }
-    }
-    return undefined;
-  };
-
-  const fromAlias = trySymbol(t.aliasSymbol);
-  if (fromAlias !== undefined) {
-    return fromAlias;
-  }
-  const sym = t.getSymbol();
-  const fromSym = trySymbol(sym);
-  if (fromSym !== undefined) {
-    return fromSym;
-  }
-  if (sym !== undefined && sym.flags & ts.SymbolFlags.Alias) {
-    const aliased = checker.getAliasedSymbol(sym);
-    return trySymbol(aliased);
-  }
-  return undefined;
 };
 
 const getTypeDeclarationSourceFile = (
