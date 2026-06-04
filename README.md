@@ -344,7 +344,7 @@ Under each contract name, keys are implementation names from discovery (`buildFo
 
 ### `lifetimeMarkers`
 
-Declare marker interfaces that map to Awilix lifetimes. Any factory whose return type is assignable to a marker inherits that lifetime automatically.
+Declare marker interfaces that map to Awilix lifetimes. Any factory whose return type **declares** heritage to a marker (via `extends` or a type-alias `&` intersection) inherits that lifetime automatically.
 
 ```ts
 lifetimeMarkers: {
@@ -355,7 +355,7 @@ lifetimeMarkers: {
 
 Keys are interface or type-alias names visible in the package's TypeScript program at codegen. Values are `singleton`, `scoped`, or `transient`. An empty object `{}` skips marker analysis.
 
-> ⚠️ Markers must be **branded interfaces** with at least one distinguishing property. An empty marker (`interface IScoped {}`) is structurally assignable from every object type and will tag every factory in the package. See [Lifetime markers](#lifetime-markers) for the branded pattern.
+Markers match by **declared inheritance**, not structural shape. Use `extends IScoped` on service or contract interfaces (or `type Foo = Bar & IScoped`). Empty marker interfaces are fine. See [Lifetime markers](#lifetime-markers).
 
 **Lifetime precedence** (highest first):
 
@@ -699,24 +699,18 @@ The basics — factory discovery, typed cradle, automatic collections — cover 
 
 ### Lifetime markers
 
-When services are organized by domain (`src/users/`, `src/orders/`) rather than by lifetime category, folder-scoped lifetimes fit poorly. **Lifetime markers** express cross-cutting lifetime policy via marker interfaces — the same assignability machinery groups use.
+When services are organized by domain (`src/users/`, `src/orders/`) rather than by lifetime category, folder-scoped lifetimes fit poorly. **Lifetime markers** express cross-cutting lifetime policy via marker interfaces — the same **nominal** membership rules groups use (declared `extends`, not structural assignability).
 
 #### Defining a marker
 
-A marker is an interface with at least one distinguishing property. **An empty interface (`interface IScoped {}`) will not work** — it's structurally assignable from any object type, so it would tag every factory in the package with the marker's lifetime. Brand the marker explicitly:
+A marker is typically an empty interface (or a type alias you intersect with). Selective matching comes from **where you attach `extends`**, not from branding:
 
 ```ts
 // shared types
-export interface IScoped {
-  readonly __iocLifetimeScoped: true;
-}
+export interface IScoped {}
 
-export interface ITransient {
-  readonly __iocLifetimeTransient: true;
-}
+export interface ITransient {}
 ```
-
-The branding property is a compile-time tag. It never appears at runtime — your implementations satisfy it via the type system without setting the field on the actual object.
 
 #### Declaring markers
 
@@ -739,7 +733,7 @@ Three attachment points, in order of locality. The pattern that fits your code b
 
 ```ts
 export interface RequestTracingLogger extends LoggingService, IScoped {
-  readonly __iocLifetimeScoped: true;
+  ping: () => string;
 }
 ```
 
@@ -747,7 +741,6 @@ export interface RequestTracingLogger extends LoggingService, IScoped {
 
 ```ts
 export interface LoggingService extends IScoped {
-  readonly __iocLifetimeScoped: true;
   log: (msg: string) => void;
 }
 ```
@@ -756,7 +749,6 @@ export interface LoggingService extends IScoped {
 
 ```ts
 export interface DiscountStrategy extends IScoped {
-  readonly __iocLifetimeScoped: true;
   applies: (order: Order) => boolean;
   calculate: (order: Order) => number;
 }
@@ -804,7 +796,7 @@ Per-implementation overrides in `registrations` and lifetime markers take preced
 
 ### Groups
 
-Groups let you collect implementations across contracts by their assignability to a base type. There are two kinds — `collection` and `object` — and they solve different real-world problems.
+Groups collect implementations whose **contract types declare** `extends` on a shared base type (nominal membership — same rules as lifetime markers). There are two kinds — `collection` and `object` — and they solve different real-world problems. A group with no local members emits `[ioc-warn]` but still generates; members may come from other composed packages.
 
 #### Collection groups: the strategy pattern
 
@@ -834,7 +826,7 @@ groups: {
 },
 ```
 
-Now `container.resolve("discountStrategies")` gives you `ReadonlyArray<DiscountStrategy>` — every implementation that's assignable to the base type, discovered automatically. Your strategy runner just iterates through the array:
+Now `container.resolve("discountStrategies")` gives you `ReadonlyArray<DiscountStrategy>` — every implementation whose contract type declares `extends DiscountStrategy`, discovered automatically. Your strategy runner just iterates through the array:
 
 ```ts
 type PricingEngineDeps = {
@@ -936,7 +928,9 @@ Either way, factory source code doesn't change.
 
 **Library-mode invocation of `ioc validate`** — prints an informational message and exits 0. Validate is a cross-manifest tool; a library has no cross-manifest concerns to validate.
 
-**Every factory in the package got the same lifetime** — your marker interface is empty (`interface IScoped {}`), so it matches every object type. Add a distinguishing property like `readonly __iocLifetimeScoped: true` to the marker. See [Lifetime markers](#lifetime-markers).
+**My factory isn't in the group (or didn't get the marker lifetime)** — membership is **nominal**: the contract or return type must declare `extends YourBase` (or `type Foo = Bar & YourMarker`). Structural similarity is not enough. Common mistakes: forgetting `extends` on the service interface; using a union return type such as `Foo | undefined` on the contract — unions are not heritage, so `type Contract = Impl | undefined` will not join a group whose base is `Impl` unless you use `interface Contract extends Impl` instead.
+
+**Every factory in the package got the same lifetime** (v1.1.x and earlier) — that was structural matching on empty markers. Upgrade to v1.2.0+ and use `extends` on the types that should be scoped; empty markers are safe when inheritance is declared explicitly.
 
 ---
 
