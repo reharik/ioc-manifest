@@ -178,6 +178,28 @@ const isGlobalLibType = (
   return program.isSourceFileDefaultLibrary(declSource);
 };
 
+/** True when the type is declared as a top-level type alias, interface, or enum in source. */
+const isTopLevelNamedTypeDeclaration = (
+  type: ts.Type,
+  importName: string,
+): boolean => {
+  const symbol = type.aliasSymbol ?? type.getSymbol();
+  if (symbol === undefined) {
+    return false;
+  }
+  for (const decl of symbol.declarations ?? []) {
+    if (
+      (ts.isTypeAliasDeclaration(decl) ||
+        ts.isInterfaceDeclaration(decl) ||
+        ts.isEnumDeclaration(decl)) &&
+      decl.name.text === importName
+    ) {
+      return true;
+    }
+  }
+  return false;
+};
+
 const importSymbolNameFromType = (
   checker: ts.TypeChecker,
   type: ts.Type,
@@ -246,10 +268,16 @@ const emitNamedTypeImport = (
   }
   const declSource = getTypeDeclarationSourceFile(checker, apparent);
 
+  // Top-level named types declared in the factory file still require imports because the
+  // generated output file is generated/ioc-registry.types.ts, not the factory file.
+  // Inlining is reserved for primitives, literals, lib globals (handled above), and anonymous
+  // structural types that only exist inline in the factory file.
   if (
     declSource !== undefined &&
+    importName !== undefined &&
     path.normalize(declSource.fileName) ===
-      path.normalize(ctx.contextSourceFile.fileName)
+      path.normalize(ctx.contextSourceFile.fileName) &&
+    !isTopLevelNamedTypeDeclaration(apparent, importName)
   ) {
     return inlineResult(checker, apparent);
   }
