@@ -17,6 +17,40 @@ export type ResolvePackageExportOptions = {
 
 const VALUE_LOAD_FALLBACK_CONDITIONS = ["import", "default"] as const;
 
+const JS_SOURCE_EXTENSION_ALTERNATES = [".ts", ".tsx", ".mts", ".cts"] as const;
+
+const resolveTypeScriptSourceAlternate = (resolvedPath: string): string | undefined => {
+  if (resolvedPath.endsWith(".js")) {
+    for (const ext of JS_SOURCE_EXTENSION_ALTERNATES) {
+      const alternate = `${resolvedPath.slice(0, -3)}${ext}`;
+      if (fs.existsSync(alternate)) {
+        return alternate;
+      }
+    }
+    return undefined;
+  }
+  if (resolvedPath.endsWith(".mjs")) {
+    const alternate = `${resolvedPath.slice(0, -4)}.mts`;
+    return fs.existsSync(alternate) ? alternate : undefined;
+  }
+  if (resolvedPath.endsWith(".cjs")) {
+    const alternate = `${resolvedPath.slice(0, -4)}.cts`;
+    return fs.existsSync(alternate) ? alternate : undefined;
+  }
+  return undefined;
+};
+
+const resolveExistingExportPath = (resolvedPath: string): string => {
+  if (fs.existsSync(resolvedPath)) {
+    return resolvedPath;
+  }
+  const alternate = resolveTypeScriptSourceAlternate(resolvedPath);
+  if (alternate !== undefined) {
+    return alternate;
+  }
+  return resolvedPath;
+};
+
 export const buildValueLoadConditionOrder = (
   customConditions?: readonly string[],
 ): readonly string[] => {
@@ -149,7 +183,8 @@ export const resolvePackageExportPath = (
     packageName,
     options?.customConditions,
   );
-  const resolved = path.join(pkgDir, rel);
+  const declaredPath = path.join(pkgDir, rel);
+  const resolved = resolveExistingExportPath(declaredPath);
   if (!fs.existsSync(resolved)) {
     throw new Error(
       `[ioc] Resolved subpath export for ${JSON.stringify(`${packageName}${exportSubpath}`)} to ${JSON.stringify(rel)} (condition: ${JSON.stringify(condition)}), but the file does not exist.\n` +

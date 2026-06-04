@@ -152,7 +152,7 @@ describe("resolvePackageExportPath", () => {
   });
 
   describe("When the export declares a .js path but only the .ts source exists", () => {
-    it("should throw file does not exist until .js is mapped to TypeScript source", () => {
+    it("should resolve to the on-disk TypeScript source file", () => {
       const root = mkdtempSync(path.join(tmpdir(), "ioc-export-js-src-"));
       const pkgDir = path.join(root, "node_modules", "@test", "js-src");
       mkdirSync(path.join(pkgDir, "src", "generated"), { recursive: true });
@@ -181,17 +181,16 @@ describe("resolvePackageExportPath", () => {
         `export const iocManifest = { manifestSchemaVersion: 2, moduleImports: [], contracts: {} };`,
       );
 
-      assert.throws(
-        () =>
-          resolvePackageExportPath(root, "@test/js-src", "./iocManifest", {
-            customConditions: ["development"],
-          }),
-        (error: unknown) => {
-          assert.ok(error instanceof Error);
-          assert.match(error.message, /file does not exist/);
-          assert.match(error.message, /ioc-manifest\.js/);
-          return true;
-        },
+      const resolved = resolvePackageExportPath(
+        root,
+        "@test/js-src",
+        "./iocManifest",
+        { customConditions: ["development"] },
+      );
+
+      assert.strictEqual(
+        resolved,
+        path.join(pkgDir, "src", "generated", "ioc-manifest.ts"),
       );
     });
   });
