@@ -135,6 +135,32 @@ describe("buildGroupPlan", () => {
         assert.deepStrictEqual(root.members, []);
       }
     });
+
+    it("should warn when the group has no declared extenders in the package", () => {
+      const plans = runDiscoveryAndPlans();
+      const ctx = discoveryCtx(makeProgram());
+      const warnings: string[] = [];
+      const prevWarn = console.warn;
+      console.warn = (msg: unknown) => {
+        warnings.push(String(msg));
+      };
+      try {
+        buildGroupPlan(
+          {
+            empty: { kind: "collection", baseType: "NoMatchingContracts" },
+          },
+          plans,
+          ctx,
+        );
+      } finally {
+        console.warn = prevWarn;
+      }
+      const joined = warnings.join("\n");
+      assert.match(joined, /\[ioc-warn\]/);
+      assert.match(joined, /Group "empty"/);
+      assert.match(joined, /NoMatchingContracts/);
+      assert.match(joined, /extends NoMatchingContracts/);
+    });
   });
 
   describe("When base type is unknown", () => {

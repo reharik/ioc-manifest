@@ -222,6 +222,17 @@ export const formatGroupPlanIssues = (
   issues: readonly GroupPlanIssue[],
 ): string => issues.map((issue) => formatGroupPlanIssue(issue)).join("\n");
 
+export const formatEmptyGroupWarning = (
+  groupName: string,
+  baseType: string,
+): string =>
+  `[ioc-warn] Group ${JSON.stringify(groupName)} base type ${JSON.stringify(baseType)} has no declared extenders in this package.\n` +
+  `The group will be empty. If you expected members, ensure your implementations declare \`extends ${baseType}\`.`;
+
+const warnOnEmptyGroup = (groupName: string, baseType: string): void => {
+  console.warn(formatEmptyGroupWarning(groupName, baseType));
+};
+
 const runGroupPlan = (
   groups: unknown,
   plans: readonly ResolvedContractRegistration[],
@@ -311,6 +322,7 @@ const runGroupPlan = (
       );
 
       if (objectMembers.length === 0) {
+        warnOnEmptyGroup(groupName, entry.baseType);
         reserved.add(groupName);
         groupPlans.push({
           groupName,
@@ -350,6 +362,7 @@ const runGroupPlan = (
     );
 
     if (members.length === 0) {
+      warnOnEmptyGroup(groupName, entry.baseType);
       reserved.add(groupName);
       groupPlans.push({
         groupName,
