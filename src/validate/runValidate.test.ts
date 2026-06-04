@@ -14,6 +14,19 @@ import {
   runValidate,
 } from "./runValidate.js";
 
+const writeMinimalAppHost = (root: string): void => {
+  writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ name: "host", type: "module" }),
+  );
+  writeFileSync(
+    path.join(root, "tsconfig.json"),
+    JSON.stringify({
+      compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext" },
+    }),
+  );
+};
+
 describe("runValidate", () => {
   describe("When the config is library mode", () => {
     it("should return library-mode without loading manifests", async () => {
@@ -38,10 +51,7 @@ describe("runValidate", () => {
       const root = mkdtempSync(path.join(tmpdir(), "ioc-validate-load-"));
       const pkgDir = path.join(root, "node_modules", "@test", "missing");
       mkdirSync(pkgDir, { recursive: true });
-      writeFileSync(
-        path.join(root, "package.json"),
-        JSON.stringify({ name: "host", type: "module" }),
-      );
+      writeMinimalAppHost(root);
       writeFileSync(
         path.join(pkgDir, "package.json"),
         JSON.stringify({
@@ -89,10 +99,7 @@ describe("runValidate", () => {
       const root = mkdtempSync(path.join(tmpdir(), "ioc-validate-ok-"));
       const libDir = path.join(root, "node_modules", "@test", "lib");
       mkdirSync(libDir, { recursive: true });
-      writeFileSync(
-        path.join(root, "package.json"),
-        JSON.stringify({ name: "host", type: "module" }),
-      );
+      writeMinimalAppHost(root);
       writeFileSync(
         path.join(libDir, "package.json"),
         JSON.stringify({
