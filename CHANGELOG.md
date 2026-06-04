@@ -5,13 +5,28 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2026-06-04
+
+### Fixed
+
+- **Cross-package type imports now use bare specifiers when the factory does.** When a factory imports a type via a bare package specifier (e.g. `import type { MediaStorage } from '@packages/media-core'`), the generated `ioc-registry.types.ts` and `ioc-manifest.ts` now preserve that specifier instead of emitting a deep relative path into the source package. This restores the package-boundary discipline v2 was designed to enforce in monorepo setups.
+
+### Added
+
+- **Warning when generated imports escape the package root.** Codegen now emits a `[ioc-warn]` when a generated relative import walks outside the package's directory. Informational only; codegen completes normally. Surfaces the issue without forcing immediate action.
+
+### Notes
+
+- The fix covers both deps-type imports (in `ioc-registry.types.ts`) and return-type imports (in `ioc-manifest.ts`). Both code paths now use a shared bare-specifier recovery helper.
+-
+
 ## [1.0.1] - 2026-05-23
 
 ### Changed
 
 - Codegen no longer prints TypeScript diagnostics on every run when discovery files have compile errors. Compiler errors in scan targets are shown only when generation fails for a type-checking-related reason (for example, a file missing from the program, unresolvable factory deps types, or conflicting demanded key types).
 
-## [2.0.0] - 2026-05-22
+## [1.0.0] - 2026-05-22
 
 Major release: per-package manifests with app-level composition. Hard cut from v1 — no backward compatibility ([§13](docs/design/per-package-manifest.md#13-breaking-changes-summary)).
 
