@@ -68,6 +68,14 @@ export const pickExportRelativePath = (
     }
   }
 
+  if (customConditions !== undefined && customConditions.length > 0) {
+    throw new Error(
+      `[ioc] Cannot resolve subpath export ${JSON.stringify(exportSubpath)} for ${JSON.stringify(packageName)}.\n` +
+        `None of the configured customConditions matched: ${JSON.stringify([...customConditions])}\n` +
+        `Available conditions in this export: ${JSON.stringify([...available])}`,
+    );
+  }
+
   throw new Error(
     `[ioc-config] ${JSON.stringify(packageName)} must export ${JSON.stringify(exportSubpath)} in package.json (see design doc §6.1)`,
   );
