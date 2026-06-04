@@ -78,6 +78,7 @@ export const createIocProgramForDiscovery = (
       .join("\n");
     throw new Error(`[ioc] tsconfig parse errors:\n${msg}`);
   }
+
   return ts.createProgram({ rootNames, options: parsed.options });
 };
 
@@ -130,9 +131,7 @@ export const formatDiscoveryProgramErrorDiagnostics = (
  * True when codegen failed in a step where TypeScript program diagnostics are likely
  * the root cause (as opposed to config, duplicate keys, etc.).
  */
-export const isCodegenFailureCausedByTypeScript = (
-  error: unknown,
-): boolean => {
+export const isCodegenFailureCausedByTypeScript = (error: unknown): boolean => {
   if (!(error instanceof Error)) {
     return false;
   }
