@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-06-04
+
+### Changed
+
+- **Group and lifetime-marker membership is now nominal (declared `extends` / type-alias `&`), not structural.** Empty marker interfaces and empty group base types no longer match every type in the package. Factories and contracts must declare heritage explicitly (`interface Foo extends ReadServiceBase`, `type Bar = Baz & IScoped`). This is a minor semver bump because membership semantics change even though most code that already uses `extends` is unaffected.
+- **`group_no_matches` is no longer a hard codegen error.** Groups with zero local members are emitted empty and produce an `[ioc-warn]` suggesting `extends` on implementations. Empty groups remain valid for app-mode composition and in-progress refactors.
+- **Migration:** No codemod. Remove optional brand fields from markers if you added them only to work around structural over-matching in v1.1.x; `extends` on service/contract types is sufficient. Existing branded markers still work.
+
 ## [1.1.5] - 2026-06-04
 
 ### Fixed
