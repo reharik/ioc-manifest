@@ -36,6 +36,15 @@ const importedServiceTypesPath = path.join(
   importedHeritageFixtureDir,
   "service-types.ts",
 );
+const importedIndexPath = path.join(importedHeritageFixtureDir, "index.ts");
+const importedReexportMidPath = path.join(
+  importedHeritageFixtureDir,
+  "reexport-mid.ts",
+);
+const importedDeepServiceTypesPath = path.join(
+  importedHeritageFixtureDir,
+  "deep-service-types.ts",
+);
 
 const makeProgram = (roots: readonly string[]): ts.Program =>
   ts.createProgram({
@@ -164,6 +173,44 @@ describe("isNominallyAssignable", () => {
         "Service",
       );
       assert.strictEqual(isNominallyAssignable(checker, service, base), true);
+    });
+  });
+
+  describe("When the base marker is a barrel type alias", () => {
+    it("should match imported heritage against the aliased marker base", () => {
+      const program = makeProgram([
+        importedBaseTypesPath,
+        importedIndexPath,
+        importedServiceTypesPath,
+      ]);
+      const checker = program.getTypeChecker();
+      const base = declaredType(checker, program, "ScopedMarker");
+      const service = declaredTypeInFile(
+        checker,
+        program,
+        importedServiceTypesPath,
+        "Service",
+      );
+      assert.strictEqual(isNominallyAssignable(checker, service, base), true);
+    });
+  });
+
+  describe("When heritage crosses multi-hop re-exports", () => {
+    it("should match transitively to the root marker", () => {
+      const program = makeProgram([
+        importedBaseTypesPath,
+        importedReexportMidPath,
+        importedDeepServiceTypesPath,
+      ]);
+      const checker = program.getTypeChecker();
+      const base = declaredType(checker, program, "MarkerBase");
+      const deep = declaredTypeInFile(
+        checker,
+        program,
+        importedDeepServiceTypesPath,
+        "DeepService",
+      );
+      assert.strictEqual(isNominallyAssignable(checker, deep, base), true);
     });
   });
 });

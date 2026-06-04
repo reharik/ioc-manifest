@@ -24,6 +24,7 @@ const baseTypesPath = path.join(fixtureDir, "base-types.ts");
 const serviceTypesPath = path.join(fixtureDir, "service-types.ts");
 const contractsPath = path.join(fixtureDir, "contracts.ts");
 const factoriesPath = path.join(fixtureDir, "factories.ts");
+const indexPath = path.join(fixtureDir, "index.ts");
 
 const makeProgram = (): ts.Program =>
   ts.createProgram({
@@ -82,6 +83,74 @@ describe("imported nominal heritage", () => {
       const plans = buildRegistrationPlan(contractMap, undefined);
       const groupResult = buildGroupPlan(
         { services: { kind: "collection", baseType: "Mid" } },
+        plans,
+        { program, generatedDir, scanDirs: [{ absPath: srcDir }] },
+      );
+      assert.ok(groupResult);
+      const keys = groupResult!.manifest.services.members
+        .map((member) => member.registrationKey)
+        .sort();
+      assert.deepStrictEqual(keys, ["service"]);
+    });
+  });
+
+  describe("When marker and group base types are barrel aliases", () => {
+    const makeProgramWithBarrel = (): ts.Program =>
+      ts.createProgram({
+        rootNames: [
+          baseTypesPath,
+          indexPath,
+          serviceTypesPath,
+          contractsPath,
+          factoriesPath,
+        ],
+        options: {
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.ESNext,
+          moduleResolution: ts.ModuleResolutionKind.Bundler,
+          strict: true,
+          noEmit: true,
+        },
+      });
+
+    it("should resolve lifetime markers when config names the barrel alias", () => {
+      const program = makeProgramWithBarrel();
+      const { acceptedFactories } = discoverFactories(
+        [factoriesPath],
+        program,
+        projectRoot,
+        "build",
+        { projectRoot, scanDirs: [{ absPath: srcDir }], generatedDir },
+        undefined,
+      );
+      const result = resolveLifetimeMarkersForFactories(
+        acceptedFactories,
+        { ScopedMarker: "scoped" },
+        { program, projectRoot, scanDirs: [{ absPath: srcDir }] },
+      );
+      const serviceFactory = acceptedFactories.find(
+        (factory) => factory.exportName === "buildService",
+      );
+      assert.ok(serviceFactory);
+      assert.equal(
+        result.get(factoryLifetimeMarkerKey(serviceFactory!)),
+        "scoped",
+      );
+    });
+
+    it("should include the service when group baseType is the barrel mid alias", () => {
+      const program = makeProgramWithBarrel();
+      const { contractMap } = discoverFactories(
+        [factoriesPath],
+        program,
+        projectRoot,
+        "build",
+        { projectRoot, scanDirs: [{ absPath: srcDir }], generatedDir },
+        undefined,
+      );
+      const plans = buildRegistrationPlan(contractMap, undefined);
+      const groupResult = buildGroupPlan(
+        { services: { kind: "collection", baseType: "MidRef" } },
         plans,
         { program, generatedDir, scanDirs: [{ absPath: srcDir }] },
       );
