@@ -336,7 +336,7 @@ export const collectImplementationMembersAssignableToBase = (
 ): AssignableImplementationMember[] => {
   const members: AssignableImplementationMember[] = [];
   for (const plan of plans) {
-    const contractType = getContractDeclaredType(
+    const contractType = getContractDeclaredTypeRaw(
       checker,
       program,
       generatedDir,
@@ -346,7 +346,7 @@ export const collectImplementationMembersAssignableToBase = (
     if (contractType === undefined) {
       continue;
     }
-    if (!checker.isTypeAssignableTo(contractType, baseType)) {
+    if (!isNominallyAssignable(checker, contractType, baseType)) {
       continue;
     }
     for (const impl of plan.implementations) {
@@ -378,7 +378,7 @@ export const collectContractDefaultMembersAssignableToBase = (
 ): ContractDefaultGroupMember[] => {
   const members: ContractDefaultGroupMember[] = [];
   for (const plan of plans) {
-    const contractType = getContractDeclaredType(
+    const contractType = getContractDeclaredTypeRaw(
       checker,
       program,
       generatedDir,
@@ -388,7 +388,7 @@ export const collectContractDefaultMembersAssignableToBase = (
     if (contractType === undefined) {
       continue;
     }
-    if (!checker.isTypeAssignableTo(contractType, baseType)) {
+    if (!isNominallyAssignable(checker, contractType, baseType)) {
       continue;
     }
     const defaultImpl = plan.implementations.find(

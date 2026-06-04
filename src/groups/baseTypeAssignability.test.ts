@@ -251,13 +251,7 @@ describe("collectContractDefaultMembersAssignableToBase", () => {
         plans,
         base.type,
       );
-      assert.deepStrictEqual(members, [
-        {
-          contractKey: "nullableWidget",
-          contractName: "NullableWidgetContract",
-          registrationKey: "defaultSlot",
-        },
-      ]);
+      assert.deepStrictEqual(members, []);
     });
   });
 });
