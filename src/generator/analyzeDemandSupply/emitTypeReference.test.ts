@@ -1,11 +1,12 @@
 import assert from "node:assert";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import ts from "typescript";
 import { buildManifestArtifactSources } from "../writeManifest.js";
 import { analyzeDemandSupply } from "./index.js";
-import { emitTypeReference } from "./emitTypeReference.js";
+import { emitTypeReference, tryEmitTypeReference } from "./emitTypeReference.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixtureDir = path.join(__dirname, "../test-fixtures/demand-supply");
@@ -135,6 +136,109 @@ describe("emitTypeReference", () => {
       assert.ok(!typesSource.includes("from 'typescript'"));
       assert.ok(!typesSource.includes('from "typescript"'));
       assert.match(typesSource, /viewerId:\s*string;/);
+    });
+  });
+
+  describe("When deps use compound and builtin types", () => {
+    const compoundFile = path.join(fixtureDir, "compound-type-deps.ts");
+
+    it("should emit primitives, unions, lib types, arrays, and tuples without imports", () => {
+      const program = makeProgram([compoundFile]);
+      const checker = program.getTypeChecker();
+      const sf = program.getSourceFile(compoundFile)!;
+      const ctx = emitCtxForFile(program, sf);
+
+      const expectInline = (
+        propName: string,
+        expectedTypeName: string,
+      ): void => {
+        const ref = emitTypeReference(
+          checker,
+          depsPropertyType(program, sf.fileName, "buildCompound", propName),
+          ctx,
+        );
+        assert.ok(ref, propName);
+        assert.strictEqual(ref.typeName, expectedTypeName, propName);
+        assert.deepStrictEqual(ref.imports, [], propName);
+      };
+
+      expectInline("maybeId", "string | undefined");
+      expectInline("createdAt", "Date");
+      expectInline("pending", "Promise<string>");
+      expectInline("tags", "string[]");
+      expectInline("pair", "[string, number]");
+      expectInline("primitiveObject", "object");
+      expectInline("boxedObject", "Object");
+      expectInline(
+        "branded",
+        "string & { readonly __brand: unique symbol; }",
+      );
+    });
+
+    it("should emit mixed primitive and named types with a single import", () => {
+      const program = makeProgram([compoundFile]);
+      const checker = program.getTypeChecker();
+      const sf = program.getSourceFile(compoundFile)!;
+      const ctx = emitCtxForFile(program, sf);
+      const ref = emitTypeReference(
+        checker,
+        depsPropertyType(program, sf.fileName, "buildCompound", "mixed"),
+        ctx,
+      );
+      assert.ok(ref);
+      assert.strictEqual(ref.typeName, "string | Database");
+      assert.strictEqual(ref.imports.length, 1);
+      assert.strictEqual(ref.imports[0]?.typeName, "Database");
+      assert.match(ref.imports[0]?.relImport ?? "", /contracts\.js$/);
+    });
+  });
+
+  describe("When a union contains an unresolvable type parameter member", () => {
+    it("should name the compound type and failing constituent on the property", () => {
+      const file = path.join(fixtureDir, "_generic-union.ts");
+      const src = `export const build = <T,>({ foo }: { foo: string | T }): void => {};`;
+      fs.writeFileSync(file, src);
+      try {
+        const program = ts.createProgram({
+          rootNames: [file],
+          options: {
+            target: ts.ScriptTarget.ES2022,
+            module: ts.ModuleKind.ESNext,
+            moduleResolution: ts.ModuleResolutionKind.Bundler,
+            strict: true,
+            noEmit: true,
+          },
+        });
+        const checker = program.getTypeChecker();
+        const sf = program.getSourceFile(file);
+        assert.ok(sf);
+        const fn = sf.statements.find(ts.isVariableStatement)!.declarationList
+          .declarations[0]!.initializer as ts.ArrowFunction;
+        const prop = checker
+          .getPropertiesOfType(
+            checker.getApparentType(
+              checker.getTypeAtLocation(fn.parameters[0]!),
+            ),
+          )
+          .find((p) => p.getName() === "foo")!;
+        const propType = checker.getTypeOfSymbol(prop);
+        const result = tryEmitTypeReference(
+          checker,
+          propType,
+          emitCtxForFile(program, sf),
+          { propertyName: "foo" },
+        );
+        assert.strictEqual(result.ok, false);
+        if (!result.ok) {
+          assert.match(
+            result.message,
+            /Cannot resolve import for type "T" in compound type "string \| T"/,
+          );
+          assert.match(result.message, /on property "foo"/);
+        }
+      } finally {
+        fs.unlinkSync(file);
+      }
     });
   });
 });
