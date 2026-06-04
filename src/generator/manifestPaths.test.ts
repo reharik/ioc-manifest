@@ -6,6 +6,7 @@ import {
   emitBarePackageSpecifierFromNodeModulesPath,
   mapTypesPackageToRuntimePackage,
   normalizeEmittedModuleSpecifier,
+  relativeImportEscapesPackageRoot,
   resolveScanDirEntries,
 } from "./manifestPaths.js";
 
@@ -133,6 +134,45 @@ describe("computeManifestModuleSpecifier", () => {
           { preferredModuleSpecifier: "@koa/router" },
         ),
         "@koa/router",
+      );
+    });
+  });
+});
+
+describe("relativeImportEscapesPackageRoot", () => {
+  describe("When a relative import resolves outside the package root", () => {
+    it("should return true", () => {
+      const packageRoot = path.join(path.sep, "proj", "app");
+      const generatedDir = path.join(packageRoot, "generated");
+      assert.strictEqual(
+        relativeImportEscapesPackageRoot(
+          "../../packages/lib/src/Type.js",
+          generatedDir,
+          packageRoot,
+        ),
+        true,
+      );
+    });
+  });
+
+  describe("When a relative import stays inside the package root", () => {
+    it("should return false", () => {
+      const packageRoot = path.join(path.sep, "proj", "app");
+      const generatedDir = path.join(packageRoot, "generated");
+      assert.strictEqual(
+        relativeImportEscapesPackageRoot("../src/Type.js", generatedDir, packageRoot),
+        false,
+      );
+    });
+  });
+
+  describe("When the import uses a bare specifier", () => {
+    it("should return false", () => {
+      const packageRoot = path.join(path.sep, "proj", "app");
+      const generatedDir = path.join(packageRoot, "generated");
+      assert.strictEqual(
+        relativeImportEscapesPackageRoot("@scope/pkg", generatedDir, packageRoot),
+        false,
       );
     });
   });

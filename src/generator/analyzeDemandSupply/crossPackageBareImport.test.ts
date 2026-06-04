@@ -190,4 +190,61 @@ describe("cross-package bare import recovery", () => {
       assert.strictEqual(ref.typeName, "DefaultWidget");
     });
   });
+
+  describe("When generated registry types include a relative import that escapes the package root", () => {
+    it("should warn without failing codegen", () => {
+      const program = loadFixtureProgram([
+        path.join(appDir, "src/buildService.ts"),
+      ]);
+      const escapingImport = "../../packages/lib-foo/src/MediaStorage.js";
+      const warnings: string[] = [];
+      const prevWarn = console.warn;
+      console.warn = (msg: unknown) => {
+        warnings.push(String(msg));
+      };
+      try {
+        buildManifestArtifactSources(
+          [],
+          [],
+          undefined,
+          path.join(generatedDir, "ioc-manifest.ts"),
+          "ioc-manifest",
+          {
+            demandSupply: {
+              entries: [
+                {
+                  key: "mediaStorage",
+                  typeRef: {
+                    typeName: "MediaStorage",
+                    imports: [
+                      {
+                        typeName: "MediaStorage",
+                        relImport: escapingImport,
+                        useDefaultImport: false,
+                      },
+                    ],
+                  },
+                  classification: "external",
+                },
+              ],
+              externalKeys: ["mediaStorage"],
+            },
+            registryTypesBuildContext: {
+              program,
+              generatedDir,
+              scanDirs,
+              projectRoot,
+            },
+          },
+        );
+      } finally {
+        console.warn = prevWarn;
+      }
+
+      const joined = warnings.join("\n");
+      assert.match(joined, /\[ioc-warn\]/);
+      assert.match(joined, /escapes the package root/);
+      assert.match(joined, /packages\/lib-foo/);
+    });
+  });
 });

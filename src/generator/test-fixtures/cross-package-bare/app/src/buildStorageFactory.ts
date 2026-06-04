@@ -1,5 +1,7 @@
 import type { MediaStorage } from "@test/lib-foo";
 
-export const buildStorage = (): MediaStorage => ({
-  store: async () => {},
-});
+export function buildStorage(): MediaStorage {
+  return {
+    store: async () => {},
+  };
+}
