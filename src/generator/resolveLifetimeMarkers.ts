@@ -1,13 +1,15 @@
 /**
  * @fileoverview Resolves factory lifetimes from `lifetimeMarkers` config via return-type
- * assignability. Reuses {@link resolveDeclaredBaseType} from groups; TypeScript's checker
- * handles inheritance walking with its own caching — user-facing cost is dominated by factory
- * discovery, not marker checks.
+ * nominal heritage matching. Reuses {@link resolveDeclaredBaseType} from groups; user-facing
+ * cost is dominated by factory discovery, not marker checks.
  */
 import path from "node:path";
 import ts from "typescript";
 import type { IocLifetime } from "../config/iocConfig.js";
-import { resolveDeclaredBaseType } from "../groups/baseTypeAssignability.js";
+import {
+  isNominallyAssignable,
+  resolveDeclaredBaseType,
+} from "../groups/baseTypeAssignability.js";
 import { collectFileAnalysisForFactoryDiscovery } from "./discoverFactories/scanFactoryFile.js";
 import {
   resolveFactorySourceAbsPath,
@@ -113,7 +115,8 @@ const defaultMarkerResolutionDeps = (
     isAssignableToMarker: (
       candidateType: ts.Type,
       marker: ResolvedLifetimeMarker,
-    ): boolean => checker.isTypeAssignableTo(candidateType, marker.type),
+    ): boolean =>
+      isNominallyAssignable(checker, candidateType, marker.type),
   };
 };
 
