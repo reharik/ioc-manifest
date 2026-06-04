@@ -61,7 +61,6 @@ const resolveTypeSymbol = (
 };
 
 const recoverFromSameFileImport = (
-  checker: ts.TypeChecker,
   sym: ts.Symbol | undefined,
   factorySourceFile: ts.SourceFile,
 ): string | undefined => {
@@ -165,7 +164,7 @@ export const tryRecoverPreferredModuleSpecifier = (
   }
 
   const trySymbol = (sym: ts.Symbol | undefined): string | undefined =>
-    recoverFromSameFileImport(checker, sym, factorySourceFile);
+    recoverFromSameFileImport(sym, factorySourceFile);
 
   const fromAlias = trySymbol(t.aliasSymbol);
   if (fromAlias !== undefined) {
