@@ -151,6 +151,51 @@ describe("resolvePackageExportPath", () => {
     });
   });
 
+  describe("When the export declares a .js path but only the .ts source exists", () => {
+    it("should throw file does not exist until .js is mapped to TypeScript source", () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-export-js-src-"));
+      const pkgDir = path.join(root, "node_modules", "@test", "js-src");
+      mkdirSync(path.join(pkgDir, "src", "generated"), { recursive: true });
+      writeHostRoot(root);
+      writeFileSync(
+        path.join(root, "tsconfig.json"),
+        JSON.stringify({
+          compilerOptions: { customConditions: ["development"] },
+        }),
+      );
+      writeFileSync(
+        path.join(pkgDir, "package.json"),
+        JSON.stringify({
+          name: "@test/js-src",
+          exports: {
+            "./iocManifest": {
+              development: "./src/generated/ioc-manifest.js",
+              types: "./dist/generated/ioc-manifest.d.ts",
+              default: "./dist/generated/ioc-manifest.js",
+            },
+          },
+        }),
+      );
+      writeFileSync(
+        path.join(pkgDir, "src", "generated", "ioc-manifest.ts"),
+        `export const iocManifest = { manifestSchemaVersion: 2, moduleImports: [], contracts: {} };`,
+      );
+
+      assert.throws(
+        () =>
+          resolvePackageExportPath(root, "@test/js-src", "./iocManifest", {
+            customConditions: ["development"],
+          }),
+        (error: unknown) => {
+          assert.ok(error instanceof Error);
+          assert.match(error.message, /file does not exist/);
+          assert.match(error.message, /ioc-manifest\.js/);
+          return true;
+        },
+      );
+    });
+  });
+
   describe("When the resolved export path does not exist on disk", () => {
     it("should throw an error naming the condition and relative path", () => {
       const root = mkdtempSync(path.join(tmpdir(), "ioc-export-missing-"));
