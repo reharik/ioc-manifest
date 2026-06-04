@@ -44,7 +44,7 @@ registerIocFromManifest(container, composedManifests);
 
 This shape:
 
-- Eliminates §1.1. Each package's codegen runs against its own tsconfig and scans only its own source. The generated types file imports only from sibling source via relative paths. No bare specifiers crossing the boundary at codegen time.
+- Eliminates §1.1. Each package's codegen runs against its own tsconfig and scans only its own source. Generated `ioc-registry.types.ts` imports use relative paths for types declared in the same package; when a factory already imports a type via a bare package specifier (workspace alias or `node_modules` name), codegen preserves that specifier in generated imports instead of emitting a deep relative path through another package's `src/`.
 - Eliminates §1.2. No app reaches into another package's source. The package's manifest is its public API for IoC composition, alongside its normal type exports.
 - Enables §1.3. A plugin is a package that exports a manifest. An app can compose any set of manifests.
 
@@ -99,6 +99,8 @@ Three artifacts emitted to the package's `generatedDir`:
 1. `ioc-manifest.ts` — runtime manifest value. Same shape as today's manifest (factories, contracts, lifetimes, module imports). Per-package, not per-app.
 2. `ioc-registry.types.ts` — exports `IocGeneratedCradle` (flat interface of locally-supplied registration keys and their types) and `IocExternals` (demanded keys with no local supplier).
 3. _(apps only)_ `ioc-composed.ts` — see §6.
+
+**Import emission in `ioc-registry.types.ts`.** For each type referenced in factory deps (and contract return types used during discovery), codegen resolves the type's declaration file and normally emits a relative import from `generatedDir`. If the factory file already imports that type via a bare module specifier (`@packages/foo`, `knex`, including subpaths such as `@packages/foo/types`), codegen reuses that specifier verbatim in the generated file. Type-only imports, renamed bindings (`import { X as Y }`), and default imports are handled the same way; emitted named imports use the original export name, not the factory's local alias. Relative imports are used only when no matching bare import exists in the factory. If the fallback relative path would escape the package root, codegen emits `[ioc-warn]` and still completes (see implementation in `writeManifest`).
 
 ### 4.3 `IocGeneratedCradle` shape
 
