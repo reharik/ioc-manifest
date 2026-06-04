@@ -237,6 +237,62 @@ describe("resolvePackageExportPath", () => {
     });
   });
 
+  describe("When the export declares .mjs or .cjs paths with TypeScript source on disk", () => {
+    it("should resolve .mjs to .mts when only the .mts source exists", () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-export-mjs-src-"));
+      const pkgDir = path.join(root, "node_modules", "@test", "mjs-src");
+      mkdirSync(path.join(pkgDir, "src"), { recursive: true });
+      writeHostRoot(root);
+      writeFileSync(
+        path.join(pkgDir, "package.json"),
+        JSON.stringify({
+          name: "@test/mjs-src",
+          exports: {
+            "./iocManifest": "./src/ioc-manifest.mjs",
+          },
+        }),
+      );
+      writeFileSync(
+        path.join(pkgDir, "src", "ioc-manifest.mts"),
+        `export const iocManifest = { manifestSchemaVersion: 2, moduleImports: [], contracts: {} };`,
+      );
+
+      const resolved = resolvePackageExportPath(root, "@test/mjs-src", "./iocManifest");
+
+      assert.strictEqual(
+        resolved,
+        path.join(pkgDir, "src", "ioc-manifest.mts"),
+      );
+    });
+
+    it("should resolve .cjs to .cts when only the .cts source exists", () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-export-cjs-src-"));
+      const pkgDir = path.join(root, "node_modules", "@test", "cjs-src");
+      mkdirSync(path.join(pkgDir, "src"), { recursive: true });
+      writeHostRoot(root);
+      writeFileSync(
+        path.join(pkgDir, "package.json"),
+        JSON.stringify({
+          name: "@test/cjs-src",
+          exports: {
+            "./iocManifest": "./src/ioc-manifest.cjs",
+          },
+        }),
+      );
+      writeFileSync(
+        path.join(pkgDir, "src", "ioc-manifest.cts"),
+        `export const iocManifest = { manifestSchemaVersion: 2, moduleImports: [], contracts: {} };`,
+      );
+
+      const resolved = resolvePackageExportPath(root, "@test/cjs-src", "./iocManifest");
+
+      assert.strictEqual(
+        resolved,
+        path.join(pkgDir, "src", "ioc-manifest.cts"),
+      );
+    });
+  });
+
   describe("When no customConditions are configured", () => {
     it("should prefer import over default and never select types", () => {
       assert.deepStrictEqual(
