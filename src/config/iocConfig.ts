@@ -180,6 +180,13 @@ export type IocConfig = {
    * a marker name inherits that marker's lifetime (see lifetime precedence in docs).
    */
   lifetimeMarkers?: Record<string, IocLifetime>;
+  /**
+   * Dependency keys supplied at runtime by registration onto a request child scope
+   * (e.g. `scope.register({ viewerId: asValue(...) })`), not built by any factory.
+   * Such keys are demanded by factories but must NOT be required to be supplied by a
+   * composed manifest — they are excluded from the externals-satisfaction check.
+   */
+  scopeProvided?: string[];
 };
 
 export const defineIocConfig = (config: IocConfig): IocConfig => config;

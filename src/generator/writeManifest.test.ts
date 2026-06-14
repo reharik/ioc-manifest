@@ -66,7 +66,7 @@ const mkDemandSupplyFromPlans = (
   const entries = Array.from(byKey.values()).sort((a, b) =>
     a.key.localeCompare(b.key),
   );
-  return { entries, externalKeys: [] };
+  return { entries, externalKeys: [], scopeProvidedKeys: [] };
 };
 
 const writeWithDemandSupply = async (
@@ -199,6 +199,7 @@ describe("writeManifest", () => {
       assert.ok(manifestSource.includes("export const iocManifest"));
       assert.ok(typesSource.includes("export interface IocGeneratedCradle"));
       assert.ok(typesSource.includes("export interface IocExternals"));
+      assert.ok(typesSource.includes("export interface IocScopeProvided {}"));
 
       const files = await fs.readdir(generatedDir);
       assert.ok(
@@ -289,6 +290,7 @@ describe("writeManifest", () => {
           },
         ],
         externalKeys: ["database", "logger"],
+        scopeProvidedKeys: [],
       };
 
       await writeManifest(
@@ -315,6 +317,115 @@ describe("writeManifest", () => {
         typesSource,
         /export interface IocExternals \{\n  database: Database;\n  logger: Logger;\n\}/,
       );
+      assert.ok(typesSource.includes("export interface IocScopeProvided {}"));
+    });
+  });
+
+  describe("When demand supply includes scope-provided keys", () => {
+    it("should emit IocScopeProvided and omit those keys from IocExternals", async () => {
+      const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ioc-write-manifest-"));
+      const generatedDir = path.join(tempRoot, "src", "generated");
+      await fs.mkdir(generatedDir, { recursive: true });
+      const manifestOutPath = path.join(generatedDir, "ioc-manifest.ts");
+
+      const acceptedFactories: DiscoveredFactory[] = [
+        mkFactory({
+          contractName: "UserService",
+          implementationName: "userService",
+          registrationKey: "userService",
+          modulePath: "fixtures/u.ts",
+          relImport: "../fixtures/u.js",
+        }),
+      ];
+      const plans: ResolvedContractRegistration[] = [
+        mkPlan({
+          contractName: "UserService",
+          contractTypeRelImport: "../fixtures/contracts.js",
+          contractKey: "userService",
+          defaultImplementationName: "userService",
+          implementations: [
+            {
+              implementationName: "userService",
+              exportName: "buildUserService",
+              modulePath: "fixtures/u.ts",
+              relImport: "../fixtures/u.js",
+              registrationKey: "userService",
+              lifetime: "singleton",
+            },
+          ],
+        }),
+      ];
+
+      const demandSupply: DemandSupplyAnalysisResult = {
+        entries: [
+          {
+            key: "viewerId",
+            typeRef: {
+              typeName: "string",
+              imports: [],
+            },
+            classification: "scope-provided",
+          },
+          {
+            key: "logger",
+            typeRef: {
+              typeName: "Logger",
+              imports: [
+                {
+                  typeName: "Logger",
+                  relImport: "../fixtures/contracts.js",
+                  useDefaultImport: false,
+                },
+              ],
+            },
+            classification: "external",
+          },
+          {
+            key: "userService",
+            typeRef: {
+              typeName: "UserService",
+              imports: [
+                {
+                  typeName: "UserService",
+                  relImport: "../fixtures/contracts.js",
+                  useDefaultImport: false,
+                },
+              ],
+            },
+            classification: "local",
+          },
+        ],
+        externalKeys: ["logger"],
+        scopeProvidedKeys: ["viewerId"],
+      };
+
+      await writeManifest(
+        acceptedFactories,
+        plans,
+        undefined,
+        manifestOutPath,
+        "ioc-manifest",
+        { demandSupply },
+      );
+
+      const typesSource = await fs.readFile(
+        path.join(generatedDir, "ioc-registry.types.ts"),
+        "utf8",
+      );
+
+      assert.match(
+        typesSource,
+        /export interface IocScopeProvided \{\n  viewerId: string;\n\}/,
+      );
+      assert.match(
+        typesSource,
+        /export interface IocExternals \{\n  logger: Logger;\n\}/,
+      );
+      const externalsBlock = typesSource.match(
+        /export interface IocExternals \{([\s\S]*?)\}/,
+      )?.[1];
+      assert.ok(externalsBlock !== undefined);
+      assert.ok(!/\bviewerId:/.test(externalsBlock));
     });
   });
 

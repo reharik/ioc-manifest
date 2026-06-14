@@ -32,6 +32,7 @@ const TOP_LEVEL_KEYS = new Set([
   "groups",
   "groupBaseTypeAliases",
   "lifetimeMarkers",
+  "scopeProvided",
 ]);
 
 const DISCOVERY_KEYS = new Set([
@@ -141,6 +142,31 @@ const validateLifetimeMarkersShape = (
         `[ioc-config] ${entryPath} must be singleton | scoped | transient`,
       );
     }
+  }
+};
+
+const validateScopeProvidedShape = (
+  value: unknown,
+  pathLabel: string,
+): void => {
+  if (!Array.isArray(value)) {
+    throw new Error(`[ioc-config] ${pathLabel} must be an array when set`);
+  }
+
+  const seen = new Set<string>();
+  for (let i = 0; i < value.length; i++) {
+    const key = value[i];
+    if (typeof key !== "string" || key.length === 0) {
+      throw new Error(
+        `[ioc-config] ${pathLabel}[${i}] must be a non-empty string`,
+      );
+    }
+    if (seen.has(key)) {
+      throw new Error(
+        `[ioc-config] ${pathLabel} contains duplicate entry ${JSON.stringify(key)}`,
+      );
+    }
+    seen.add(key);
   }
 };
 
@@ -538,6 +564,13 @@ const validateIocConfig = async (
     validateLifetimeMarkersShape(
       raw.lifetimeMarkers,
       `${sourceLabel} lifetimeMarkers`,
+    );
+  }
+
+  if (raw.scopeProvided !== undefined) {
+    validateScopeProvidedShape(
+      raw.scopeProvided,
+      `${sourceLabel} scopeProvided`,
     );
   }
 

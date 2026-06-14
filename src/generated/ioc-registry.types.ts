@@ -25,3 +25,5 @@ export interface IocGeneratedCradle {
 }
 
 export interface IocExternals {}
+
+export interface IocScopeProvided {}

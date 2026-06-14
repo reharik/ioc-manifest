@@ -4,6 +4,7 @@ export default defineIocConfig({
   lifetimeMarkers: {
     IScoped: "scoped",
   },
+  scopeProvided: ["viewerId"],
   discovery: {
     scanDirs: ["src/factories"],
     generatedDir: "src/generated",

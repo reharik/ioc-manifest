@@ -343,4 +343,126 @@ describe("resolveIocConfigPath", () => {
       });
     });
   });
+
+  describe("When scopeProvided is absent", () => {
+    it("should accept the config", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-scope-provided-absent-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" } };`,
+      );
+      const loaded = await loadIocConfig(cfg);
+      assert.equal(loaded.scopeProvided, undefined);
+    });
+  });
+
+  describe("When scopeProvided is a valid string array in library mode", () => {
+    it("should accept the config", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-scope-provided-lib-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default {
+          discovery: { scanDirs: "src" },
+          scopeProvided: ["viewerId", "requestId"],
+        };`,
+      );
+      const loaded = await loadIocConfig(cfg);
+      assert.deepEqual(loaded.scopeProvided, ["viewerId", "requestId"]);
+    });
+  });
+
+  describe("When scopeProvided is a valid string array in app mode", () => {
+    it("should accept the config", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-scope-provided-app-"));
+      writeFileSync(
+        path.join(root, "package.json"),
+        JSON.stringify({ name: "@test/app" }),
+      );
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default {
+          discovery: { scanDirs: "src" },
+          composedManifests: ["@pkg/a"],
+          scopeProvided: ["viewerId"],
+        };`,
+      );
+      const loaded = await loadIocConfig(cfg);
+      assert.deepEqual(loaded.scopeProvided, ["viewerId"]);
+    });
+  });
+
+  describe("When scopeProvided is not an array", () => {
+    it("should reject the field", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-scope-provided-not-array-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default {
+          discovery: { scanDirs: "src" },
+          scopeProvided: { viewerId: true },
+        };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /scopeProvided must be an array when set/,
+      );
+    });
+  });
+
+  describe("When scopeProvided contains an empty string", () => {
+    it("should reject the entry", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-scope-provided-empty-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default {
+          discovery: { scanDirs: "src" },
+          scopeProvided: ["viewerId", ""],
+        };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /scopeProvided\[1\] must be a non-empty string/,
+      );
+    });
+  });
+
+  describe("When scopeProvided contains a non-string element", () => {
+    it("should reject the entry", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-scope-provided-non-string-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default {
+          discovery: { scanDirs: "src" },
+          scopeProvided: ["viewerId", 1],
+        };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /scopeProvided\[1\] must be a non-empty string/,
+      );
+    });
+  });
+
+  describe("When scopeProvided contains a duplicate key", () => {
+    it("should reject the field naming the repeated key", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-scope-provided-dup-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default {
+          discovery: { scanDirs: "src" },
+          scopeProvided: ["viewerId", "requestId", "viewerId"],
+        };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /scopeProvided contains duplicate entry "viewerId"/,
+      );
+    });
+  });
 });

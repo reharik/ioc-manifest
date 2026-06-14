@@ -657,9 +657,20 @@ Re-run \`npm run gen:manifest\` after changing factories or IoC config.
       ? `\n\nexport interface IocExternals {\n${externalsLines.join("\n")}\n}`
       : `\n\nexport interface IocExternals {}`;
 
+  const scopeProvidedEntries = demandSupply.entries.filter(
+    (e) => e.classification === "scope-provided",
+  );
+  const scopeProvidedLines = scopeProvidedEntries.map(
+    (e) => `  ${tsIdentifierOrQuoted(e.key)}: ${e.typeRef.typeName};`,
+  );
+  const scopeProvidedBlock =
+    scopeProvidedLines.length > 0
+      ? `\n\nexport interface IocScopeProvided {\n${scopeProvidedLines.join("\n")}\n}`
+      : `\n\nexport interface IocScopeProvided {}`;
+
   return `${header}${importLines.length > 0 ? importLines.join("\n") + "\n\n" : ""}export interface IocGeneratedCradle {
 ${propertyLines.join("\n")}
-}${externalsBlock}
+}${externalsBlock}${scopeProvidedBlock}
 `;
 };
 

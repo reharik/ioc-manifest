@@ -136,6 +136,7 @@ export type AnalyzeDemandSupplyOptions = FactoryDiscoveryPaths & {
   program: ts.Program;
   projectRoot: string;
   groupsManifest?: IocGroupsManifest;
+  scopeProvided?: readonly string[];
 };
 
 /**
@@ -146,10 +147,11 @@ export const analyzeDemandSupply = (
   factories: readonly DiscoveredFactory[],
   options: AnalyzeDemandSupplyOptions,
 ): DemandSupplyAnalysisResult => {
-  const { program, projectRoot, scanDirs, generatedDir, groupsManifest } =
+  const { program, projectRoot, scanDirs, generatedDir, groupsManifest, scopeProvided } =
     options;
   const checker = program.getTypeChecker();
   const localSupplierKeys = collectLocalSupplierKeys(factories, groupsManifest);
+  const scopeProvidedSet = new Set(scopeProvided ?? []);
 
   const sourceFileByPath = new Map<string, ts.SourceFile>();
   for (const sf of program.getSourceFiles()) {
@@ -287,13 +289,23 @@ export const analyzeDemandSupply = (
     }
   }
 
-  const entries = Array.from(cradleMap.values()).sort((a, b) =>
+  const rawEntries = Array.from(cradleMap.values()).sort((a, b) =>
     a.key.localeCompare(b.key),
+  );
+
+  const entries = rawEntries.map((entry) =>
+    entry.classification === "external" && scopeProvidedSet.has(entry.key)
+      ? { ...entry, classification: "scope-provided" as const }
+      : entry,
   );
 
   const externalKeys = entries
     .filter((e) => e.classification === "external")
     .map((e) => e.key);
 
-  return { entries, externalKeys };
+  const scopeProvidedKeys = entries
+    .filter((e) => e.classification === "scope-provided")
+    .map((e) => e.key);
+
+  return { entries, externalKeys, scopeProvidedKeys };
 };

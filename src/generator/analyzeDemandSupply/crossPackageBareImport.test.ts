@@ -228,6 +228,7 @@ describe("cross-package bare import recovery", () => {
                 },
               ],
               externalKeys: ["mediaStorage"],
+              scopeProvidedKeys: [],
             },
             registryTypesBuildContext: {
               program,

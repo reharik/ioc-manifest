@@ -46,6 +46,7 @@ import {
   resolveComposedPackageSpecs,
 } from "./writeComposedManifest.js";
 import { resolveLifetimeMarkersForFactories } from "./resolveLifetimeMarkers.js";
+import { validateScopeProvidedAtCodegen } from "./validateScopeProvidedAtCodegen.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../../package.json") as { name?: unknown };
@@ -187,7 +188,10 @@ export const generateManifest = async (
     scanDirs,
     generatedDir,
     groupsManifest: groupResult?.manifest,
+    scopeProvided: config?.scopeProvided,
   });
+
+  validateScopeProvidedAtCodegen(config?.scopeProvided ?? [], demandSupply);
 
   const writeOptions = {
     demandSupply,

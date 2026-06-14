@@ -31,21 +31,21 @@ const makeProgram = (extraRoots: string[] = []): ts.Program => {
 const generatedDir = path.join(projectRoot, "generated");
 const scanDirs = [{ absPath: fixtureDir }];
 
+const userServiceFactory = {
+  contractName: "UserService",
+  contractTypeRelImport: "../test-fixtures/demand-supply/contracts.js",
+  implementationName: "userService",
+  exportName: "buildUserService",
+  registrationKey: "userService",
+  modulePath: "factories.ts",
+  relImport: "./factories.js",
+} as const;
+
 describe("analyzeDemandSupply", () => {
   describe("When factories demand external keys", () => {
     it("should classify unsatisfied demands as external", () => {
       const program = makeProgram();
-      const factories = [
-        {
-          contractName: "UserService",
-          contractTypeRelImport: "../test-fixtures/demand-supply/contracts.js",
-          implementationName: "userService",
-          exportName: "buildUserService",
-          registrationKey: "userService",
-          modulePath: "factories.ts",
-          relImport: "./factories.js",
-        },
-      ] as const;
+      const factories = [userServiceFactory] as const;
 
       const result = analyzeDemandSupply(factories, {
         program,
@@ -58,6 +58,7 @@ describe("analyzeDemandSupply", () => {
       assert.ok(result.externalKeys.includes("logger"));
       const database = result.entries.find((e) => e.key === "database");
       assert.strictEqual(database?.classification, "external");
+      assert.deepStrictEqual(result.scopeProvidedKeys, []);
     });
   });
 
@@ -249,6 +250,117 @@ describe("analyzeDemandSupply", () => {
           return true;
         },
       );
+    });
+  });
+
+  describe("When scopeProvided is omitted or empty", () => {
+    it("should leave external keys unchanged and return an empty scopeProvidedKeys", () => {
+      const program = makeProgram();
+      const factories = [userServiceFactory] as const;
+
+      const without = analyzeDemandSupply(factories, {
+        program,
+        projectRoot,
+        scanDirs,
+        generatedDir,
+      });
+      const withEmpty = analyzeDemandSupply(factories, {
+        program,
+        projectRoot,
+        scanDirs,
+        generatedDir,
+        scopeProvided: [],
+      });
+
+      assert.deepStrictEqual(without.externalKeys, ["database", "logger"]);
+      assert.deepStrictEqual(without.scopeProvidedKeys, []);
+      assert.deepStrictEqual(withEmpty.entries, without.entries);
+      assert.deepStrictEqual(withEmpty.externalKeys, without.externalKeys);
+      assert.deepStrictEqual(withEmpty.scopeProvidedKeys, []);
+    });
+  });
+
+  describe("When a demanded external key is listed in scopeProvided", () => {
+    it("should reclassify it as scope-provided and omit it from externalKeys", () => {
+      const program = makeProgram();
+      const factories = [userServiceFactory] as const;
+
+      const result = analyzeDemandSupply(factories, {
+        program,
+        projectRoot,
+        scanDirs,
+        generatedDir,
+        scopeProvided: ["database"],
+      });
+
+      const database = result.entries.find((e) => e.key === "database");
+      assert.strictEqual(database?.classification, "scope-provided");
+      assert.strictEqual(database?.typeRef.typeName, "Database");
+      assert.ok(result.scopeProvidedKeys.includes("database"));
+      assert.ok(!result.externalKeys.includes("database"));
+      assert.ok(result.externalKeys.includes("logger"));
+      assert.ok(!result.scopeProvidedKeys.includes("logger"));
+    });
+  });
+
+  describe("When a demanded external key is not listed in scopeProvided", () => {
+    it("should keep it external and omit it from scopeProvidedKeys", () => {
+      const program = makeProgram();
+      const factories = [userServiceFactory] as const;
+
+      const result = analyzeDemandSupply(factories, {
+        program,
+        projectRoot,
+        scanDirs,
+        generatedDir,
+        scopeProvided: ["database"],
+      });
+
+      const logger = result.entries.find((e) => e.key === "logger");
+      assert.strictEqual(logger?.classification, "external");
+      assert.ok(result.externalKeys.includes("logger"));
+      assert.ok(!result.scopeProvidedKeys.includes("logger"));
+    });
+  });
+
+  describe("When a locally built key is also listed in scopeProvided", () => {
+    it("should keep the key local and omit it from both key lists", () => {
+      const program = makeProgram();
+      const factories = [
+        {
+          contractName: "AlbumRepository",
+          contractTypeRelImport: "../test-fixtures/demand-supply/contracts.js",
+          implementationName: "albumRepository",
+          exportName: "buildAlbumRepository",
+          registrationKey: "albumRepository",
+          modulePath: "factories.ts",
+          relImport: "./factories.js",
+        },
+        {
+          contractName: "AlbumService",
+          contractTypeRelImport: "../test-fixtures/demand-supply/contracts.js",
+          implementationName: "albumService",
+          exportName: "buildAlbumService",
+          registrationKey: "albumService",
+          modulePath: "factories.ts",
+          relImport: "./factories.js",
+        },
+      ] as const;
+
+      const result = analyzeDemandSupply(factories, {
+        program,
+        projectRoot,
+        scanDirs,
+        generatedDir,
+        scopeProvided: ["albumRepository"],
+      });
+
+      const albumRepository = result.entries.find(
+        (e) => e.key === "albumRepository",
+      );
+      assert.strictEqual(albumRepository?.classification, "local");
+      assert.ok(!result.externalKeys.includes("albumRepository"));
+      assert.ok(!result.scopeProvidedKeys.includes("albumRepository"));
     });
   });
 
