@@ -7,6 +7,7 @@ import type {
   IocModuleNamespace,
 } from "ioc-manifest";
 
+import * as ioc_buildConfigProbe from "../factories/buildConfigProbe.js";
 import * as ioc_buildRequestTracingLogger from "../factories/buildRequestTracingLogger.js";
 import * as ioc_buildServiceLogger from "../factories/buildServiceLogger.js";
 import * as ioc_buildUploadService from "../factories/buildUploadService.js";
@@ -30,6 +31,7 @@ export const iocManifest = {
   manifestSchemaVersion: 2,
 
   moduleImports: [
+    ioc_buildConfigProbe,
     ioc_buildRequestTracingLogger,
     ioc_buildServiceLogger,
     ioc_buildUploadService,
@@ -37,6 +39,20 @@ export const iocManifest = {
   ] as const satisfies readonly IocModuleNamespace[],
 
   contracts: {
+    ConfigProbe: {
+      configProbe: {
+        exportName: "buildConfigProbe",
+        registrationKey: "configProbe",
+        modulePath: "buildConfigProbe.ts",
+        relImport: "../factories/buildConfigProbe.js",
+        contractName: "ConfigProbe",
+        implementationName: "configProbe",
+        lifetime: "singleton",
+        moduleIndex: 0,
+        default: true,
+        discoveredBy: "naming",
+      },
+    },
     Logger: {
       serviceLogger: {
         exportName: "buildServiceLogger",
@@ -46,7 +62,7 @@ export const iocManifest = {
         contractName: "Logger",
         implementationName: "serviceLogger",
         lifetime: "singleton",
-        moduleIndex: 1,
+        moduleIndex: 2,
         default: true,
         discoveredBy: "naming",
         dependencyContractNames: ["Logger"],
@@ -61,7 +77,7 @@ export const iocManifest = {
         contractName: "RequestTracingLogger",
         implementationName: "requestTracingLogger",
         lifetime: "scoped",
-        moduleIndex: 0,
+        moduleIndex: 1,
         default: true,
         discoveredBy: "naming",
       },
@@ -75,7 +91,7 @@ export const iocManifest = {
         contractName: "UploadService",
         implementationName: "uploadService",
         lifetime: "singleton",
-        moduleIndex: 2,
+        moduleIndex: 3,
         default: true,
         discoveredBy: "naming",
         dependencyContractNames: ["Logger"],
@@ -90,7 +106,7 @@ export const iocManifest = {
         contractName: "ViewerReadService",
         implementationName: "viewerReadService",
         lifetime: "singleton",
-        moduleIndex: 3,
+        moduleIndex: 4,
         default: true,
         discoveredBy: "naming",
       },

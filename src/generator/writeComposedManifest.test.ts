@@ -52,7 +52,7 @@ describe("buildComposedManifestSource", () => {
       );
       assert.match(
         source,
-        /type _MediaCore_config = MediaCoreExternals\["config"\] extends _MediaCoreExternalsPick\["config"\] \? true : false;/,
+        /type _MediaCore_config = _MediaCoreExternalsPick\["config"\] extends MediaCoreExternals\["config"\] \? true : false;/,
       );
       assert.match(
         source,
@@ -60,11 +60,11 @@ describe("buildComposedManifestSource", () => {
       );
       assert.match(
         source,
-        /type _MediaCore_database = MediaCoreExternals\["database"\] extends _MediaCoreExternalsPick\["database"\] \? true : false;/,
+        /type _MediaCore_database = _MediaCoreExternalsPick\["database"\] extends MediaCoreExternals\["database"\] \? true : false;/,
       );
       assert.match(
         source,
-        /type _Infra_logger = InfraExternals\["logger"\] extends _InfraExternalsPick\["logger"\] \? true : false;/,
+        /type _Infra_logger = _InfraExternalsPick\["logger"\] extends InfraExternals\["logger"\] \? true : false;/,
       );
       assert.match(source, /type _Infra_loggerAssert = _IocExpect<_Infra_logger>/);
       assert.match(source, /defaultImplementation: "mockMediaStorage"/);

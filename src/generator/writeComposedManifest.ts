@@ -118,7 +118,7 @@ const buildExternalsAssertionLines = (
       const keyAccess = tsPropertyAccessKey(externalKey);
       const satisfied = `_${cap}_${suffix}`;
       lines.push(
-        `type ${satisfied} = ${cap}Externals[${keyAccess}] extends ${pickAlias}[${keyAccess}] ? true : false;`,
+        `type ${satisfied} = ${pickAlias}[${keyAccess}] extends ${cap}Externals[${keyAccess}] ? true : false;`,
         `type ${satisfied}Assert = _IocExpect<${satisfied}>;`,
       );
     }

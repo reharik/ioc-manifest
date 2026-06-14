@@ -23,16 +23,23 @@ export type AppCradle = LocalCradle & LibStorageCradle & LibServicesCradle;
 
 // Compile-time externals satisfaction assertions
 type _IocExpect<T extends true> = T;
-type _LibStorageExternalsSatisfied =
-  LibStorageExternals extends Pick<AppCradle, keyof LibStorageExternals>
+// If any assertion below is `false`, run `ioc validate` for a detailed per-key explanation.
+type _LibServicesExternalsPick = Pick<AppCradle, keyof LibServicesExternals>;
+type _LibServices_config =
+  _LibServicesExternalsPick["config"] extends LibServicesExternals["config"]
     ? true
     : false;
-type _LibStorageExternalsAssert = _IocExpect<_LibStorageExternalsSatisfied>;
-type _LibServicesExternalsSatisfied =
-  LibServicesExternals extends Pick<AppCradle, keyof LibServicesExternals>
+type _LibServices_configAssert = _IocExpect<_LibServices_config>;
+type _LibServices_logger =
+  _LibServicesExternalsPick["logger"] extends LibServicesExternals["logger"]
     ? true
     : false;
-type _LibServicesExternalsAssert = _IocExpect<_LibServicesExternalsSatisfied>;
+type _LibServices_loggerAssert = _IocExpect<_LibServices_logger>;
+type _LibServices_storage =
+  _LibServicesExternalsPick["storage"] extends LibServicesExternals["storage"]
+    ? true
+    : false;
+type _LibServices_storageAssert = _IocExpect<_LibServices_storage>;
 
 export const composedRegistrationOverrides = {
   composedPackageNames: ["@example/lib-storage", "@example/lib-services"],

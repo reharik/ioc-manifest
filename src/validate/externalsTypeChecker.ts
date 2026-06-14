@@ -107,13 +107,13 @@ export const getSupplierPropertyTypes = (
     )
     .filter((type): type is ts.Type => type !== undefined);
 
-export const isDemandedAssignableToSupplierTypes = (
+export const isSuppliedAssignableToDemandedTypes = (
   checker: ts.TypeChecker,
   demanded: ts.Type,
   supplierTypes: readonly ts.Type[],
 ): boolean =>
   supplierTypes.every((supplied) =>
-    checker.isTypeAssignableTo(demanded, supplied),
+    checker.isTypeAssignableTo(supplied, demanded),
   );
 
 export const formatSupplierTypes = (
@@ -137,7 +137,7 @@ export const findFirstMismatchedPropertyAcrossSuppliers = (
   supplierTypes: readonly ts.Type[],
 ): string | undefined => {
   for (const supplied of supplierTypes) {
-    if (!checker.isTypeAssignableTo(demanded, supplied)) {
+    if (!checker.isTypeAssignableTo(supplied, demanded)) {
       return findFirstMismatchedProperty(checker, supplied, demanded);
     }
   }
@@ -156,7 +156,7 @@ export const findFirstMismatchedProperty = (
     if (
       demandedProp !== undefined &&
       (suppliedProp === undefined ||
-        !checker.isTypeAssignableTo(demandedProp, suppliedProp))
+        !checker.isTypeAssignableTo(suppliedProp, demandedProp))
     ) {
       return propName;
     }

@@ -7,7 +7,7 @@ import {
   formatSupplierTypes,
   getInterfacePropertyType,
   getSupplierPropertyTypes,
-  isDemandedAssignableToSupplierTypes,
+  isSuppliedAssignableToDemandedTypes,
   type ValidateTypeCheckerContext,
 } from "../externalsTypeChecker.js";
 
@@ -136,7 +136,7 @@ const isExternalKeySatisfied = (
     return undefined;
   }
 
-  return isDemandedAssignableToSupplierTypes(
+  return isSuppliedAssignableToDemandedTypes(
     ctx!.checker,
     demandedType,
     supplierTypes,

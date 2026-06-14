@@ -61,7 +61,7 @@ const buildPerKeyAssertions = (
     ...keys.flatMap((key) => {
       const suffix = key.replace(/[^\w$]/g, "_");
       return [
-        `type _${cap}_${suffix} = ${externalsName}[${JSON.stringify(key)}] extends ${pickAlias}[${JSON.stringify(key)}] ? true : false;`,
+        `type _${cap}_${suffix} = ${pickAlias}[${JSON.stringify(key)}] extends ${externalsName}[${JSON.stringify(key)}] ? true : false;`,
         `type _${cap}_${suffix}Assert = _IocExpect<_${cap}_${suffix}>;`,
       ];
     }),
@@ -70,8 +70,76 @@ const buildPerKeyAssertions = (
 };
 
 const buildBulkAssertion = (externalsName: string): string =>
-  `type _${externalsName}Bulk = ${externalsName} extends Pick<AppCradle, keyof ${externalsName}> ? true : false;
+  `type _${externalsName}Bulk = Pick<AppCradle, keyof ${externalsName}> extends ${externalsName} ? true : false;
 type _${externalsName}BulkAssert = _IocExpect<_${externalsName}Bulk>;`;
+
+type ExternalsScenario = {
+  readonly name: string;
+  readonly appCradle: string;
+  readonly externals: string;
+  readonly keys: readonly string[];
+  readonly expected: "pass" | "fail";
+};
+
+const satisfactionMatrix: readonly ExternalsScenario[] = [
+  {
+    name: "exact Logger match",
+    appCradle: "{ logger: Logger }",
+    externals: "{ logger: Logger }",
+    keys: ["logger"],
+    expected: "pass",
+  },
+  {
+    name: "supplied superset satisfies demanded slice",
+    appCradle: "{ config: { a: string; b: number } }",
+    externals: "{ config: { a: string } }",
+    keys: ["config"],
+    expected: "pass",
+  },
+  {
+    name: "under-supplied object rejects",
+    appCradle: "{ config: { a: string } }",
+    externals: "{ config: { a: string; b: number } }",
+    keys: ["config"],
+    expected: "fail",
+  },
+  {
+    name: "optional demanded key accepts required supply",
+    appCradle: "{ item: { x: string } }",
+    externals: "{ item: { x?: string } }",
+    keys: ["item"],
+    expected: "pass",
+  },
+  {
+    name: "required demanded key rejects optional supply",
+    appCradle: "{ item: { x?: string } }",
+    externals: "{ item: { x: string } }",
+    keys: ["item"],
+    expected: "fail",
+  },
+  {
+    name: "narrower union supply satisfies wider string demand",
+    appCradle: "{ level: 'a' | 'b' }",
+    externals: "{ level: string }",
+    keys: ["level"],
+    expected: "pass",
+  },
+  {
+    name: "wider string supply rejects narrower union demand",
+    appCradle: "{ level: string }",
+    externals: "{ level: 'a' | 'b' }",
+    keys: ["level"],
+    expected: "fail",
+  },
+  {
+    name: "nested config slice with extra supplied fields",
+    appCradle:
+      "{ config: { logLevel: 'a' | 'b'; log?: string; nodeEnv: string; port: number } }",
+    externals: "{ config: { logLevel: 'a' | 'b'; log?: string } }",
+    keys: ["config"],
+    expected: "pass",
+  },
+];
 
 describe("composed externals satisfaction assertion", () => {
   describe("When AppCradle does not supply a composed package external", () => {
@@ -87,62 +155,66 @@ ${buildPerKeyAssertions("Lib", "LibExternals", ["database"])}
     });
   });
 
-  describe("When optional external keys are declared", () => {
-    const scenarios = [
-      {
-        name: "optional top-level key omitted from AppCradle",
-        appCradle: "{ config: { logLevel: string } }",
-        externals:
-          "{ config: { logLevel: string }; logJsonFilePath?: string }",
-        keys: ["config", "logJsonFilePath"] as const,
-      },
-      {
-        name: "optional top-level key supplied with matching type",
-        appCradle:
-          "{ config: { logLevel: string }; logJsonFilePath?: string }",
-        externals:
-          "{ config: { logLevel: string }; logJsonFilePath?: string }",
-        keys: ["config", "logJsonFilePath"] as const,
-      },
-      {
-        name: "nested optional field with union mismatch on config",
-        appCradle: "{ config: { logLevel: 'error' | 'warn' } }",
-        externals:
-          "{ config: { logLevel: string; logJsonFilePath?: string } }",
-        keys: ["config"] as const,
-      },
-      {
-        name: "optional top-level key supplied with wrong type",
-        appCradle: "{ config: { logLevel: string }; logJsonFilePath: number }",
-        externals:
-          "{ config: { logLevel: string }; logJsonFilePath?: string }",
-        keys: ["config", "logJsonFilePath"] as const,
-      },
-    ] as const;
+  for (const scenario of satisfactionMatrix) {
+    describe(`When ${scenario.name}`, () => {
+      it(`should ${scenario.expected} per-key assertions (supplied extends demanded)`, () => {
+        const root = buildFixtureRoot();
+        const header = `export type Logger = { log: (msg: string) => void };
+export type AppCradle = ${scenario.appCradle};
+export interface PkgExternals ${scenario.externals}
+type _IocExpect<T extends true> = T;`;
+        const perKeySource = `${header}
+${buildPerKeyAssertions("Pkg", "PkgExternals", scenario.keys)}`;
 
-    for (const scenario of scenarios) {
-      describe(`When ${scenario.name}`, () => {
-        it("should match bulk pass/fail with per-key Pick-indexed assertions", () => {
-          const root = buildFixtureRoot();
-          const header = `export type AppCradle = ${scenario.appCradle};
+        assert.equal(
+          runTsc(root, perKeySource),
+          scenario.expected,
+          `per-key assertion for ${scenario.name}`,
+        );
+      });
+
+      it(`should ${scenario.expected} corrected bulk Pick extends Externals`, () => {
+        const root = buildFixtureRoot();
+        const header = `export type Logger = { log: (msg: string) => void };
+export type AppCradle = ${scenario.appCradle};
+export interface PkgExternals ${scenario.externals}
+type _IocExpect<T extends true> = T;`;
+        const bulkSource = `${header}
+${buildBulkAssertion("PkgExternals")}`;
+
+        assert.equal(
+          runTsc(root, bulkSource),
+          scenario.expected,
+          `bulk assertion for ${scenario.name}`,
+        );
+      });
+
+      it("should agree between per-key and corrected bulk assertions", () => {
+        const root = buildFixtureRoot();
+        const header = `export type Logger = { log: (msg: string) => void };
+export type AppCradle = ${scenario.appCradle};
 export interface PkgExternals ${scenario.externals}
 type _IocExpect<T extends true> = T;`;
 
-          const bulkSource = `${header}
+        const bulkSource = `${header}
 ${buildBulkAssertion("PkgExternals")}`;
-          const perKeySource = `${header}
+        const perKeySource = `${header}
 ${buildPerKeyAssertions("Pkg", "PkgExternals", scenario.keys)}`;
 
-          const bulkResult = runTsc(root, bulkSource);
-          const perKeyResult = runTsc(root, perKeySource);
+        const bulkResult = runTsc(root, bulkSource);
+        const perKeyResult = runTsc(root, perKeySource);
 
-          assert.equal(
-            perKeyResult,
-            bulkResult,
-            `expected per-key ${perKeyResult} to match bulk ${bulkResult} for ${scenario.name}`,
-          );
-        });
+        assert.equal(
+          perKeyResult,
+          bulkResult,
+          `expected per-key ${perKeyResult} to match bulk ${bulkResult} for ${scenario.name}`,
+        );
+        assert.equal(
+          perKeyResult,
+          scenario.expected,
+          `expected ${scenario.expected} for ${scenario.name}`,
+        );
       });
-    }
-  });
+    });
+  }
 });

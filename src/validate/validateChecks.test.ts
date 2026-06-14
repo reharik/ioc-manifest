@@ -99,9 +99,9 @@ describe("validate checks", () => {
       });
     });
 
-    describe("When a supplied external key has an incompatible type", () => {
-      it("should report a type mismatch with demanded and supplied types", () => {
-        const root = mkdtempSync(path.join(tmpdir(), "ioc-validate-ext-"));
+    describe("When supplied type is a superset of demanded external type", () => {
+      it("should report no issues (supplied extends demanded)", () => {
+        const root = mkdtempSync(path.join(tmpdir(), "ioc-validate-ext-superset-"));
         writeFileSync(
           path.join(root, "tsconfig.json"),
           JSON.stringify(
@@ -148,6 +148,62 @@ describe("validate checks", () => {
           }),
         ]);
 
+        assert.equal(
+          checkExternalsSatisfaction({ ...ctx, projectRoot: root }).length,
+          0,
+        );
+      });
+    });
+
+    describe("When a supplied external key has an incompatible type", () => {
+      it("should report a type mismatch with demanded and supplied types", () => {
+        const root = mkdtempSync(path.join(tmpdir(), "ioc-validate-ext-"));
+        writeFileSync(
+          path.join(root, "tsconfig.json"),
+          JSON.stringify(
+            {
+              compilerOptions: {
+                strict: true,
+                noEmit: true,
+                target: "ES2022",
+                module: "ES2022",
+              },
+            },
+            null,
+            2,
+          ),
+        );
+        const localTypesPath = path.join(root, "local.types.ts");
+        const libTypesPath = path.join(root, "lib.types.ts");
+        writeFileSync(
+          localTypesPath,
+          typesSource(`config: { logLevel: string }`, ""),
+        );
+        writeFileSync(
+          libTypesPath,
+          typesSource("", `config: { logLevel: "error" | "warn" | "info" }`),
+        );
+
+        const ctx = validateContext([
+          parsedSlice({
+            packageLabel: "@apps/api",
+            sourceId: "local",
+            typesPath: localTypesPath,
+            cradleKeys: new Set(["config"]),
+            cradleTypes: {
+              config: { typeText: "{ logLevel: string }" },
+            },
+          }),
+          parsedSlice({
+            packageLabel: "@packages/infrastructure",
+            sourceId: "@packages/infrastructure",
+            typesPath: libTypesPath,
+            externals: {
+              config: { typeText: '{ logLevel: "error" | "warn" | "info" }' },
+            },
+          }),
+        ]);
+
         const issues = checkExternalsSatisfaction({
           ...ctx,
           projectRoot: root,
@@ -157,6 +213,128 @@ describe("validate checks", () => {
         assert.match(issues[0]!.details.join("\n"), /incompatible/);
         assert.match(issues[0]!.details.join("\n"), /demanded:/);
         assert.match(issues[0]!.details.join("\n"), /supplied:/);
+      });
+    });
+
+    describe("When supplied config is a nested superset of demanded slice", () => {
+      it("should report no issues", () => {
+        const root = mkdtempSync(
+          path.join(tmpdir(), "ioc-validate-ext-nested-slice-"),
+        );
+        writeFileSync(
+          path.join(root, "tsconfig.json"),
+          JSON.stringify(
+            {
+              compilerOptions: {
+                strict: true,
+                noEmit: true,
+                target: "ES2022",
+                module: "ES2022",
+              },
+            },
+            null,
+            2,
+          ),
+        );
+        const localTypesPath = path.join(root, "local.types.ts");
+        const libTypesPath = path.join(root, "lib.types.ts");
+        writeFileSync(
+          localTypesPath,
+          typesSource(
+            `config: { logLevel: "a" | "b"; log?: string; nodeEnv: string }`,
+            "",
+          ),
+        );
+        writeFileSync(
+          libTypesPath,
+          typesSource("", `config: { logLevel: "a" | "b"; log?: string }`),
+        );
+
+        const ctx = validateContext([
+          parsedSlice({
+            packageLabel: "@apps/api",
+            sourceId: "local",
+            typesPath: localTypesPath,
+            cradleKeys: new Set(["config"]),
+            cradleTypes: {
+              config: {
+                typeText:
+                  '{ logLevel: "a" | "b"; log?: string; nodeEnv: string }',
+              },
+            },
+          }),
+          parsedSlice({
+            packageLabel: "@packages/media-core",
+            sourceId: "@packages/media-core",
+            typesPath: libTypesPath,
+            externals: {
+              config: { typeText: '{ logLevel: "a" | "b"; log?: string }' },
+            },
+          }),
+        ]);
+
+        assert.equal(
+          checkExternalsSatisfaction({ ...ctx, projectRoot: root }).length,
+          0,
+        );
+      });
+    });
+
+    describe("When supplied object is missing demanded fields", () => {
+      it("should report a type mismatch", () => {
+        const root = mkdtempSync(path.join(tmpdir(), "ioc-validate-ext-under-"));
+        writeFileSync(
+          path.join(root, "tsconfig.json"),
+          JSON.stringify(
+            {
+              compilerOptions: {
+                strict: true,
+                noEmit: true,
+                target: "ES2022",
+                module: "ES2022",
+              },
+            },
+            null,
+            2,
+          ),
+        );
+        const localTypesPath = path.join(root, "local.types.ts");
+        const libTypesPath = path.join(root, "lib.types.ts");
+        writeFileSync(
+          localTypesPath,
+          typesSource(`config: { a: string }`, ""),
+        );
+        writeFileSync(
+          libTypesPath,
+          typesSource("", `config: { a: string; b: number }`),
+        );
+
+        const ctx = validateContext([
+          parsedSlice({
+            packageLabel: "@apps/api",
+            sourceId: "local",
+            typesPath: localTypesPath,
+            cradleKeys: new Set(["config"]),
+            cradleTypes: {
+              config: { typeText: "{ a: string }" },
+            },
+          }),
+          parsedSlice({
+            packageLabel: "@packages/lib",
+            sourceId: "@packages/lib",
+            typesPath: libTypesPath,
+            externals: {
+              config: { typeText: "{ a: string; b: number }" },
+            },
+          }),
+        ]);
+
+        const issues = checkExternalsSatisfaction({
+          ...ctx,
+          projectRoot: root,
+        });
+        assert.equal(issues.length, 1);
+        assert.match(issues[0]!.summary, /config/);
       });
     });
 

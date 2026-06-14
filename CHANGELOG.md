@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-06-14
+
+### Fixed
+
+- **Composed externals satisfaction was checked in the wrong direction.** The generated `ioc-composed.ts` assertions (and the `ioc validate` type check) compared the _demanded_ external type against the _supplied_ type backwards — effectively requiring the demanded type to contain everything the supplier provides. This wrongly **rejected valid subset externals** (a package demanding a minimal slice of a type the composition supplies in full) and wrongly **accepted under-supply** (a package demanding more than what's supplied). Satisfaction now correctly requires the supplied type (`AppCradle[K]`) to be assignable to the demanded type (`Externals[K]`) — the supplier must provide _at least_ what's demanded. Regenerate (`ioc generate`) after upgrading so composed files carry the corrected assertions.
+
 ## [1.4.0] - 2026-06-14
 
 ### Added
