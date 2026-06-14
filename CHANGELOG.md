@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-06-14
+
+### Added
+
+- **Per-key composed externals assertions.** The generated `ioc-composed.ts` now emits one type assertion per external key (`_<Pkg>_<key>Assert`) instead of a single bulk assertion per package. When an externals check fails, the `tsc` error (`TS2344`) names the specific failing key — no more reverse-engineering which dependency broke from a package-level assertion. The per-key assertions preserve the exact pass/fail semantics of the previous bulk `Pick<AppCradle, keyof Externals>` check, including for object-typed externals with optional or union members (e.g. a `config` external whose value has a `logLevel` union and an optional `logJsonFilePath`).
+- **Type-mismatch diagnostics in `ioc validate`.** When a composed external is supplied but its type doesn't match what the consuming package demands, `validate` now reports the key, the demanding package, the supplying source, and both type texts — plus the first mismatched property when a TypeScript checker is available. Previously a type mismatch surfaced only as an opaque compile-time assertion failure. The generated assertions carry a comment pointing at `ioc validate` for this explanation.
+
+### Changed
+
+- **`validate` distinguishes two externals failure modes:** a key supplied by no manifest ("nothing builds it") versus a key supplied but type-incompatible. The messages differ so the cause is unambiguous.
+
+### Notes
+
+- When `validate` cannot construct a TypeScript checker (e.g. no resolvable `tsconfig`), supplied keys are reported with a warning that type compatibility was not verified — a passing `validate` no longer implies type satisfaction in that case. `tsc` remains authoritative.
+- Generated-output change: regenerate (`ioc generate`) after upgrading so composed files carry the per-key assertions. Pass/fail behavior is unchanged from 1.3.x for any existing composition — only the granularity and error messaging improve.
+
 ## [1.3.0] - 2026-06-14
 
 ### Added

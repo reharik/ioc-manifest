@@ -12,6 +12,7 @@ import type { ComposedRegistrationOverrides } from "../runtime/composedOverrides
 export type ComposedPackageSpec = {
   readonly packageName: string;
   readonly identifier: string;
+  readonly externalKeys: readonly string[];
 };
 
 export type WriteComposedManifestInput = {
@@ -83,20 +84,46 @@ const buildAppCradleType = (specs: readonly ComposedPackageSpec[]): string => {
   return parts.join(" & ");
 };
 
+const tsPropertyAccessKey = (key: string): string =>
+  /^[a-zA-Z_$][\w$]*$/.test(key) ? JSON.stringify(key) : JSON.stringify(key);
+
+const externalKeyToAssertionSuffix = (key: string): string => {
+  if (/^[a-zA-Z_$][\w$]*$/.test(key)) {
+    return key;
+  }
+  const sanitized = key.replace(/[^\w$]/g, "_");
+  return /^[0-9]/.test(sanitized) ? `_${sanitized}` : sanitized;
+};
+
 const buildExternalsAssertionLines = (
   specs: readonly ComposedPackageSpec[],
 ): string[] => {
   const appCradle = "AppCradle";
   const lines: string[] = ["type _IocExpect<T extends true> = T;"];
+
   for (const spec of specs) {
+    if (spec.externalKeys.length === 0) {
+      continue;
+    }
+
     const cap = capitalizeIdentifier(spec.identifier);
-    const satisfied = `_${cap}ExternalsSatisfied`;
+    const pickAlias = `_${cap}ExternalsPick`;
     lines.push(
-      `type ${satisfied} =`,
-      `  ${cap}Externals extends Pick<${appCradle}, keyof ${cap}Externals> ? true : false;`,
-      `type _${cap}ExternalsAssert = _IocExpect<${satisfied}>;`,
+      `// If any assertion below is \`false\`, run \`ioc validate\` for a detailed per-key explanation.`,
+      `type ${pickAlias} = Pick<${appCradle}, keyof ${cap}Externals>;`,
     );
+
+    for (const externalKey of spec.externalKeys) {
+      const suffix = externalKeyToAssertionSuffix(externalKey);
+      const keyAccess = tsPropertyAccessKey(externalKey);
+      const satisfied = `_${cap}_${suffix}`;
+      lines.push(
+        `type ${satisfied} = ${cap}Externals[${keyAccess}] extends ${pickAlias}[${keyAccess}] ? true : false;`,
+        `type ${satisfied}Assert = _IocExpect<${satisfied}>;`,
+      );
+    }
   }
+
   return lines;
 };
 
@@ -229,12 +256,14 @@ ${overridesBlock}
 `;
 };
 
+/** Package identifiers only — use {@link loadComposedPackageSpecs} when external keys are needed. */
 export const resolveComposedPackageSpecs = (
   composedManifests: readonly string[],
 ): ComposedPackageSpec[] =>
   composedManifests.map((packageName) => ({
     packageName,
     identifier: packageNameToIdentifier(packageName),
+    externalKeys: [],
   }));
 
 const replaceFileFromTemp = async (

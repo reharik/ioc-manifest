@@ -71,6 +71,7 @@ export const parsedSlice = (
   contracts: {},
   groupRoots: {},
   cradleKeys: new Set(),
+  cradleTypes: {},
   externals: {},
   ...partial,
 });

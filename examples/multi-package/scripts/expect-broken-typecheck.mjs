@@ -28,7 +28,7 @@ if (result.status === 0) {
 }
 
 const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
-if (!/LibServicesExternalsAssert|does not satisfy|logger/.test(output)) {
+if (!/LibServices_loggerAssert|does not satisfy|logger/.test(output)) {
   console.error(
     "[example] typecheck failed but not at the expected externals assertion:\n",
     output,

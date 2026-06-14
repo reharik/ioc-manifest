@@ -63,6 +63,9 @@ export type ParsedManifestSlice = {
   >;
   readonly groupRoots: Readonly<Record<string, ParsedGroupRoot>>;
   readonly cradleKeys: ReadonlySet<string>;
+  readonly cradleTypes: Readonly<
+    Record<string, { readonly typeText: string }>
+  >;
   readonly externals: Readonly<
     Record<string, { readonly typeText: string }>
   >;

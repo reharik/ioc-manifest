@@ -52,6 +52,11 @@ const loadSliceFromPaths = (
     externals[key] = { typeText };
   }
 
+  const cradleTypes: Record<string, { typeText: string }> = {};
+  for (const [key, typeText] of cradleProps) {
+    cradleTypes[key] = { typeText };
+  }
+
   return {
     packageLabel,
     sourceId,
@@ -61,6 +66,7 @@ const loadSliceFromPaths = (
     contracts: parsed.contracts,
     groupRoots: parsed.groupRoots,
     cradleKeys: new Set(cradleProps.keys()),
+    cradleTypes,
     externals,
   };
 };

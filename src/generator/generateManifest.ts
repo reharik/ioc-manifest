@@ -43,8 +43,8 @@ import { buildComposedRegistrationOverridesFromConfig } from "./buildComposedReg
 import {
   buildComposedManifestSource,
   removeComposedManifestIfPresent,
-  resolveComposedPackageSpecs,
 } from "./writeComposedManifest.js";
+import { loadComposedPackageSpecs } from "./loadComposedPackageExternalKeys.js";
 import { resolveLifetimeMarkersForFactories } from "./resolveLifetimeMarkers.js";
 import { validateScopeProvidedAtCodegen } from "./validateScopeProvidedAtCodegen.js";
 
@@ -235,8 +235,10 @@ export const generateManifest = async (
       configPath,
       tsconfigContext.customConditions,
     );
-    const composedPackages = resolveComposedPackageSpecs(
+    const composedPackages = loadComposedPackageSpecs(
+      resolvedProjectRoot,
       config.composedManifests!,
+      tsconfigContext.customConditions,
     );
     const composedOverrides =
       buildComposedRegistrationOverridesFromConfig(config);

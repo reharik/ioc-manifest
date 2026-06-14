@@ -11,7 +11,15 @@ describe("buildComposedManifestSource", () => {
       const specs = resolveComposedPackageSpecs([
         "@test/media-core",
         "@test/infra",
-      ]);
+      ]).map((spec) => {
+        if (spec.identifier === "mediaCore") {
+          return { ...spec, externalKeys: ["config", "database"] };
+        }
+        if (spec.identifier === "infra") {
+          return { ...spec, externalKeys: ["logger"] };
+        }
+        return spec;
+      });
       const source = buildComposedManifestSource({
         generatedDir: "/tmp/generated",
         composedPackages: specs,
@@ -25,16 +33,40 @@ describe("buildComposedManifestSource", () => {
         },
       });
 
-      assert.match(source, /export const composedManifests = \[localManifest, mediaCoreManifest, infraManifest\] as const;/);
-      assert.match(source, /export type AppCradle = LocalCradle & MediaCoreCradle & InfraCradle;/);
-      assert.match(source, /type _IocExpect<T extends true> = T;/);
-      assert.match(source, /type _MediaCoreExternalsSatisfied/);
       assert.match(
         source,
-        /MediaCoreExternals extends Pick<AppCradle, keyof MediaCoreExternals> \? true : false;/,
+        /export const composedManifests = \[localManifest, mediaCoreManifest, infraManifest\] as const;/,
       );
-      assert.match(source, /type _MediaCoreExternalsAssert = _IocExpect<_MediaCoreExternalsSatisfied>/);
-      assert.match(source, /type _InfraExternalsAssert = _IocExpect/);
+      assert.match(
+        source,
+        /export type AppCradle = LocalCradle & MediaCoreCradle & InfraCradle;/,
+      );
+      assert.match(source, /type _IocExpect<T extends true> = T;/);
+      assert.match(
+        source,
+        /If any assertion below is `false`, run `ioc validate` for a detailed per-key explanation\./,
+      );
+      assert.match(
+        source,
+        /type _MediaCoreExternalsPick = Pick<AppCradle, keyof MediaCoreExternals>;/,
+      );
+      assert.match(
+        source,
+        /type _MediaCore_config = MediaCoreExternals\["config"\] extends _MediaCoreExternalsPick\["config"\] \? true : false;/,
+      );
+      assert.match(
+        source,
+        /type _MediaCore_configAssert = _IocExpect<_MediaCore_config>;/,
+      );
+      assert.match(
+        source,
+        /type _MediaCore_database = MediaCoreExternals\["database"\] extends _MediaCoreExternalsPick\["database"\] \? true : false;/,
+      );
+      assert.match(
+        source,
+        /type _Infra_logger = InfraExternals\["logger"\] extends _InfraExternalsPick\["logger"\] \? true : false;/,
+      );
+      assert.match(source, /type _Infra_loggerAssert = _IocExpect<_Infra_logger>/);
       assert.match(source, /defaultImplementation: "mockMediaStorage"/);
       assert.match(source, /"albumRepository": "local"/);
       assert.match(source, /as const satisfies ComposedRegistrationOverrides/);

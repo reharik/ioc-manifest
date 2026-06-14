@@ -13,7 +13,7 @@ import {
 } from "../test-support/manifestFixtures.js";
 import { checkAppConfigSanity } from "./checks/appConfig.js";
 import { checkDefaultAmbiguity } from "./checks/defaultAmbiguity.js";
-import { checkExternalsSatisfaction } from "./checks/externals.js";
+import { checkExternalsSatisfaction, CHECKER_UNAVAILABLE_CAVEAT } from "./checks/externals.js";
 import { checkGroupConsistency } from "./checks/groups.js";
 import { checkSameKeyConflicts } from "./checks/sameKeyConflict.js";
 import { checkSchemaVersions } from "./checks/schemaVersion.js";
@@ -39,16 +39,134 @@ describe("validate checks", () => {
         const issues = checkExternalsSatisfaction(ctx);
         assert.equal(issues.length, 1);
         assert.equal(issues[0]!.category, "externals");
-        assert.match(issues[0]!.summary, /logger/);
+        assert.match(issues[0]!.summary, /Unsatisfied.*logger/);
+        assert.match(issues[0]!.details.join("\n"), /No manifest in composedManifests supplies/);
       });
     });
 
     describe("When all externals are supplied in a cradle", () => {
       it("should report no issues", () => {
+        const root = mkdtempSync(path.join(tmpdir(), "ioc-validate-ext-ok-"));
+        writeFileSync(
+          path.join(root, "tsconfig.json"),
+          JSON.stringify(
+            {
+              compilerOptions: {
+                strict: true,
+                noEmit: true,
+                target: "ES2022",
+                module: "ES2022",
+              },
+            },
+            null,
+            2,
+          ),
+        );
+        const localTypesPath = path.join(root, "local.types.ts");
+        const libTypesPath = path.join(root, "lib.types.ts");
+        writeFileSync(
+          localTypesPath,
+          typesSource("logger: { log: (msg: string) => void }", ""),
+        );
+        writeFileSync(
+          libTypesPath,
+          typesSource("", "logger: { log: (msg: string) => void }"),
+        );
+
+        const ctx = validateContext([
+          parsedSlice({
+            packageLabel: "local",
+            typesPath: localTypesPath,
+            cradleKeys: new Set(["logger"]),
+            cradleTypes: {
+              logger: { typeText: "{ log: (msg: string) => void }" },
+            },
+          }),
+          parsedSlice({
+            packageLabel: "@lib/a",
+            sourceId: "@lib/a",
+            typesPath: libTypesPath,
+            externals: {
+              logger: { typeText: "{ log: (msg: string) => void }" },
+            },
+          }),
+        ]);
+
+        assert.equal(
+          checkExternalsSatisfaction({ ...ctx, projectRoot: root }).length,
+          0,
+        );
+      });
+    });
+
+    describe("When a supplied external key has an incompatible type", () => {
+      it("should report a type mismatch with demanded and supplied types", () => {
+        const root = mkdtempSync(path.join(tmpdir(), "ioc-validate-ext-"));
+        writeFileSync(
+          path.join(root, "tsconfig.json"),
+          JSON.stringify(
+            {
+              compilerOptions: {
+                strict: true,
+                noEmit: true,
+                target: "ES2022",
+                module: "ES2022",
+              },
+            },
+            null,
+            2,
+          ),
+        );
+        const localTypesPath = path.join(root, "local.types.ts");
+        const libTypesPath = path.join(root, "lib.types.ts");
+        writeFileSync(
+          localTypesPath,
+          typesSource(`config: { logLevel: "error" | "warn" | "info" }`, ""),
+        );
+        writeFileSync(
+          libTypesPath,
+          typesSource("", `config: { logLevel: string }`),
+        );
+
+        const ctx = validateContext([
+          parsedSlice({
+            packageLabel: "@apps/api",
+            sourceId: "local",
+            typesPath: localTypesPath,
+            cradleKeys: new Set(["config"]),
+            cradleTypes: {
+              config: { typeText: '{ logLevel: "error" | "warn" | "info" }' },
+            },
+          }),
+          parsedSlice({
+            packageLabel: "@packages/infrastructure",
+            sourceId: "@packages/infrastructure",
+            typesPath: libTypesPath,
+            externals: {
+              config: { typeText: "{ logLevel: string }" },
+            },
+          }),
+        ]);
+
+        const issues = checkExternalsSatisfaction({
+          ...ctx,
+          projectRoot: root,
+        });
+        assert.equal(issues.length, 1);
+        assert.match(issues[0]!.summary, /config/);
+        assert.match(issues[0]!.details.join("\n"), /incompatible/);
+        assert.match(issues[0]!.details.join("\n"), /demanded:/);
+        assert.match(issues[0]!.details.join("\n"), /supplied:/);
+      });
+    });
+
+    describe("When the TypeScript checker cannot be built", () => {
+      it("should warn that type compatibility was not verified for supplied keys", () => {
         const ctx = validateContext([
           parsedSlice({
             packageLabel: "local",
             cradleKeys: new Set(["logger"]),
+            cradleTypes: { logger: { typeText: "Logger" } },
           }),
           parsedSlice({
             packageLabel: "@lib/a",
@@ -56,7 +174,17 @@ describe("validate checks", () => {
             externals: { logger: { typeText: "Logger" } },
           }),
         ]);
-        assert.equal(checkExternalsSatisfaction(ctx).length, 0);
+
+        const issues = checkExternalsSatisfaction({
+          ...ctx,
+          projectRoot: path.join(tmpdir(), "ioc-validate-no-tsconfig"),
+        });
+
+        assert.equal(issues.length, 1);
+        assert.equal(issues[0]!.severity, "warning");
+        assert.match(issues[0]!.details.join("\n"), /Type compatibility not verified/);
+        assert.match(issues[0]!.details.join("\n"), /tsc/);
+        assert.equal(issues[0]!.details[0], CHECKER_UNAVAILABLE_CAVEAT);
       });
     });
   });
