@@ -20,6 +20,17 @@ export interface IocExternals {
   storage: Storage;
 }
 
+/**
+ * Values supplied at runtime by registering onto a request child scope
+ * (e.g. `scope.register({ key: asValue(...) })`) — not built by any factory.
+ *
+ * Register the relevant key(s) onto the child scope before resolving services that
+ * depend on them. Resolving a dependent service without the value throws at runtime
+ * (`IocResolutionError`), never returns a placeholder.
+ *
+ * Not every key is needed on every scope — register only those the current request
+ * path actually resolves (e.g. an authed path vs. a public path).
+ */
 export interface IocScopeProvided {
   viewerId: string;
 }

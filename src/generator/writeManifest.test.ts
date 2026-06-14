@@ -200,6 +200,11 @@ describe("writeManifest", () => {
       assert.ok(typesSource.includes("export interface IocGeneratedCradle"));
       assert.ok(typesSource.includes("export interface IocExternals"));
       assert.ok(typesSource.includes("export interface IocScopeProvided {}"));
+      assert.ok(!typesSource.includes("registering onto a request child scope"));
+      assert.match(
+        manifestSource,
+        /export const IOC_SCOPE_PROVIDED_KEYS = \[\] as const;/,
+      );
 
       const files = await fs.readdir(generatedDir);
       assert.ok(
@@ -318,6 +323,13 @@ describe("writeManifest", () => {
         /export interface IocExternals \{\n  database: Database;\n  logger: Logger;\n\}/,
       );
       assert.ok(typesSource.includes("export interface IocScopeProvided {}"));
+      assert.ok(!typesSource.includes("registering onto a request child scope"));
+
+      const manifestSource = await fs.readFile(manifestOutPath, "utf8");
+      assert.match(
+        manifestSource,
+        /export const IOC_SCOPE_PROVIDED_KEYS = \[\] as const;/,
+      );
     });
   });
 
@@ -412,14 +424,20 @@ describe("writeManifest", () => {
         path.join(generatedDir, "ioc-registry.types.ts"),
         "utf8",
       );
+      const manifestSource = await fs.readFile(manifestOutPath, "utf8");
 
+      assert.match(typesSource, /registering onto a request child scope/);
       assert.match(
         typesSource,
-        /export interface IocScopeProvided \{\n  viewerId: string;\n\}/,
+        /registering onto a request child scope[\s\S]*export interface IocScopeProvided \{\n  viewerId: string;\n\}/,
       );
       assert.match(
         typesSource,
         /export interface IocExternals \{\n  logger: Logger;\n\}/,
+      );
+      assert.match(
+        manifestSource,
+        /export const IOC_SCOPE_PROVIDED_KEYS = \["viewerId"\] as const;/,
       );
       const externalsBlock = typesSource.match(
         /export interface IocExternals \{([\s\S]*?)\}/,

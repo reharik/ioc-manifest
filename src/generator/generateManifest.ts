@@ -193,6 +193,12 @@ export const generateManifest = async (
 
   validateScopeProvidedAtCodegen(config?.scopeProvided ?? [], demandSupply);
 
+  if (demandSupply.scopeProvidedKeys.length > 0) {
+    console.log(
+      `[ioc] scope-provided values in ${packageName}: ${demandSupply.scopeProvidedKeys.join(", ")} — register these onto the request child scope at runtime before resolving dependent services.`,
+    );
+  }
+
   const writeOptions = {
     demandSupply,
     registryTypesBuildContext: {

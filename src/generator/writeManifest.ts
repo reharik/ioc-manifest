@@ -383,6 +383,7 @@ const serializeMainIocManifestSource = (
   manifestImportFromPackage: string,
   importLines: string[],
   moduleArrayLines: string[],
+  scopeProvidedKeys: readonly string[],
 ): string => {
   const header = `/* AUTO-GENERATED. DO NOT EDIT.
 Primary container manifest.
@@ -417,6 +418,8 @@ ${moduleArrayLines.join("\n")}
 
   contracts: ${contractsBlock},${groupRootsBlock}
 } as const satisfies ${satisfiesType};
+
+export const IOC_SCOPE_PROVIDED_KEYS = [${scopeProvidedKeys.map((k) => JSON.stringify(k)).join(", ")}] as const;
 `;
 };
 
@@ -663,9 +666,21 @@ Re-run \`npm run gen:manifest\` after changing factories or IoC config.
   const scopeProvidedLines = scopeProvidedEntries.map(
     (e) => `  ${tsIdentifierOrQuoted(e.key)}: ${e.typeRef.typeName};`,
   );
+  const scopeProvidedDoc = `/**
+ * Values supplied at runtime by registering onto a request child scope
+ * (e.g. \`scope.register({ key: asValue(...) })\`) — not built by any factory.
+ *
+ * Register the relevant key(s) onto the child scope before resolving services that
+ * depend on them. Resolving a dependent service without the value throws at runtime
+ * (\`IocResolutionError\`), never returns a placeholder.
+ *
+ * Not every key is needed on every scope — register only those the current request
+ * path actually resolves (e.g. an authed path vs. a public path).
+ */
+`;
   const scopeProvidedBlock =
     scopeProvidedLines.length > 0
-      ? `\n\nexport interface IocScopeProvided {\n${scopeProvidedLines.join("\n")}\n}`
+      ? `\n\n${scopeProvidedDoc}export interface IocScopeProvided {\n${scopeProvidedLines.join("\n")}\n}`
       : `\n\nexport interface IocScopeProvided {}`;
 
   return `${header}${importLines.length > 0 ? importLines.join("\n") + "\n\n" : ""}export interface IocGeneratedCradle {
@@ -718,23 +733,25 @@ export const buildManifestArtifactSources = (
     return `  ${alias},`;
   });
 
+  if (options.demandSupply === undefined) {
+    throw new Error(
+      "[ioc] internal error: demandSupply analysis is required for registry type generation",
+    );
+  }
+
   const mainSource = serializeMainIocManifestSource(
     contractManifest,
     iocGroupsManifest,
     manifestImportFromPackage,
     importLines,
     moduleArrayLines,
+    options.demandSupply.scopeProvidedKeys,
   );
 
   const typesPath = path.join(
     path.dirname(manifestOutPath),
     "ioc-registry.types.ts",
   );
-  if (options.demandSupply === undefined) {
-    throw new Error(
-      "[ioc] internal error: demandSupply analysis is required for registry type generation",
-    );
-  }
 
   const typesSource = buildCradleTypeSource(
     plans,

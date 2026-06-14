@@ -169,3 +169,5 @@ export const iocManifest = {
     ],
   },
 } as const satisfies IocGeneratedContainerManifest<IocManifestGroupRoots>;
+
+export const IOC_SCOPE_PROVIDED_KEYS = [] as const;
