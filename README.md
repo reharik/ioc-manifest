@@ -193,6 +193,16 @@ export interface IocExternals {
 
 `IocExternals` lists every dependency the package consumes from outside — keys destructured by factory deps types where no local factory supplies them. `IocGeneratedCradle` contains only what the package itself supplies. The two interfaces together describe the package's full contract: what it provides and what it needs.
 
+When a package declares `scopeProvided`, those keys are emitted into a separate `IocScopeProvided` interface rather than `IocExternals`, with a JSDoc banner reminding you to register them onto a child scope:
+
+```ts
+export interface IocScopeProvided {
+  viewerId: string;
+}
+```
+
+The main manifest file also exports `IOC_SCOPE_PROVIDED_KEYS` (a `readonly` string tuple) so app code can reference the set — for example, to assert a request-scope helper covers the keys the current path resolves. See [`scopeProvided`](#scopeprovided).
+
 **`ioc-manifest.ts`** — the registration data:
 
 ```ts
@@ -363,6 +373,35 @@ Markers match by **declared inheritance**, not structural shape. Use `extends IS
 2. Lifetime marker on return type (`lifetimeMarkers`)
 3. `discovery.scanDirs[].scope` (folder-scoped default)
 4. Default: `singleton`
+
+### `scopeProvided`
+
+Some dependencies aren't built by any factory and never can be — they're **runtime values registered onto a child scope per unit of work**. The canonical case is a request: a `viewerId`, `tenantId`, or `requestId` known only when the request arrives, registered onto a per-request child scope and consumed by services resolved within it.
+
+```ts
+scopeProvided: ["viewerId", "publicLinkId"],
+```
+
+A factory destructures `viewerId` like any other dependency. No local factory supplies it, so without this declaration it'd be classified as an external and the composition's externals check would demand that _something build it_ — which nothing can. `scopeProvided` tells the generator the key is satisfied at runtime by scope registration, not by a factory.
+
+Declared keys are emitted into a dedicated `IocScopeProvided` interface (instead of `IocExternals`) and excluded from the externals-satisfaction check. At runtime you register them yourself, onto the child scope, before resolving anything that depends on them:
+
+```ts
+const scope = container.createScope();
+scope.register({ viewerId: asValue(user.id) });
+const reader = scope.resolve("viewerAlbumReadService"); // works
+```
+
+**The contract is enforced at runtime, not compile time — by design.** Composition cannot verify that a runtime value will be registered; only the running container can. So if you resolve a scope-provided service from the root container, or from a scope that forgot to register the value, Awilix throws an `IocResolutionError` at resolution. It never returns a placeholder. That throw _is_ the safety guarantee — a scoped service can't silently resolve outside its scope.
+
+**Composing without resolving needs no provision.** A package that composes a manifest containing scope-provided services but never resolves them — a background worker pulling jobs, say — provides nothing and inherits no obligation. The keys leave `IocExternals`, so the worker's composition is satisfied without it touching `viewerId` at all. You declare `scopeProvided` once, in the package that _demands_ the key; every consumer inherits the exemption.
+
+**Generation-time guards:**
+
+- Declaring a key that no factory demands → warning (`[ioc-config]`), usually a typo.
+- Declaring a key that a local factory also builds → error. A key can't be both manifest-built and scope-provided.
+
+This is distinct from the `scoped` **lifetime**: a scoped-lifetime service is _instantiated_ once per scope; a scope-provided _value_ is _injected_ into the scope at runtime. The two are independent — a service can be one without the other.
 
 ### App-mode fields
 
@@ -690,6 +729,8 @@ Resolution chain:
 ```
 
 Missing dependencies, cyclic references, lifetime violations, and factory exceptions are all caught and reported with the full resolution path.
+
+A missing **scope-provided** value surfaces here too: resolving a service whose scope value wasn't registered produces a `no registered implementation` leaf for that key. If you see this for a key declared in `scopeProvided`, the fix is to register it onto the child scope before resolving — not to add a factory.
 
 ---
 

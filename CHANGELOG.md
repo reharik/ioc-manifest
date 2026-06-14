@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-06-14
+
+### Added
+
+- **`scopeProvided` config field for runtime scope-registered values.** Declares dependency keys supplied at runtime by registering onto a request child scope (e.g. `scope.register({ viewerId: asValue(...) })`) rather than built by any factory. These keys are excluded from the externals-satisfaction check, so composing a manifest that demands them no longer requires a factory to build them. Typical cases: per-request values like `viewerId`, `tenantId`, `requestId`.
+- **`IocScopeProvided` generated interface.** Declared scope-provided keys are emitted into a dedicated interface (with a JSDoc reminder to register them onto a child scope) instead of `IocExternals`, documenting the runtime contract at the type level.
+- **`IOC_SCOPE_PROVIDED_KEYS` export** in the generated manifest — a `readonly` tuple of the package's scope-provided keys, for app code that wants to assert its scope setup covers them.
+- **Generation-time guards.** Declaring a `scopeProvided` key that no factory demands emits a `[ioc-config]` warning (typo guard); declaring one that a local factory also builds is a hard error — a key cannot be both manifest-built and scope-provided.
+
+### Notes
+
+- Purely additive and opt-in — no migration required. Packages that don't set `scopeProvided` are unaffected: the new interface emits empty and the new export is an empty tuple.
+- The contract is enforced at runtime, not compile time. Resolving a scope-provided service without registering its value throws `IocResolutionError` (Awilix), never a placeholder. Richer messaging for missing scope values is deliberately deferred.
+
+## [1.2.1] - 2026-06-04
+
+### Fixed
+
+- **Nominal heritage walker no longer silently fails on aliased symbols.** When a lifetime marker or group base type was reached through an import or type alias, the walker stopped resolving heritage — leaving groups with no members and factories without lifetime-marker tagging. Aliased symbols are now followed to their target declaration, so `extends` / `&` heritage that passes through an alias is recognized.
+
 ## [1.2.0] - 2026-06-04
 
 ### Changed
