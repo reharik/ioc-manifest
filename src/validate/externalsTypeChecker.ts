@@ -95,17 +95,53 @@ export const getInterfacePropertyType = (
   return undefined;
 };
 
-export const intersectTypes = (
+export const getSupplierPropertyTypes = (
+  ctx: ValidateTypeCheckerContext,
+  suppliers: readonly { readonly typesPath: string }[],
+  interfaceName: string,
+  propertyKey: string,
+): ts.Type[] =>
+  suppliers
+    .map((slice) =>
+      getInterfacePropertyType(ctx, slice.typesPath, interfaceName, propertyKey),
+    )
+    .filter((type): type is ts.Type => type !== undefined);
+
+export const isDemandedAssignableToSupplierTypes = (
   checker: ts.TypeChecker,
-  types: readonly ts.Type[],
-): ts.Type | undefined => {
-  if (types.length === 0) {
-    return undefined;
+  demanded: ts.Type,
+  supplierTypes: readonly ts.Type[],
+): boolean =>
+  supplierTypes.every((supplied) =>
+    checker.isTypeAssignableTo(demanded, supplied),
+  );
+
+export const formatSupplierTypes = (
+  checker: ts.TypeChecker,
+  supplierTypes: readonly ts.Type[],
+): string => {
+  if (supplierTypes.length === 0) {
+    return "unknown";
   }
-  if (types.length === 1) {
-    return types[0];
+  if (supplierTypes.length === 1) {
+    return formatCheckerType(checker, supplierTypes[0]!);
   }
-  return checker.getIntersectionType([...types]);
+  return supplierTypes
+    .map((type) => formatCheckerType(checker, type))
+    .join(" & ");
+};
+
+export const findFirstMismatchedPropertyAcrossSuppliers = (
+  checker: ts.TypeChecker,
+  demanded: ts.Type,
+  supplierTypes: readonly ts.Type[],
+): string | undefined => {
+  for (const supplied of supplierTypes) {
+    if (!checker.isTypeAssignableTo(demanded, supplied)) {
+      return findFirstMismatchedProperty(checker, supplied, demanded);
+    }
+  }
+  return undefined;
 };
 
 export const findFirstMismatchedProperty = (
@@ -115,8 +151,8 @@ export const findFirstMismatchedProperty = (
 ): string | undefined => {
   for (const prop of demanded.getProperties()) {
     const propName = prop.getName();
-    const demandedProp = checker.getTypeOfPropertyOfType(demanded, propName);
-    const suppliedProp = checker.getTypeOfPropertyOfType(supplied, propName);
+    const demandedProp = getPropertyType(checker, demanded, propName);
+    const suppliedProp = getPropertyType(checker, supplied, propName);
     if (
       demandedProp !== undefined &&
       (suppliedProp === undefined ||
@@ -126,6 +162,18 @@ export const findFirstMismatchedProperty = (
     }
   }
   return undefined;
+};
+
+const getPropertyType = (
+  checker: ts.TypeChecker,
+  type: ts.Type,
+  propertyName: string,
+): ts.Type | undefined => {
+  const prop = checker.getPropertyOfType(type, propertyName);
+  if (prop === undefined) {
+    return undefined;
+  }
+  return checker.getTypeOfSymbol(prop);
 };
 
 export const formatCheckerType = (

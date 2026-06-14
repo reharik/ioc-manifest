@@ -2,10 +2,12 @@ import type ts from "typescript";
 import type { ParsedManifestSlice, ValidateContext, ValidationIssue } from "../types.js";
 import {
   createValidateTypeChecker,
-  findFirstMismatchedProperty,
+  findFirstMismatchedPropertyAcrossSuppliers,
   formatCheckerType,
+  formatSupplierTypes,
   getInterfacePropertyType,
-  intersectTypes,
+  getSupplierPropertyTypes,
+  isDemandedAssignableToSupplierTypes,
   type ValidateTypeCheckerContext,
 } from "../externalsTypeChecker.js";
 
@@ -49,32 +51,26 @@ const resolveSuppliedType = (
   ctx: ValidateTypeCheckerContext | undefined,
   suppliers: readonly SupplierSlice[],
   externalKey: string,
-): { readonly suppliedText: string; readonly suppliedType?: ts.Type } => {
+): { readonly suppliedText: string; readonly supplierTypes: readonly ts.Type[] } => {
   const suppliedText = getSuppliedTypeText(suppliers, externalKey);
 
   if (ctx === undefined) {
-    return { suppliedText };
+    return { suppliedText, supplierTypes: [] };
   }
 
-  const supplierTypes = suppliers
-    .map((slice) =>
-      getInterfacePropertyType(
-        ctx,
-        slice.typesPath,
-        "IocGeneratedCradle",
-        externalKey,
-      ),
-    )
-    .filter((type): type is ts.Type => type !== undefined);
-
-  const suppliedType = intersectTypes(ctx.checker, supplierTypes);
-  if (suppliedType === undefined) {
-    return { suppliedText };
+  const supplierTypes = getSupplierPropertyTypes(
+    ctx,
+    suppliers,
+    "IocGeneratedCradle",
+    externalKey,
+  );
+  if (supplierTypes.length === 0) {
+    return { suppliedText, supplierTypes: [] };
   }
 
   return {
-    suppliedText: formatCheckerType(ctx.checker, suppliedType),
-    suppliedType,
+    suppliedText: formatSupplierTypes(ctx.checker, supplierTypes),
+    supplierTypes,
   };
 };
 
@@ -115,9 +111,9 @@ const canVerifyExternalKeyTypes = (
     return false;
   }
 
-  const { suppliedType } = resolveSuppliedType(ctx, suppliers, externalKey);
+  const { supplierTypes } = resolveSuppliedType(ctx, suppliers, externalKey);
   const { demandedType } = resolveDemandedType(ctx, slice, externalKey, demandedText);
-  return suppliedType !== undefined && demandedType !== undefined;
+  return supplierTypes.length > 0 && demandedType !== undefined;
 };
 
 const isExternalKeySatisfied = (
@@ -133,14 +129,18 @@ const isExternalKeySatisfied = (
     return undefined;
   }
 
-  const { suppliedType } = resolveSuppliedType(ctx, suppliers, externalKey);
+  const { supplierTypes } = resolveSuppliedType(ctx, suppliers, externalKey);
   const { demandedType } = resolveDemandedType(ctx, slice, externalKey, demandedText);
 
-  if (suppliedType === undefined || demandedType === undefined) {
+  if (supplierTypes.length === 0 || demandedType === undefined) {
     return undefined;
   }
 
-  return ctx!.checker.isTypeAssignableTo(demandedType, suppliedType);
+  return isDemandedAssignableToSupplierTypes(
+    ctx!.checker,
+    demandedType,
+    supplierTypes,
+  );
 };
 
 const buildTypeMismatchDetails = (
@@ -151,7 +151,7 @@ const buildTypeMismatchDetails = (
   demandedText: string,
 ): string[] => {
   const supplierLabels = suppliers.map((s) => formatSupplierLabel(s)).join(", ");
-  const { suppliedText, suppliedType } = resolveSuppliedType(
+  const { suppliedText, supplierTypes } = resolveSuppliedType(
     ctx,
     suppliers,
     externalKey,
@@ -170,13 +170,13 @@ const buildTypeMismatchDetails = (
 
   if (
     ctx !== undefined &&
-    suppliedType !== undefined &&
+    supplierTypes.length > 0 &&
     demandedType !== undefined
   ) {
-    const mismatchedProperty = findFirstMismatchedProperty(
+    const mismatchedProperty = findFirstMismatchedPropertyAcrossSuppliers(
       ctx.checker,
-      suppliedType,
       demandedType,
+      supplierTypes,
     );
     if (mismatchedProperty !== undefined) {
       details.push(
