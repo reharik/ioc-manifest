@@ -15,6 +15,10 @@ import {
   type EmitTypeReferenceContext,
 } from "./emitTypeReference.js";
 import { validateNamedDepsType } from "./enforceNamedDepsType.js";
+import {
+  depsPropertyTypeNodeByName,
+  tryParseIocGeneratedCradleIndexedAccessKey,
+} from "./resolveIocGeneratedCradleIndexedAccess.js";
 import type {
   DemandSupplyAnalysisResult,
   DemandSupplyCradleEntry,
@@ -111,6 +115,78 @@ const formatUnresolvableDepsError = (
   return `[ioc] Factory ${JSON.stringify(loc.exportName)} at ${rel}:${loc.line} references an unresolvable deps type for property ${JSON.stringify(propName)}: ${detail}`;
 };
 
+const formatUnknownConsumedCradleKeyError = (
+  projectRoot: string,
+  loc: FactorySourceLocation,
+  propName: string,
+  key: string,
+): string => {
+  const abs = path.join(projectRoot, loc.modulePath);
+  const rel = path.relative(projectRoot, abs).replace(/\\/g, "/");
+  return `[ioc] Factory ${JSON.stringify(loc.exportName)} at ${rel}:${loc.line} references consumed cradle key ${JSON.stringify(key)} on property ${JSON.stringify(propName)} that is not a known registration or group`;
+};
+
+type ResolvedFactoryContext = {
+  factory: DiscoveredFactory;
+  factoryDecl: ts.FunctionLike;
+  sourceFile: ts.SourceFile;
+};
+
+const resolveFactoryContext = (
+  factory: DiscoveredFactory,
+  sourceFileByPath: Map<string, ts.SourceFile>,
+  projectRoot: string,
+  scanDirs: FactoryDiscoveryPaths["scanDirs"],
+): ResolvedFactoryContext | undefined => {
+  const absPath = normalizePath(
+    resolveFactorySourceAbsPath(factory.modulePath, projectRoot, scanDirs),
+  );
+  const sourceFile = sourceFileByPath.get(absPath);
+  if (sourceFile === undefined) {
+    return undefined;
+  }
+  const analysis = collectFileAnalysisForFactoryDiscovery(sourceFile);
+  const factoryDecl = analysis.factoryDeclByExport.get(factory.exportName);
+  if (factoryDecl === undefined) {
+    return undefined;
+  }
+  return { factory, factoryDecl, sourceFile };
+};
+
+const supplyTypeRefForFactory = (
+  checker: ts.TypeChecker,
+  factory: DiscoveredFactory,
+  factoryDecl: ts.FunctionLike,
+  emitCtx: EmitTypeReferenceContext,
+): EmittedTypeReference => {
+  const signature = checker.getSignatureFromDeclaration(factoryDecl);
+  if (!signature) {
+    return {
+      typeName: factory.contractName,
+      imports: [
+        {
+          typeName: factory.contractName,
+          relImport: factory.contractTypeRelImport,
+          useDefaultImport: false,
+        },
+      ],
+    };
+  }
+  const returnType = checker.getReturnTypeOfSignature(signature);
+  return (
+    emitTypeReference(checker, returnType, emitCtx) ?? {
+      typeName: factory.contractName,
+      imports: [
+        {
+          typeName: factory.contractName,
+          relImport: factory.contractTypeRelImport,
+          useDefaultImport: false,
+        },
+      ],
+    }
+  );
+};
+
 const mergeEntry = (
   map: Map<string, DemandSupplyCradleEntry>,
   key: string,
@@ -165,6 +241,19 @@ export const analyzeDemandSupply = (
 
   const cradleMap = new Map<string, DemandSupplyCradleEntry>();
 
+  const factoryByRegistrationKey = new Map<string, ResolvedFactoryContext>();
+  for (const factory of factories) {
+    const ctx = resolveFactoryContext(
+      factory,
+      sourceFileByPath,
+      projectRoot,
+      scanDirs,
+    );
+    if (ctx !== undefined) {
+      factoryByRegistrationKey.set(factory.registrationKey, ctx);
+    }
+  }
+
   for (const factory of factories) {
     const absPath = normalizePath(
       resolveFactorySourceAbsPath(factory.modulePath, projectRoot, scanDirs),
@@ -190,20 +279,13 @@ export const analyzeDemandSupply = (
     };
 
     const signature = checker.getSignatureFromDeclaration(factoryDecl);
-    if (signature) {
-      const returnType = checker.getReturnTypeOfSignature(signature);
-      const supplyRef =
-        emitTypeReference(checker, returnType, emitCtx) ??
-        ({
-          typeName: factory.contractName,
-          imports: [
-            {
-              typeName: factory.contractName,
-              relImport: factory.contractTypeRelImport,
-              useDefaultImport: false,
-            },
-          ],
-        } satisfies EmittedTypeReference);
+    if (signature !== undefined) {
+      const supplyRef = supplyTypeRefForFactory(
+        checker,
+        factory,
+        factoryDecl,
+        emitCtx,
+      );
 
       mergeEntry(
         cradleMap,
@@ -227,8 +309,90 @@ export const analyzeDemandSupply = (
       throw new Error(named.message);
     }
 
+    const propTypeNodes = depsPropertyTypeNodeByName(checker, named.depsType);
     const props = collectDepsProperties(checker, named.depsType);
     for (const { name: propName, type: propType } of props) {
+      const consumedCradleKey = tryParseIocGeneratedCradleIndexedAccessKey(
+        checker,
+        propTypeNodes.get(propName),
+      );
+
+      if (consumedCradleKey !== undefined) {
+        if (groupsManifest?.[consumedCradleKey] !== undefined) {
+          continue;
+        }
+
+        const supplier = factoryByRegistrationKey.get(consumedCradleKey);
+        if (supplier === undefined) {
+          // Hard-abort: one factory with an invalid consumed cradle key blocks the entire gen
+          // run (same policy as unresolvable deps and type conflicts in this pass).
+          throw new Error(
+            formatUnknownConsumedCradleKeyError(
+              projectRoot,
+              loc,
+              propName,
+              consumedCradleKey,
+            ),
+          );
+        }
+
+        const supplierEmitCtx: EmitTypeReferenceContext = {
+          program,
+          projectRoot,
+          scanDirs,
+          generatedDir,
+          contextSourceFile: supplier.sourceFile,
+        };
+        const supplierSignature = checker.getSignatureFromDeclaration(
+          supplier.factoryDecl,
+        );
+        const supplierReturnType =
+          supplierSignature !== undefined
+            ? checker.getReturnTypeOfSignature(supplierSignature)
+            : propType;
+        const resolvedTypeRef = supplyTypeRefForFactory(
+          checker,
+          supplier.factory,
+          supplier.factoryDecl,
+          supplierEmitCtx,
+        );
+
+        const classification = localSupplierKeys.has(propName)
+          ? "local"
+          : "external";
+
+        const existing = demandByKey.get(propName);
+        if (existing !== undefined) {
+          if (
+            !typesMutuallyAgree(checker, existing.type, supplierReturnType)
+          ) {
+            throw new Error(
+              formatTypeConflictError(
+                propName,
+                {
+                  factory: existing.factory,
+                  typeDisplay: formatTypeDisplay(checker, existing.type),
+                },
+                {
+                  factory: loc,
+                  typeDisplay: formatTypeDisplay(checker, supplierReturnType),
+                },
+                projectRoot,
+              ),
+            );
+          }
+        } else {
+          demandByKey.set(propName, {
+            type: supplierReturnType,
+            factory: loc,
+            typeRef: resolvedTypeRef,
+          });
+        }
+
+        mergeEntry(cradleMap, propName, resolvedTypeRef, classification);
+        continue;
+      }
+
       if (isUnresolvableDepsPropertyType(checker, propType, emitCtx)) {
         throw new Error(
           formatUnresolvableDepsError(

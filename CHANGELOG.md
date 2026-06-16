@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 2026-06-15
+
+### Fixed
+
+- **Same-package group consumption emitted `unknown`.** A factory consuming a group declared in its own package via `IocGeneratedCradle['groupKey']` emitted `groupKey: unknown` in the generated cradle, because the generator resolved the reference by type-checking its own prior output — a circular read that resolved to `unknown` and then re-wrote `unknown` on every regen. Cradle references are now resolved **syntactically from source**, with no dependency on the previously generated file. This also covers **aliased imports** (`import { IocGeneratedCradle as X }`, consumed as `X['groupKey']`) and **cold starts** where no generated file exists yet. Regenerate (`ioc generate`) after upgrading.
+- **Cold-start abort on cradle references.** Deleting the generated directory and regenerating could abort with `unresolvable deps type` for any factory referencing the cradle, because the reference had no prior output to resolve against. The syntactic resolution above removes this dependency, so first-run and post-clean generation succeed.
+
+### Changed
+
+- **Unknown consumed cradle keys now throw instead of silently emitting `unknown`.** Consuming a cradle key that is neither a known registration nor a declared group (e.g. a typo like `IocGeneratedCradle['channel']` instead of `'channels'`) now fails generation with a diagnostic naming the offending key. **This can surface a previously-passing build:** such a key used to resolve silently to `unknown`. The code was already wrong — it was producing `unknown`, not the intended type — so this turns a silent defect into a loud one pointing at the typo.
+-
+
 ## [1.4.1] - 2026-06-14
 
 ### Fixed

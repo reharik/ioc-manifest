@@ -182,6 +182,10 @@ export const generateManifest = async (
     scanDirs,
   });
 
+  // Ordering invariant: `buildGroupPlan` must finish before `analyzeDemandSupply`.
+  // Demand analysis resolves `IocGeneratedCradle['<key>']` against `groupsManifest` and
+  // the factory supply map; calling demand analysis first yields spurious
+  // "not a known registration or group" errors on valid group consumers.
   const demandSupply = analyzeDemandSupply(acceptedFactories, {
     program,
     projectRoot,
