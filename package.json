@@ -1,6 +1,6 @@
 {
   "name": "ioc-manifest",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "B uild-time factory discovery and codegen: generates a typed Awilix (PROXY) registration manifest from TypeScript sources with ioc.config as the single policy surface.",
   "license": "MIT",
   "repository": {
@@ -60,15 +60,18 @@
     "example:start": "npm run start --prefix examples/multi-package",
     "example:typecheck-broken": "npm run typecheck:broken-expect-fail --prefix examples/multi-package",
     "example:validate-broken-expect-fail": "npm run validate:broken-expect-fail --prefix examples/multi-package",
-    "example:full": "npm run example:install && npm run full --prefix examples/multi-package"
+    "example:full": "npm run example:install && npm run full --prefix examples/multi-package",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
   },
   "dependencies": {
     "awilix": "^12.0.5",
     "fast-glob": "^3.3.3"
   },
   "peerDependencies": {
-    "typescript": "^5.0.0",
-    "prettier": "^3.0.0"
+    "prettier": "^3.0.0",
+    "typescript": "^5.0.0"
   },
   "peerDependenciesMeta": {
     "prettier": {
@@ -79,6 +82,7 @@
     "@types/node": "^22.10.0",
     "prettier": "^3.4.2",
     "tsx": "^4.19.2",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitepress": "^1.6.4"
   }
 }
