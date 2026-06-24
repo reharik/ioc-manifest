@@ -85,10 +85,9 @@ const formatInversionMessage = (inv: LifetimeInversion): string => {
 };
 
 const collectGroupMemberLeaves = (
-  groupKey: string,
   manifest: IocGroupsManifest[string],
 ): { memberKey: string; registrationKey: string }[] => {
-  if (manifest.kind === "collection") {
+  if (Array.isArray(manifest.members)) {
     return manifest.members.map((member) => ({
       memberKey: member.registrationKey,
       registrationKey: member.registrationKey,
@@ -154,7 +153,7 @@ const resolveDepCandidates = (
   const groupRoot = groupsManifest?.[key];
   if (groupRoot !== undefined) {
     const candidates: DepCandidate[] = [];
-    for (const member of collectGroupMemberLeaves(key, groupRoot)) {
+    for (const member of collectGroupMemberLeaves(groupRoot)) {
       const depLifetime = regLifetime.get(member.registrationKey);
       if (depLifetime === undefined) {
         continue;
