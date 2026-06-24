@@ -31,6 +31,10 @@ export type IocOverride = {
    * `'local'` or a package name from `composedManifests`.
    */
   source?: "local" | string;
+  /** Knowingly allow this implementation to depend on shorter-lived deps.
+      `true` suppresses all inversions for this consumer; a string[] suppresses
+      only those demanded keys (preferred — keeps other inversions visible). */
+  allowLifetimeInversion?: boolean | readonly string[];
 };
 
 export type IocRegistrationsPerContract = Record<
@@ -98,6 +102,9 @@ export const isIocImplementationOverride = (
     return false;
   }
   if ("name" in value || "lifetime" in value || "default" in value) {
+    return true;
+  }
+  if ("allowLifetimeInversion" in value) {
     return true;
   }
   if ("accessKey" in value) {

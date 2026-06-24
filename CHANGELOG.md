@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-06-23
+
+### Added
+
+- **Lifetime-inversion detection at generation time.** `ioc generate` now flags dependency edges where a longer-lived registration depends on a shorter-lived one — the case where a **singleton that holds a scoped (or transient) dependency freezes that dependency at first construction** and reuses the same instance across every later scope/request. The check is per-edge over the resolved graph and uses the demanded cradle keys directly, so it resolves each dependency precisely (a specific registration key, a contract's default slot, a collection, a group's members, or a scope-provided key) rather than guessing across a contract's implementations.
+  - **`singleton → scoped`** (including a scope-provided dependency, or a group whose member is scoped) is an **error** and fails generation. This is almost never intentional: the scoped instance is captured once and never refreshed, so per-request state (a unit-of-work/transaction, a request context) silently goes stale.
+  - **`singleton → transient`** and **`scoped → transient`** are **warnings** (`[ioc]`-prefixed) — sometimes intentional (e.g. a singleton holding a transient factory it invokes per use), so they surface for review without blocking.
+  - Findings are aggregated: every warning prints, and if there are any errors, generation throws once with the full list rather than failing on the first.
+- **`registrations[Contract][impl].allowLifetimeInversion`** opt-out for intentional inversions. Set `true` to allow all shorter-lived dependencies for that implementation, or a `string[]` of demanded keys to allow only those edges (preferred — other inversions stay visible). The field is config-only and is not emitted into the manifest.
+
+### Notes
+
+- **This can surface a previously-passing build.** A `singleton → scoped` edge that generated fine before now fails `ioc generate`, because the freeze it describes was already a latent bug — the generator is making a silent defect loud. Fix the lifetime (usually the consumer should be `scoped`), or, if the inversion is deliberate, mark it with `allowLifetimeInversion`. The check runs on the next `ioc generate`; no regeneration of existing output is required to adopt it.
+-
+
 ## [1.4.2] - 2026-06-15
 
 ### Fixed

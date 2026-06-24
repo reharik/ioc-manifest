@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import ts from "typescript";
-import { inferDependencyContractNames } from "./inferFactoryDependencyContracts.js";
+import { inferDependencyContractNames, inferFactoryDependencies } from "./inferFactoryDependencyContracts.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixtureDir = path.join(__dirname, "../test-fixtures/infer-deps");
@@ -176,6 +176,74 @@ describe("inferDependencyContractNames", () => {
       const decl = getFactoryDecl(program, factoriesPath, "buildRenamedBinding");
       const deps = inferDependencyContractNames(checker, decl, KNOWN_CONTRACTS);
       assert.deepStrictEqual(deps, ["Logger"]);
+    });
+  });
+});
+
+describe("inferFactoryDependencies dependencyKeys", () => {
+  describe("When the factory destructures { a, b }", () => {
+    it("should expose dependencyKeys as the property names", () => {
+      const { program, checker } = makeProgram();
+      const factoriesPath = path.join(fixtureDir, "factories.ts");
+      const decl = getFactoryDecl(program, factoriesPath, "buildSimpleAb");
+      const inferred = inferFactoryDependencies(checker, decl, KNOWN_CONTRACTS);
+      assert.deepStrictEqual(inferred.dependencyKeys, ["a", "b"]);
+      assert.deepStrictEqual(inferred.contractNames, ["Logger"]);
+    });
+  });
+
+  describe("When a binding renames a destructured property as { x: y }", () => {
+    it("should keep the cradle property name in dependencyKeys", () => {
+      const { program, checker } = makeProgram();
+      const factoriesPath = path.join(fixtureDir, "factories.ts");
+      const decl = getFactoryDecl(program, factoriesPath, "buildRenamedBinding");
+      const inferred = inferFactoryDependencies(checker, decl, KNOWN_CONTRACTS);
+      assert.deepStrictEqual(inferred.dependencyKeys, ["logger"]);
+      assert.deepStrictEqual(inferred.contractNames, ["Logger"]);
+    });
+  });
+
+  describe("When the binding pattern uses a rest element", () => {
+    it("should omit dependencyKeys", () => {
+      const { program, checker } = makeProgram();
+      const factoriesPath = path.join(fixtureDir, "factories.ts");
+      const decl = getFactoryDecl(program, factoriesPath, "buildWithRest");
+      const inferred = inferFactoryDependencies(checker, decl, KNOWN_CONTRACTS);
+      assert.strictEqual(inferred.dependencyKeys, undefined);
+      assert.deepStrictEqual(inferred.contractNames, []);
+    });
+  });
+
+  describe("When the binding pattern is nested", () => {
+    it("should omit dependencyKeys", () => {
+      const { program, checker } = makeProgram();
+      const factoriesPath = path.join(fixtureDir, "factories.ts");
+      const decl = getFactoryDecl(program, factoriesPath, "buildNestedBinding");
+      const inferred = inferFactoryDependencies(checker, decl, KNOWN_CONTRACTS);
+      assert.strictEqual(inferred.dependencyKeys, undefined);
+      assert.deepStrictEqual(inferred.contractNames, []);
+    });
+  });
+
+  describe("When the binding uses a computed property name", () => {
+    it("should omit dependencyKeys", () => {
+      const { program, checker } = makeProgram();
+      const factoriesPath = path.join(fixtureDir, "factories.ts");
+      const decl = getFactoryDecl(program, factoriesPath, "buildComputedBinding");
+      const inferred = inferFactoryDependencies(checker, decl, KNOWN_CONTRACTS);
+      assert.strictEqual(inferred.dependencyKeys, undefined);
+      assert.deepStrictEqual(inferred.contractNames, []);
+    });
+  });
+
+  describe("When the first parameter is a single identifier typed as the full cradle", () => {
+    it("should omit dependencyKeys", () => {
+      const { program, checker } = makeProgram();
+      const factoriesPath = path.join(fixtureDir, "factories.ts");
+      const decl = getFactoryDecl(program, factoriesPath, "buildWithFullCradleParam");
+      const inferred = inferFactoryDependencies(checker, decl, KNOWN_CONTRACTS);
+      assert.strictEqual(inferred.dependencyKeys, undefined);
+      assert.deepStrictEqual(inferred.contractNames, []);
     });
   });
 });

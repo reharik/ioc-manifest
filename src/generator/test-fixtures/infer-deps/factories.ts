@@ -83,3 +83,41 @@ export const buildRenamedBinding = ({
   logSvc.log("x");
   return { client: "pg" };
 };
+
+type SimpleAbDeps = {
+  a: Logger;
+  b: Logger;
+};
+
+/** Simple two-key binding for dependencyKeys coverage. */
+export const buildSimpleAb = ({ a, b }: SimpleAbDeps): KnexConfig => {
+  a.log("x");
+  b.log("y");
+  return { client: "pg" };
+};
+
+type NestedBindingDeps = {
+  logger: Logger;
+};
+
+/** Nested binding pattern in first parameter — omit dependencyKeys. */
+export const buildNestedBinding = ({
+  logger: { log },
+}: NestedBindingDeps): KnexConfig => {
+  log("x");
+  return { client: "pg" };
+};
+
+type ComputedBindingDeps = {
+  logger: Logger;
+};
+
+const LOGGER_KEY = "logger";
+
+/** Computed property name in binding — omit dependencyKeys. */
+export const buildComputedBinding = ({
+  [LOGGER_KEY]: logSvc,
+}: ComputedBindingDeps): KnexConfig => {
+  logSvc.log("x");
+  return { client: "pg" };
+};

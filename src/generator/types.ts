@@ -25,6 +25,9 @@ export type DiscoveredFactory = {
   discoveredBy?: "naming";
   /** Contract types inferred from the factory deps parameter (see manifest metadata). */
   dependencyContractNames?: string[];
+  /** Cradle keys demanded by this factory's deps destructuring (gen-time edge for
+      lifetime-inversion analysis). Same omit rules as dependencyContractNames. */
+  dependencyKeys?: string[];
 };
 
 export type FactoryDiscoveryFileContext = {

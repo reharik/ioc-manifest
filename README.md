@@ -40,6 +40,7 @@ The approach is loosely inspired by [StructureMap](https://structuremap.github.i
 - **Externals are explicit** — every dependency a package expects from outside is tracked in a generated `IocExternals` interface
 - **Cross-package composition** — apps in a monorepo can compose manifests from multiple packages with no scanning across boundaries
 - **Compile-time satisfaction checks** — when composing, TypeScript fails compilation if any composed package's externals aren't satisfied
+- **Lifetime-inversion safety** — generation fails when a longer-lived service would freeze a shorter-lived dependency (a singleton holding a scoped repository), catching a whole class of stale-state bugs statically
 - **`ioc validate`** — a CI-friendly command that reports every cross-manifest problem at once
 - **Works in dev and prod** — discovers from TypeScript source during development, and works just as well against a bundled single-file production build (see [Dev and production builds](#dev-and-production-builds))
 
@@ -341,12 +342,13 @@ registrations: {
 
 Under each contract name, keys are implementation names from discovery (`buildFoo` → `foo`). The reserved `$contract` key holds contract-level options.
 
-| Per-implementation field | Effect                                                                                                                             |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                   | Overrides the Awilix registration key                                                                                              |
-| `lifetime`               | `"singleton"` \| `"scoped"` \| `"transient"`                                                                                       |
-| `default`                | `true` to select this implementation as the contract default                                                                       |
-| `source`                 | (app mode only) Resolve same-key conflicts across composed manifests. See [Cross-package composition](#cross-package-composition). |
+| Per-implementation field | Effect                                                                                                                                                                                                                         |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `name`                   | Overrides the Awilix registration key                                                                                                                                                                                          |
+| `lifetime`               | `"singleton"` \| `"scoped"` \| `"transient"`                                                                                                                                                                                   |
+| `default`                | `true` to select this implementation as the contract default                                                                                                                                                                   |
+| `source`                 | (app mode only) Resolve same-key conflicts across composed manifests. See [Cross-package composition](#cross-package-composition).                                                                                             |
+| `allowLifetimeInversion` | Opt out of the lifetime-inversion check for this implementation. `true` allows all shorter-lived dependencies; a `string[]` allows only the listed demanded keys. See [Lifetime inversion checks](#lifetime-inversion-checks). |
 
 | `$contract` field | Effect                                                                                          |
 | ----------------- | ----------------------------------------------------------------------------------------------- |
@@ -835,6 +837,50 @@ This came out of a real pattern: in a GraphQL API, services and repositories are
 
 Per-implementation overrides in `registrations` and lifetime markers take precedence over folder scope.
 
+### Lifetime inversion checks
+
+Awilix lifetimes have an ordering: a `singleton` lives for the life of the container, a `scoped` instance lives for one scope (typically one request), a `transient` is rebuilt on every resolve. When a longer-lived registration depends on a shorter-lived one, the longer-lived service captures a single instance of that dependency at first construction and reuses it forever — quietly defeating the shorter lifetime.
+
+The classic case: a `singleton` that depends on a `scoped` repository holding a per-request unit-of-work. The singleton is built once, captures one repository, and every later request writes through that first request's transaction. Nothing throws; the state just silently goes stale. The consumer doesn't even have to touch the scoped resource — holding something that holds it is enough.
+
+`ioc generate` catches this statically. It walks every dependency edge over the resolved graph and flags any edge where the dependency is shorter-lived than the consumer:
+
+- **`singleton → scoped`** is an **error** — generation fails. This includes a scoped dependency reached through a group (a group with a scoped member) or a scope-provided key (per-request, so effectively scoped). It is almost never intentional.
+- **`singleton → transient`** and **`scoped → transient`** are **warnings** (`[ioc]`-prefixed). A singleton legitimately holding a transient factory it constructs from per use is a real pattern, so these surface for review without blocking.
+
+The check resolves each demanded key precisely — a specific registration key, a contract's default slot, a collection, a group's members, or a scope-provided key — so it names the exact dependency rather than guessing across a contract's implementations. Findings aggregate: every warning prints, and if there are errors, generation throws once with the full list rather than failing on the first one.
+
+A typical error:
+
+```
+Lifetime inversion: 'grantSync' (singleton) depends on 'grantRepository' (scoped). A singleton freezes its scoped dependency at first construction, reusing it across all scopes. Register 'grantSync' as scoped (or shorter), or mark it intentional with registrations['Grant'].grantSync.allowLifetimeInversion.
+```
+
+The usual fix is the obvious one — the consumer should be `scoped`:
+
+```ts
+registrations: {
+  GrantSync: {
+    grantSync: { lifetime: "scoped" },
+  },
+},
+```
+
+**Intentional inversions.** If an inversion is deliberate — a singleton that holds a transient factory and constructs from it per call — opt out with `allowLifetimeInversion` on that implementation:
+
+```ts
+registrations: {
+  ConnectionPool: {
+    // allow all shorter-lived deps for this implementation:
+    connectionPool: { allowLifetimeInversion: true },
+    // or allow only specific demanded keys (preferred):
+    // connectionPool: { allowLifetimeInversion: ["connectionFactory"] },
+  },
+},
+```
+
+Prefer the `string[]` form. `true` silences every inversion for that consumer — including ones you introduce later and didn't mean to. Listing the keys you're knowingly inverting keeps the rest of the check live. The field is config-only and never appears in the generated manifest.
+
 ### Groups
 
 Groups collect implementations whose **contract types declare** `extends` on a shared base type (nominal membership — same rules as lifetime markers). There are two kinds — `collection` and `object` — and they solve different real-world problems. A group with no local members emits `[ioc-warn]` but still generates; members may come from other composed packages.
@@ -921,6 +967,38 @@ Now `container.resolve("readServices")` returns an object keyed by each contract
 
 The generator validates that group names don't collide with implementation keys, access keys, or collection keys. If a base type has no assignable implementations, generation fails with an actionable error. Cross-manifest group composition is covered in [Cross-package composition](#cross-package-composition).
 
+#### Consuming a group from the same package
+
+A factory can consume a group declared in its own package. The group's aggregate type — the array for a collection, the keyed object for an object group — is generated, so there's no hand-written type to import. You name it by indexing the generated cradle inside your deps type:
+
+```ts
+import type { IocGeneratedCradle } from "./generated/ioc-registry.types.js";
+import type { NotificationService } from "./channel-contracts.js";
+
+type NotificationServiceDeps = {
+  channels: IocGeneratedCradle["channels"];
+};
+
+export const buildNotificationService = ({
+  channels,
+}: NotificationServiceDeps): NotificationService => ({
+  notifyAll: (to) => {
+    channels.emailChannel.sendEmail(to);
+    channels.smsChannel.sendSms(to);
+  },
+});
+```
+
+This is the one sanctioned use of `IocGeneratedCradle` in a factory. The [named-deps-type rule](#1-create-factories) still holds: the parameter binds to a named type (`NotificationServiceDeps`), and `IocGeneratedCradle["channels"]` appears only as a _type reference inside it_, to name the otherwise-unnameable group type. You still cannot bind the parameter directly to the cradle (`({ channels }: IocGeneratedCradle)`).
+
+For an object group, members are keyed by their convention name — `channels.emailChannel`, `channels.smsChannel`, the same registration keys derived from `buildEmailChannel` and `buildSmsChannel`. A collection group indexes to `ReadonlyArray<BaseType>` instead.
+
+A few things work as you'd expect:
+
+- **Aliased imports.** `import { IocGeneratedCradle as Cradle }`, then `Cradle["channels"]`, resolves identically.
+- **Cold start.** The reference resolves from your source, not from a previously generated file — so first-run generation, or generation after deleting the generated directory, works. There's no chicken-and-egg dependency on prior output.
+- **Typos throw.** Indexing a key that is neither a registration nor a declared group — `IocGeneratedCradle["channel"]` when the group is `channels` — fails generation with a diagnostic naming the offending key, instead of silently resolving to `unknown`.
+
 ### Environment-specific configs
 
 The separation between factory code and `ioc.config.ts` makes it straightforward to swap implementations by environment. Your factories don't change — the config (or the set of composed manifests) is the only thing that differs.
@@ -972,6 +1050,8 @@ Either way, factory source code doesn't change.
 **My factory isn't in the group (or didn't get the marker lifetime)** — membership is **nominal**: the contract or return type must declare `extends YourBase` (or `type Foo = Bar & YourMarker`). Structural similarity is not enough. Common mistakes: forgetting `extends` on the service interface; using a union return type such as `Foo | undefined` on the contract — unions are not heritage, so `type Contract = Impl | undefined` will not join a group whose base is `Impl` unless you use `interface Contract extends Impl` instead.
 
 **Every factory in the package got the same lifetime** (v1.1.x and earlier) — that was structural matching on empty markers. Upgrade to v1.2.0+ and use `extends` on the types that should be scoped; empty markers are safe when inheritance is declared explicitly.
+
+**A singleton silently reuses a per-request dependency** — if a `singleton` depends (directly or through a chain) on a `scoped` or scope-provided value, it captures one instance at first construction and never refreshes it; per-request state goes stale with no runtime error. `ioc generate` fails on `singleton → scoped` edges for exactly this reason. Make the consumer `scoped`, or mark deliberate cases with `allowLifetimeInversion`. See [Lifetime inversion checks](#lifetime-inversion-checks).
 
 ---
 

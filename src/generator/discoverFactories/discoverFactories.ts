@@ -16,7 +16,7 @@ import type {
 } from "./discoveryOutcomeTypes.js";
 import { collectFileAnalysisForFactoryDiscovery } from "./scanFactoryFile.js";
 import { scanFactoryFile } from "./scanFactoryFile.js";
-import { inferDependencyContractNames } from "./inferFactoryDependencyContracts.js";
+import { inferFactoryDependencies } from "./inferFactoryDependencyContracts.js";
 
 const normalizePath = (p: string): string => path.normalize(p);
 
@@ -65,9 +65,15 @@ const enrichDependencyContracts = (
     if (!decl) {
       continue;
     }
-    const deps = inferDependencyContractNames(checker, decl, contractNames);
-    if (deps.length > 0) {
-      f.dependencyContractNames = deps;
+    const inferred = inferFactoryDependencies(checker, decl, contractNames);
+    if (inferred.contractNames.length > 0) {
+      f.dependencyContractNames = inferred.contractNames;
+    }
+    if (
+      inferred.dependencyKeys !== undefined &&
+      inferred.dependencyKeys.length > 0
+    ) {
+      f.dependencyKeys = inferred.dependencyKeys;
     }
   }
 };

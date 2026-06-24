@@ -75,48 +75,58 @@ const addContractNamesFromType = (
   }
 };
 
+export type InferredFactoryDependencies = {
+  contractNames: string[];
+  /** Cradle keys from the binding pattern; omitted when rest/nested/computed rules apply. */
+  dependencyKeys?: string[];
+};
+
 /**
- * Infers dependency contract names from the factory's first parameter **object binding pattern**
- * only: for `({ config, logger }: SomeCradleType)`, resolves the type of `config` and `logger` on
- * the parameter type and collects symbols that match known contract names.
+ * Infers dependency contract names and cradle keys from the factory's first parameter **object
+ * binding pattern** only: for `({ config, logger }: SomeCradleType)`, resolves the type of
+ * `config` and `logger` on the parameter type and collects symbols that match known contract
+ * names; `dependencyKeys` holds the destructured property names (e.g. `config`, `logger`).
  *
  * Does **not** walk all properties of the cradle type (avoids listing the entire container graph).
- * If the first parameter is not a top-level object binding pattern, returns [] (prefer omission).
+ * If the first parameter is not a top-level object binding pattern, returns empty contract names
+ * and omits keys (prefer omission).
  */
-export const inferDependencyContractNames = (
+export const inferFactoryDependencies = (
   checker: ts.TypeChecker,
   factoryDecl: ts.FunctionLike,
   knownContractNames: ReadonlySet<string>,
-): string[] => {
+): InferredFactoryDependencies => {
+  const empty: InferredFactoryDependencies = { contractNames: [] };
+
   if (knownContractNames.size === 0) {
-    return [];
+    return empty;
   }
 
   const signature = checker.getSignatureFromDeclaration(factoryDecl);
   if (!signature) {
-    return [];
+    return empty;
   }
 
   const params = signature.getParameters();
   if (params.length === 0) {
-    return [];
+    return empty;
   }
 
   const paramNode = factoryDecl.parameters[0];
   if (!paramNode) {
-    return [];
+    return empty;
   }
 
   if (!ts.isObjectBindingPattern(paramNode.name)) {
-    return [];
+    return empty;
   }
 
   const boundNames = getBindingPatternPropertyNames(paramNode.name);
   if (boundNames === "omit") {
-    return [];
+    return empty;
   }
   if (boundNames.length === 0) {
-    return [];
+    return empty;
   }
 
   const p0 = params[0]!;
@@ -124,7 +134,7 @@ export const inferDependencyContractNames = (
   const resolvedParam = checker.getApparentType(paramType);
 
   if (resolvedParam.getCallSignatures().length > 0) {
-    return [];
+    return empty;
   }
 
   const out = new Set<string>();
@@ -137,5 +147,23 @@ export const inferDependencyContractNames = (
     addContractNamesFromType(checker, propType, knownContractNames, out);
   }
 
-  return Array.from(out).sort((a, b) => a.localeCompare(b));
+  return {
+    contractNames: Array.from(out).sort((a, b) => a.localeCompare(b)),
+    dependencyKeys: boundNames,
+  };
 };
+
+/**
+ * Infers dependency contract names from the factory's first parameter **object binding pattern**
+ * only: for `({ config, logger }: SomeCradleType)`, resolves the type of `config` and `logger` on
+ * the parameter type and collects symbols that match known contract names.
+ *
+ * Does **not** walk all properties of the cradle type (avoids listing the entire container graph).
+ * If the first parameter is not a top-level object binding pattern, returns [] (prefer omission).
+ */
+export const inferDependencyContractNames = (
+  checker: ts.TypeChecker,
+  factoryDecl: ts.FunctionLike,
+  knownContractNames: ReadonlySet<string>,
+): string[] =>
+  inferFactoryDependencies(checker, factoryDecl, knownContractNames).contractNames;

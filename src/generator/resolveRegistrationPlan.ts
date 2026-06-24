@@ -98,6 +98,7 @@ export const normalizeIocOverride = (
     lifetime,
     default: defaultFlag,
     source: _source,
+    allowLifetimeInversion: _allowLifetimeInversion,
     ...rest
   } = override;
   const out: Partial<DiscoveredFactory> = { ...rest };
