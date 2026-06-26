@@ -14,7 +14,6 @@ import type { Database } from "../types/Database.js";
 export interface IocGeneratedCradle {
   logger: Logger;
   mediaStorage: MediaStorage;
-  mediaStorages: ReadonlyArray<MediaStorage>;
   userService: UserService;
 }
 
@@ -22,8 +21,6 @@ export interface IocExternals {
   database: Database;
 }
 ```
-
-`mediaStorages` (plural) appears automatically because there are multiple `MediaStorage` implementations.
 
 `IocExternals` lists every dependency the package consumes from outside — keys destructured by factory deps types where no local factory supplies them. `IocGeneratedCradle` contains only what the package itself supplies. The two interfaces together describe the package's full contract: what it provides and what it needs.
 

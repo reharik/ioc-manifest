@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-06-26
+
+### Removed
+
+- **Automatic plural-collection registrations.** A contract with more than one
+  implementation no longer auto-registers a plural collection key (e.g.
+  `workerHandlers: ReadonlyArray<WorkerHandler>`) in the cradle or at runtime. Declare
+  an explicit `kind: "collection"` group in `ioc.config.ts` instead — groups are now the
+  single mechanism for resolving all implementations of a base type as an array. This
+  also frees the plural name for use as a group root key.
+
+### Migration
+
+- If you consumed an auto-generated plural key, add a collection group over that base
+  type and consume its root key. A leftover reference to a removed plural key now fails
+  generation with an unknown-cradle-key diagnostic naming the key.
+- The array wrapper's lifetime changes from member-derived (singleton/scoped/transient)
+  to always-transient, matching all group roots. Member instances still resolve at their
+  own lifetimes; only the array object's caching changes. This is strictly safer (a
+  transient wrapper can never freeze a transient member).
+
 ## [1.5.1] - 2026-06-23
 
 ### Added

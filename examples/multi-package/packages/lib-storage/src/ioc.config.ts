@@ -16,5 +16,9 @@ export default defineIocConfig({
       kind: "collection",
       baseType: "LoggingService",
     },
+    storages: {
+      kind: "collection",
+      baseType: "Storage",
+    },
   },
 });

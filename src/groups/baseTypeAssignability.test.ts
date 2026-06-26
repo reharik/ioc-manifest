@@ -52,7 +52,6 @@ describe("shouldIncludeImplInCollectionGroup", () => {
         contractTypeRelImport: "../x.js",
         contractKey: "mediaStorage",
         accessKey: "mediaStorage",
-        collectionKey: "mediaStorages",
         defaultImplementationName: "s3MediaStorage",
         implementations: [
           minimalImpl("localMediaStorage", "localMediaStorage"),
@@ -82,7 +81,6 @@ describe("shouldIncludeImplInCollectionGroup", () => {
         contractTypeRelImport: "../x.js",
         contractKey: "mediaStorage",
         accessKey: "mediaStorage",
-        collectionKey: "mediaStorages",
         defaultImplementationName: "mediaStorage",
         implementations: [
           minimalImpl("localMediaStorage", "localMediaStorage"),
@@ -103,7 +101,6 @@ describe("shouldIncludeImplInCollectionGroup", () => {
         contractTypeRelImport: "../x.js",
         contractKey: "mediaStorage",
         accessKey: "mediaStorage",
-        collectionKey: "mediaStorages",
         defaultImplementationName: "s3MediaStorage",
         implementations: [minimalImpl("localMediaStorage", "localMediaStorage")],
       };
@@ -134,7 +131,6 @@ describe("getContractDeclaredType", () => {
         contractTypeRelImport: "../contracts.js",
         contractKey: "nullableWidget",
         accessKey: "nullableWidget",
-        collectionKey: undefined,
         defaultImplementationName: "only",
         implementations: [
           {
@@ -180,7 +176,6 @@ describe("getContractDeclaredType", () => {
         contractTypeRelImport: "../contracts.js",
         contractKey: "nullWidget",
         accessKey: "nullWidget",
-        collectionKey: undefined,
         defaultImplementationName: "only",
         implementations: [
           {
@@ -229,7 +224,6 @@ describe("collectContractDefaultMembersAssignableToBase", () => {
           contractTypeRelImport: "../contracts.js",
           contractKey: "nullableWidget",
           accessKey: "nullableWidget",
-          collectionKey: undefined,
           defaultImplementationName: "only",
           implementations: [
             {

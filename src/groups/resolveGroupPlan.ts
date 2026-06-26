@@ -83,10 +83,6 @@ const collectReservedCradleKeys = (
   for (const plan of plans) {
     reserved.add(plan.accessKey);
 
-    if (plan.collectionKey !== undefined) {
-      reserved.add(plan.collectionKey);
-    }
-
     for (const implementation of plan.implementations) {
       reserved.add(implementation.registrationKey);
     }

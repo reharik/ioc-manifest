@@ -31,23 +31,6 @@ describe("registerIocFromManifest", () => {
     });
   });
 
-  describe("When resolving the collection key for a multi-implementation contract", () => {
-    it("should expose a ReadonlyArray of every concrete implementation", async () => {
-      const container = createContainer<IocGeneratedCradle>();
-      registerIocFromManifest(container, [iocManifest]);
-      const collection = container.resolve("mediaStorages") as readonly MediaStorage[];
-      assert.ok(Array.isArray(collection));
-      assert.strictEqual(collection.length, 3);
-      const byLabel = new Map(
-        collection.map((m) => [m.label, m] as const),
-      );
-      await byLabel.get("local")!.put("k");
-      await byLabel.get("s3")!.put("k");
-      assert.strictEqual(byLabel.get("local")!.label, "local");
-      assert.strictEqual(byLabel.get("s3")!.label, "s3");
-    });
-  });
-
   describe("When resolving generated groups", () => {
     it("should register group roots and resolve collection members from the cradle", () => {
       const container = createContainer<IocGeneratedCradle>();

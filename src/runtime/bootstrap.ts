@@ -1,6 +1,6 @@
 /**
  * @fileoverview Awilix wiring for generated manifests: register implementation factories, wire
- * default-slot aliases, plural collection keys, and transient group roots. Resolution errors are
+ * default-slot aliases, and transient group roots. Resolution errors are
  * normalized to {@link IocResolutionError} with manifest-aware stack traces.
  */
 import {
@@ -20,10 +20,7 @@ import {
   type IocRegisterableManifest,
   type ModuleFactoryManifestMetadata,
 } from "../core/manifest.js";
-import {
-  contractNameToCollectionRegistrationKey,
-  contractNameToDefaultRegistrationKey,
-} from "../generator/naming.js";
+import { contractNameToDefaultRegistrationKey } from "../generator/naming.js";
 import { propagateIocResolutionFailure } from "./iocResolutionError.js";
 import {
   frameFromManifestMeta,
@@ -127,26 +124,6 @@ const invokeResolvedFactory = <TCradle extends object>(
   } finally {
     popIocResolutionFrame();
   }
-};
-
-const collectionLifetimeFromImplementations = (
-  impls: readonly ModuleFactoryManifestMetadata[],
-): (typeof Lifetime)[keyof typeof Lifetime] => {
-  /**
-   * The collection resolves and returns concrete implementation instances.
-   * Its lifetime therefore must not outlive any member it captures.
-   *
-   * - if any member is transient, collection must be transient
-   * - else if any member is scoped, collection must be scoped
-   * - else singleton is safe
-   */
-  if (impls.some((meta) => meta.lifetime === "transient")) {
-    return Lifetime.TRANSIENT;
-  }
-  if (impls.some((meta) => meta.lifetime === "scoped")) {
-    return Lifetime.SCOPED;
-  }
-  return Lifetime.SINGLETON;
 };
 
 const resolveDefaultImplementation = (
@@ -265,55 +242,6 @@ const registerContractDefaultAliases = <TCradle extends object>(
   }
 };
 
-/**
- * Registers the automatic per-contract multi-implementation slot: plural collection key →
- * **array** of all concrete implementations (sorted by `registrationKey`), independent of
- * configured group roots in the human manifest.
- */
-const registerImplementationCollections = <TCradle extends object>(
-  container: AwilixContainer<TCradle>,
-  manifestByContract: IocContractManifest,
-  keyIndex: RegistrationKeyIndex,
-): void => {
-  for (const [contractName, impls] of Object.entries(manifestByContract)) {
-    const implList = [...Object.values(impls)].sort((a, b) =>
-      a.registrationKey.localeCompare(b.registrationKey),
-    );
-    if (implList.length <= 1) {
-      continue;
-    }
-
-    const collectionKey = contractNameToCollectionRegistrationKey(contractName);
-    const collectionLifetime = collectionLifetimeFromImplementations(implList);
-
-    registerPair<TCradle>(container, {
-      [collectionKey]: asFunction(
-        (cradle: TCradle) => {
-          pushIocResolutionFrame({
-            contractName,
-            implementationName: "(collection)",
-            registrationKey: collectionKey,
-          });
-          try {
-            return implList.map(
-              (meta) => cradle[meta.registrationKey as keyof TCradle],
-            );
-          } catch (cause: unknown) {
-            return propagateIocResolutionFailure({
-              cause,
-              keyIndex,
-              stackSnapshot: snapshotIocResolutionStack(),
-            });
-          } finally {
-            popIocResolutionFrame();
-          }
-        },
-        { lifetime: collectionLifetime },
-      ),
-    });
-  }
-};
-
 const resolveGroupNodeFromCradle = <TCradle extends object>(
   cradle: TCradle,
   node: IocGroupNodeManifest,
@@ -369,7 +297,7 @@ const registerGroups = <TCradle extends object>(
 
 /**
  * Registers everything described by a generated container manifest into an Awilix container
- * (implementation factories, default access-key aliases, plural collection keys, and group roots).
+ * (implementation factories, default access-key aliases, and group roots).
  */
 export const registerIocFromManifest = <TCradle extends object>(
   container: AwilixContainer<TCradle>,
@@ -387,10 +315,5 @@ export const registerIocFromManifest = <TCradle extends object>(
     keyIndex,
   );
   registerContractDefaultAliases(container, manifestByContract);
-  registerImplementationCollections(
-    container,
-    manifestByContract,
-    keyIndex,
-  );
   registerGroups(container, groupsManifest, keyIndex);
 };

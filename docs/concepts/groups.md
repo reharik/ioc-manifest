@@ -82,7 +82,7 @@ Now `container.resolve("readServices")` returns an object keyed by each contract
 
 ## Group validation
 
-The generator validates that group names don't collide with implementation keys, access keys, or collection keys. If a base type has no assignable implementations, generation fails with an actionable error. Cross-manifest group composition is covered in [Cross-package composition](/monorepo/composition).
+The generator validates that group names don't collide with implementation keys or access keys. Group names are otherwise unconstrained — a collection group can take a contract's plural name (e.g. a `storages` group for the `Storage` contract), which earlier versions reserved for an auto-generated collection. If a base type has no assignable implementations, generation fails with an actionable error. Cross-manifest group composition is covered in [Cross-package composition](/monorepo/composition).
 
 ## Consuming a group from the same package
 

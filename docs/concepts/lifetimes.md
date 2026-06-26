@@ -110,7 +110,7 @@ The classic case: a `singleton` that depends on a `scoped` repository holding a 
 - **`singleton → scoped`** is an **error** — generation fails. This includes a scoped dependency reached through a group (a group with a scoped member) or a scope-provided key (per-request, so effectively scoped). It is almost never intentional.
 - **`singleton → transient`** and **`scoped → transient`** are **warnings** (`[ioc]`-prefixed). A singleton legitimately holding a transient factory it constructs from per use is a real pattern, so these surface for review without blocking.
 
-The check resolves each demanded key precisely — a specific registration key, a contract's default slot, a collection, a group's members, or a scope-provided key — so it names the exact dependency rather than guessing across a contract's implementations. Findings aggregate: every warning prints, and if there are errors, generation throws once with the full list rather than failing on the first one.
+The check resolves each demanded key precisely — a specific registration key, a contract's default slot, a group's members, or a scope-provided key — so it names the exact dependency rather than guessing across a contract's implementations. Findings aggregate: every warning prints, and if there are errors, generation throws once with the full list rather than failing on the first one.
 
 A typical error:
 

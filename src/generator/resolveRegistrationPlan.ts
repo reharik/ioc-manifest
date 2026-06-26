@@ -22,10 +22,7 @@ import {
 } from "./manifestPaths.js";
 import { selectDefaultImplementationName } from "../core/defaultImplementationSelection.js";
 import type { DiscoveredFactory } from "./types.js";
-import {
-  contractNameToCollectionRegistrationKey,
-  contractNameToDefaultRegistrationKey,
-} from "./naming.js";
+import { contractNameToDefaultRegistrationKey } from "./naming.js";
 
 /** Where resolved registration lifetime came from (inspect/debug only). `discovery-root` = `discovery.scanDirs[].scope`. */
 export type IocRegistrationLifetimeSource =
@@ -77,8 +74,6 @@ export type ResolvedContractRegistration = {
    * `registrations[Contract][IOC_CONTRACT_CONFIG_KEY].accessKey`.
    */
   accessKey: string;
-  /** Plural collection key when there is more than one implementation; otherwise undefined. */
-  collectionKey: string | undefined;
   /** Which implementation is selected for the default contract key (implementation name). */
   defaultImplementationName: string;
   implementations: ResolvedImplementationEntry[];
@@ -548,22 +543,6 @@ const validateGlobalNamespaceCollisions = (
     accessKeyOwnerContract.set(accessKey, contractName);
   }
 
-  for (const [contractName, accessKey] of accessKeyByContract) {
-    for (const [otherContractName, otherMerged] of mergedByContract) {
-      if (otherMerged.size <= 1) {
-        continue;
-      }
-
-      const collectionKey =
-        contractNameToCollectionRegistrationKey(otherContractName);
-      if (accessKey === collectionKey) {
-        throw new Error(
-          `[ioc-config] access key ${JSON.stringify(accessKey)} for contract ${JSON.stringify(contractName)} collides with the collection slot ${JSON.stringify(collectionKey)} for contract ${JSON.stringify(otherContractName)}.`,
-        );
-      }
-    }
-  }
-
   for (const [contractName, merged] of mergedByContract) {
     const accessKey = accessKeyByContract.get(contractName)!;
     const defaultImplementationName = selectDefaultImplementationKey(
@@ -600,24 +579,6 @@ const validateGlobalNamespaceCollisions = (
         throw new Error(
           `[ioc-config] registration key ${JSON.stringify(accessKey)} is reserved as the contract default slot for ${JSON.stringify(contractName)} (the selected default implementation is registered as ${JSON.stringify(defaultKey)}). ${otherContractName}.${implementationName} cannot use ${JSON.stringify(accessKey)}. Choose a different resolver key or registrations[].name override.`,
         );
-      }
-    }
-  }
-
-  for (const [contractName, merged] of mergedByContract) {
-    if (merged.size <= 1) {
-      continue;
-    }
-
-    const collectionKey = contractNameToCollectionRegistrationKey(contractName);
-
-    for (const [otherContractName, otherMerged] of mergedByContract) {
-      for (const [implementationName, factory] of otherMerged) {
-        if (factory.registrationKey === collectionKey) {
-          throw new Error(
-            `[ioc-config] registration key ${JSON.stringify(collectionKey)} is reserved as the collection slot for contract ${JSON.stringify(contractName)}. ${otherContractName}.${implementationName} cannot use that key. Choose a different resolver key or registrations[].name override.`,
-          );
-        }
       }
     }
   }
@@ -703,10 +664,6 @@ export const buildRegistrationPlan = (
       contractName,
     );
     const accessKey = accessKeyOverride ?? contractKey;
-    const collectionKey =
-      mergedByImplName.size > 1
-        ? contractNameToCollectionRegistrationKey(contractName)
-        : undefined;
 
     const implementationNames = Array.from(mergedByImplName.keys()).sort(
       (a, b) => a.localeCompare(b),
@@ -773,7 +730,6 @@ export const buildRegistrationPlan = (
       contractTypeRelImport,
       contractKey,
       accessKey,
-      collectionKey,
       defaultImplementationName,
       implementations,
     });

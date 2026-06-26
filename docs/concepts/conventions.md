@@ -24,16 +24,15 @@ When a contract has only one implementation, it is the default. When there are m
 
 If the choice is ambiguous, generation fails with a clear error telling you what to do.
 
-## Automatic collections
+## Multiple implementations
 
-When a contract has more than one implementation, a plural collection key is auto-registered. `MediaStorage` with implementations `localMediaStorage` and `s3MediaStorage` gives you:
+When a contract has more than one implementation, each is registered under its own key and one is selected as the default for the contract's access key. `MediaStorage` with implementations `localMediaStorage` and `s3MediaStorage` gives you:
 
 - `container.resolve("mediaStorage")` → the default `MediaStorage`
 - `container.resolve("localMediaStorage")` → the local implementation
 - `container.resolve("s3MediaStorage")` → the S3 implementation
-- `container.resolve("mediaStorages")` → `ReadonlyArray<MediaStorage>` with all implementations
 
-Pluralization handles common English patterns (`Service` → `services`, `Factory` → `factories`, `Cache` → `caches`).
+To resolve *all* implementations of a base type as an array, declare a [collection group](/concepts/groups) — that is the single mechanism for aggregate resolution.
 
 This is the same fundamental idea behind having multiple implementations of a single interface in any IoC container: you can swap implementations by environment. Have one `ioc.config` for production that points to real services, a different one for development that uses local stubs, and a third for testing that wires in mocks — without touching any factory source code. The config is the only thing that changes.
 

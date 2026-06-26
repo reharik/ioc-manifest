@@ -104,11 +104,9 @@ const buildLifetimeLookups = (
 ): {
   regLifetime: Map<string, IocLifetime>;
   accessKeyToDefaultLifetime: Map<string, IocLifetime>;
-  collectionKeyToLifetimes: Map<string, IocLifetime[]>;
 } => {
   const regLifetime = new Map<string, IocLifetime>();
   const accessKeyToDefaultLifetime = new Map<string, IocLifetime>();
-  const collectionKeyToLifetimes = new Map<string, IocLifetime[]>();
 
   for (const plan of plans) {
     for (const impl of plan.implementations) {
@@ -121,23 +119,15 @@ const buildLifetimeLookups = (
     if (defaultImpl !== undefined) {
       accessKeyToDefaultLifetime.set(plan.accessKey, defaultImpl.lifetime);
     }
-
-    if (plan.collectionKey !== undefined) {
-      collectionKeyToLifetimes.set(
-        plan.collectionKey,
-        plan.implementations.map((impl) => impl.lifetime),
-      );
-    }
   }
 
-  return { regLifetime, accessKeyToDefaultLifetime, collectionKeyToLifetimes };
+  return { regLifetime, accessKeyToDefaultLifetime };
 };
 
 const resolveDepCandidates = (
   key: string,
   regLifetime: Map<string, IocLifetime>,
   accessKeyToDefaultLifetime: Map<string, IocLifetime>,
-  collectionKeyToLifetimes: Map<string, IocLifetime[]>,
   groupsManifest: IocGroupsManifest | undefined,
   externalKeys: ReadonlySet<string>,
   scopeProvidedKeys: ReadonlySet<string>,
@@ -177,14 +167,6 @@ const resolveDepCandidates = (
     return [{ depLifetime: accessLifetime, via: "direct" }];
   }
 
-  const collectionLifetimes = collectionKeyToLifetimes.get(key);
-  if (collectionLifetimes !== undefined) {
-    return collectionLifetimes.map((depLifetime) => ({
-      depLifetime,
-      via: "direct" as const,
-    }));
-  }
-
   return "skip";
 };
 
@@ -217,7 +199,7 @@ export const validateLifetimeInversionsAtCodegen = (
   demandSupply: DemandSupplyAnalysisResult,
   config: IocConfig | undefined,
 ): void => {
-  const { regLifetime, accessKeyToDefaultLifetime, collectionKeyToLifetimes } =
+  const { regLifetime, accessKeyToDefaultLifetime } =
     buildLifetimeLookups(plans);
   const externalKeys = new Set(demandSupply.externalKeys);
   const scopeProvidedKeys = new Set(demandSupply.scopeProvidedKeys);
@@ -243,7 +225,6 @@ export const validateLifetimeInversionsAtCodegen = (
         depKey,
         regLifetime,
         accessKeyToDefaultLifetime,
-        collectionKeyToLifetimes,
         groupsManifest,
         externalKeys,
         scopeProvidedKeys,

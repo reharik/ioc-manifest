@@ -49,7 +49,6 @@ describe("formatRegistrationLifetimeInspect", () => {
           contractTypeRelImport: "x",
           contractKey: "x",
           accessKey: "x",
-          collectionKey: undefined,
           defaultImplementationName: "a",
           implementations: [
             {

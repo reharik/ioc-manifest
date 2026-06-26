@@ -576,17 +576,6 @@ const buildCradleTypeSource = (
       });
       demandSupplyKeys.add(plan.accessKey);
     }
-
-    if (
-      plan.collectionKey !== undefined &&
-      !demandSupplyKeys.has(plan.collectionKey)
-    ) {
-      cradleProperties.push({
-        key: plan.collectionKey,
-        line: `  ${plan.collectionKey}: ReadonlyArray<${typeName}>;`,
-      });
-      demandSupplyKeys.add(plan.collectionKey);
-    }
   }
 
   const appendGroupNodeType = (

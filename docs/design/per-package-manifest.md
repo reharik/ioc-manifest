@@ -104,7 +104,7 @@ Three artifacts emitted to the package's `generatedDir`:
 
 ### 4.3 `IocGeneratedCradle` shape
 
-A single flat interface containing **only locally-supplied keys** (factory return types and contract access/collection slots). Externally-demanded keys are **not** in the cradle; they appear only in `IocExternals`. Factories never destructure from `IocGeneratedCradle` directly (§3); their named deps types may reference external keys, but those keys are satisfied at app composition time.
+A single flat interface containing **only locally-supplied keys** (factory return types and contract access slots). Externally-demanded keys are **not** in the cradle; they appear only in `IocExternals`. Factories never destructure from `IocGeneratedCradle` directly (§3); their named deps types may reference external keys, but those keys are satisfied at app composition time.
 
 Externals are excluded from the cradle so that `AppCradle = LocalCradle & LibACradle & …` does not already contain a library’s external keys via that library’s own `IocGeneratedCradle`. If externals were in each library cradle, the compile-time satisfaction assertion in §6 would be vacuously true.
 
@@ -151,7 +151,7 @@ The signature takes an array for ergonomic reasons. The **semantics are set-like
 
 Media-core registers `s3MediaStorage` and `localMediaStorage` (both `MediaStorage`). App's own factories register `mockMediaStorage` (also `MediaStorage`).
 
-All three are registered. The plural collection `mediaStorages` resolves to all three. Default selection precedence:
+All three are registered; a collection group over `MediaStorage` resolves to all three. Default selection precedence:
 
 1. App's `ioc.config` declares `MediaStorage: { mockMediaStorage: { default: true } }` → app wins.
 2. App makes no declaration → if exactly one manifest declares a default for the contract, that wins. If multiple manifests declare conflicting defaults, composition errors and requires app resolution.

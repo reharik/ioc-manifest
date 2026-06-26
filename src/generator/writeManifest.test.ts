@@ -468,7 +468,6 @@ describe("writeManifest", () => {
           contractName: "OnlyOne",
           contractTypeRelImport: "../fixtures/contracts.js",
           contractKey: "onlyOne",
-          collectionKey: undefined,
           defaultImplementationName: "only",
           implementations: [
             {
@@ -500,7 +499,7 @@ describe("writeManifest", () => {
   });
 
   describe("When a contract has multiple implementations", () => {
-    it("should emit factory supply keys plus contract default and collection keys on IocGeneratedCradle", async () => {
+    it("should emit factory supply keys plus the contract default on IocGeneratedCradle", async () => {
       const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ioc-write-manifest-"));
       const generatedDir = path.join(tempRoot, "src", "generated");
       await fs.mkdir(generatedDir, { recursive: true });
@@ -527,7 +526,6 @@ describe("writeManifest", () => {
           contractName: "Widget",
           contractTypeRelImport: "../fixtures/contracts.js",
           contractKey: "widget",
-          collectionKey: "widgets",
           defaultImplementationName: "widget",
           implementations: [
             {
@@ -562,7 +560,7 @@ describe("writeManifest", () => {
         "utf8",
       );
       assert.match(typesSource, /\bwidget:\s*Widget;/);
-      assert.match(typesSource, /\bwidgets:\s*ReadonlyArray<\s*Widget\s*>;/);
+      assert.ok(!typesSource.includes("widgets:"));
       assert.match(typesSource, /\bprimaryWidget:\s*Widget;/);
       assert.ok(!typesSource.includes("Record<"));
     });
@@ -588,7 +586,6 @@ describe("writeManifest", () => {
           contractTypeRelImport: "../fixtures/contracts.js",
           contractKey: "knex",
           accessKey: "database",
-          collectionKey: undefined,
           defaultImplementationName: "database",
           implementations: [
             {
@@ -618,7 +615,7 @@ describe("writeManifest", () => {
       assert.ok(!/\bknex:\s*Knex\b/.test(typesSource));
     });
 
-    it("should keep automatic plural collections as ReadonlyArray even when groups are configured", async () => {
+    it("should emit configured group roots as ReadonlyArray and object types", async () => {
       const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ioc-write-manifest-"));
       const generatedDir = path.join(tempRoot, "src", "generated");
       await fs.mkdir(generatedDir, { recursive: true });
@@ -645,7 +642,6 @@ describe("writeManifest", () => {
           contractName: "Widget",
           contractTypeRelImport: "../fixtures/contracts.js",
           contractKey: "widget",
-          collectionKey: "widgets",
           defaultImplementationName: "widget",
           implementations: [
             {
@@ -699,7 +695,6 @@ describe("writeManifest", () => {
         path.join(generatedDir, "ioc-registry.types.ts"),
         "utf8",
       );
-      assert.match(typesSource, /\bwidgets:\s*ReadonlyArray<\s*Widget\s*>;/);
       assert.match(typesSource, /\bwidgetGroup:\s*ReadonlyArray</);
       assert.match(typesSource, /\bwidgetObjectGroup:\s*\{/);
       assert.match(typesSource, /\bwidget:\s*Widget\b/);

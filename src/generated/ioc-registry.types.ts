@@ -14,14 +14,12 @@ export interface IocGeneratedCradle {
   localMediaStorage: MediaStorage;
   logger: Logger;
   mediaStorage: MediaStorage;
-  mediaStorages: ReadonlyArray<MediaStorage>;
   mediaStoragesGroup: ReadonlyArray<MediaStorage>;
   memoryCache: CacheClient;
   primaryWidget: Widget;
   s3MediaStorage: MediaStorage;
   secondaryWidget: Widget;
   widget: Widget;
-  widgets: ReadonlyArray<Widget>;
 }
 
 export interface IocExternals {}

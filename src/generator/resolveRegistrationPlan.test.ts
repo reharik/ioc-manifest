@@ -120,7 +120,7 @@ describe("normalizeIocOverride", () => {
 
 describe("buildRegistrationPlan", () => {
   describe("When the contract has a single implementation", () => {
-    it("should select that implementation as default and omit a collection key", () => {
+    it("should select that implementation as default", () => {
       const map = toContractMap({
         AlbumService: [
           factory({
@@ -132,7 +132,6 @@ describe("buildRegistrationPlan", () => {
       });
       const [plan] = buildRegistrationPlan(map, undefined);
       assert.strictEqual(plan.defaultImplementationName, "albumService");
-      assert.strictEqual(plan.collectionKey, undefined);
       assert.strictEqual(plan.contractKey, "albumService");
       assert.strictEqual(plan.accessKey, "albumService");
     });
@@ -151,7 +150,6 @@ describe("buildRegistrationPlan", () => {
       });
       const [plan] = buildRegistrationPlan(map, undefined);
       assert.strictEqual(plan.defaultImplementationName, "onlyImpl");
-      assert.strictEqual(plan.collectionKey, undefined);
     });
   });
 
@@ -172,7 +170,6 @@ describe("buildRegistrationPlan", () => {
       });
       const [plan] = buildRegistrationPlan(map, undefined);
       assert.strictEqual(plan.defaultImplementationName, "s3MediaStorage");
-      assert.strictEqual(plan.collectionKey, "mediaStorages");
     });
   });
 
@@ -287,7 +284,7 @@ describe("buildRegistrationPlan", () => {
   });
 
   describe("When multiple implementations exist", () => {
-    it("should include each implementation on the plan and set a plural collection key", () => {
+    it("should include each implementation on the plan", () => {
       const map = toContractMap({
         MediaStorage: [
           factory({
@@ -307,7 +304,6 @@ describe("buildRegistrationPlan", () => {
       );
       assert.ok(keys.has("localMediaStorage"));
       assert.ok(keys.has("s3MediaStorage"));
-      assert.strictEqual(plan.collectionKey, "mediaStorages");
     });
   });
 
@@ -421,7 +417,6 @@ describe("buildRegistrationPlan", () => {
       const [plan] = buildRegistrationPlan(map, undefined);
       assert.strictEqual(plan.defaultImplementationName, "widget");
       assert.strictEqual(plan.contractKey, "widget");
-      assert.strictEqual(plan.collectionKey, "widgets");
     });
   });
 
@@ -634,40 +629,6 @@ describe("buildRegistrationPlan", () => {
     });
   });
 
-  describe("When an implementation uses a registration key reserved as another contract collection slot", () => {
-    it("should throw", () => {
-      const map = toContractMap({
-        MediaStorage: [
-          factory({
-            contractName: "MediaStorage",
-            implementationName: "a",
-            default: true,
-          }),
-          factory({
-            contractName: "MediaStorage",
-            implementationName: "b",
-          }),
-        ],
-        Bar: [
-          factory({
-            contractName: "Bar",
-            implementationName: "barImpl",
-            registrationKey: "mediaStorages",
-            default: true,
-          }),
-        ],
-      });
-      const config: IocConfig = {
-        discovery: { scanDirs: "src" },
-        registrations: {},
-      };
-      assert.throws(
-        () => buildRegistrationPlan(map, config),
-        /reserved as the collection slot for contract "MediaStorage"/,
-      );
-    });
-  });
-
   describe("When config overrides name for a discovered implementation", () => {
     it("should expose only the override as the registration key, not the conventional discovered key", () => {
       const map = toContractMap({
@@ -722,10 +683,9 @@ describe("buildRegistrationPlan", () => {
       const [plan] = buildRegistrationPlan(map, config);
       assert.strictEqual(plan.contractKey, "knex");
       assert.strictEqual(plan.accessKey, "database");
-      assert.strictEqual(plan.collectionKey, undefined);
     });
 
-    it("should keep plural collection key contract-derived when multiple implementations exist", () => {
+    it("should keep accessKey override when multiple implementations exist", () => {
       const map = toContractMap({
         Knex: [
           factory({
@@ -753,7 +713,6 @@ describe("buildRegistrationPlan", () => {
       const [plan] = buildRegistrationPlan(map, config);
       assert.strictEqual(plan.contractKey, "knex");
       assert.strictEqual(plan.accessKey, "database");
-      assert.strictEqual(plan.collectionKey, "knexes");
     });
   });
 
