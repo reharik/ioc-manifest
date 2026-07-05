@@ -187,6 +187,21 @@ const supplyTypeRefForFactory = (
   );
 };
 
+/**
+ * Stamps a factory's source location onto each import spec of a resolved type reference that
+ * does not already carry one (first writer wins, so an import surfaced by an earlier factory
+ * keeps its provenance). The emitter stays factory-agnostic; provenance is attached here.
+ */
+const stampSourceFactory = (
+  typeRef: EmittedTypeReference,
+  sourceFactory: FactorySourceLocation,
+): EmittedTypeReference => ({
+  typeName: typeRef.typeName,
+  imports: typeRef.imports.map((imp) =>
+    imp.sourceFactory === undefined ? { ...imp, sourceFactory } : imp,
+  ),
+});
+
 const mergeEntry = (
   map: Map<string, DemandSupplyCradleEntry>,
   key: string,
@@ -280,11 +295,9 @@ export const analyzeDemandSupply = (
 
     const signature = checker.getSignatureFromDeclaration(factoryDecl);
     if (signature !== undefined) {
-      const supplyRef = supplyTypeRefForFactory(
-        checker,
-        factory,
-        factoryDecl,
-        emitCtx,
+      const supplyRef = stampSourceFactory(
+        supplyTypeRefForFactory(checker, factory, factoryDecl, emitCtx),
+        loc,
       );
 
       mergeEntry(
@@ -350,11 +363,19 @@ export const analyzeDemandSupply = (
           supplierSignature !== undefined
             ? checker.getReturnTypeOfSignature(supplierSignature)
             : propType;
-        const resolvedTypeRef = supplyTypeRefForFactory(
-          checker,
+        const supplierLoc = factoryLocation(
           supplier.factory,
           supplier.factoryDecl,
-          supplierEmitCtx,
+          supplier.sourceFile,
+        );
+        const resolvedTypeRef = stampSourceFactory(
+          supplyTypeRefForFactory(
+            checker,
+            supplier.factory,
+            supplier.factoryDecl,
+            supplierEmitCtx,
+          ),
+          supplierLoc,
         );
 
         const classification = localSupplierKeys.has(propName)
@@ -417,7 +438,7 @@ export const analyzeDemandSupply = (
           ),
         );
       }
-      const typeRef = emitted.value;
+      const typeRef = stampSourceFactory(emitted.value, loc);
 
       const classification = localSupplierKeys.has(propName)
         ? "local"

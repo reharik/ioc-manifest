@@ -247,6 +247,37 @@ type EmitInnerResult = {
   imports: TypeImportSpec[];
 };
 
+/**
+ * The number of type parameters declared by the symbol whose NAME we print for a
+ * reference. This is the arity of the printed name, which may differ from the number
+ * of arguments {@link ts.TypeChecker.getTypeArguments} reports for the resolved type
+ * (e.g. `type KnexConfig = Cfg<SV extends {} = any>` resolves to `Cfg<any>` but the
+ * alias `KnexConfig` is itself non-generic).
+ */
+const declaredTypeParameterArity = (symbol: ts.Symbol | undefined): number => {
+  const decl = symbol?.declarations?.[0];
+  if (decl === undefined) {
+    return 0;
+  }
+  if (
+    ts.isTypeAliasDeclaration(decl) ||
+    ts.isInterfaceDeclaration(decl) ||
+    ts.isClassDeclaration(decl)
+  ) {
+    return decl.typeParameters?.length ?? 0;
+  }
+  return 0;
+};
+
+/** The symbol whose name {@link emitNamedTypeImport} prints (matches importSymbolNameFromType). */
+const printedNameSymbol = (
+  checker: ts.TypeChecker,
+  type: ts.Type,
+): ts.Symbol | undefined => {
+  const t = checker.getApparentType(type);
+  return t.aliasSymbol ?? t.getSymbol();
+};
+
 const emitTypeArgumentList = (
   checker: ts.TypeChecker,
   type: ts.Type,
@@ -265,9 +296,29 @@ const emitTypeArgumentList = (
   if (args.length === 0) {
     return undefined;
   }
+
+  // Render args against the arity of the printed name, not the resolved type's arg
+  // count. An alias may carry more args (from a generic's defaults) than its own name
+  // accepts; emitting them yields `KnexConfig<any>` on a non-generic alias (TS2315).
+  const arity = declaredTypeParameterArity(printedNameSymbol(checker, type));
+  if (arity === 0) {
+    return undefined;
+  }
+
+  // Invariant: arg count emitted == arity of the printed name, and every emitted arg
+  // is concrete. Clamp to the first `arity` args (ignore any extras); if any of those
+  // is a bare, unresolved type parameter, emit the bare name rather than recursing
+  // (recursion throws on a type parameter) or synthesizing an argument.
+  const clampedArgs = args.slice(0, arity);
+  if (
+    clampedArgs.some((arg) => (arg.flags & ts.TypeFlags.TypeParameter) !== 0)
+  ) {
+    return undefined;
+  }
+
   const parts: string[] = [];
   const imports: TypeImportSpec[] = [];
-  for (const arg of args) {
+  for (const arg of clampedArgs) {
     const emitted = emitTypeReferenceInner(checker, arg, ctx, compoundContext);
     parts.push(emitted.typeName);
     imports.push(...emitted.imports);

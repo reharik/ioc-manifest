@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   computeManifestModuleSpecifier,
   emitBarePackageSpecifierFromNodeModulesPath,
+  formatRelativeImportEscapesPackageRootWarning,
   mapTypesPackageToRuntimePackage,
   normalizeEmittedModuleSpecifier,
   relativeImportEscapesPackageRoot,
@@ -174,6 +175,50 @@ describe("relativeImportEscapesPackageRoot", () => {
         relativeImportEscapesPackageRoot("@scope/pkg", generatedDir, packageRoot),
         false,
       );
+    });
+  });
+});
+
+describe("formatRelativeImportEscapesPackageRootWarning", () => {
+  const escapingImport = "../../packages/lib-foo/src/MediaStorage.js";
+
+  describe("When type names and a source factory are provided", () => {
+    it("should render both the type name(s) and the factory path", () => {
+      const warning = formatRelativeImportEscapesPackageRootWarning(
+        escapingImport,
+        {
+          typeNames: ["MediaStorage"],
+          sourceFactory: {
+            exportName: "buildService",
+            modulePath: "src/buildService.ts",
+            line: 12,
+          },
+        },
+      );
+
+      assert.match(warning, /escapes the package root/);
+      assert.match(warning, /"MediaStorage"/);
+      assert.match(warning, /"buildService"/);
+      assert.match(warning, /src\/buildService\.ts:12/);
+      assert.doesNotMatch(warning, /undefined/);
+    });
+
+    it("should pluralize the type label for multiple type names", () => {
+      const warning = formatRelativeImportEscapesPackageRootWarning(
+        escapingImport,
+        { typeNames: ["MediaRef", "MediaStorage"] },
+      );
+      assert.match(warning, /types "MediaRef", "MediaStorage"/);
+    });
+  });
+
+  describe("When no provenance is provided", () => {
+    it("should degrade cleanly without printing undefined", () => {
+      const warning =
+        formatRelativeImportEscapesPackageRootWarning(escapingImport);
+      assert.match(warning, /escapes the package root/);
+      assert.doesNotMatch(warning, /undefined/);
+      assert.doesNotMatch(warning, /Pulled in by factory/);
     });
   });
 });

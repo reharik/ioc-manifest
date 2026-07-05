@@ -32,6 +32,7 @@ import {
 } from "./writeManifest.js";
 import type { ManifestRuntimePaths } from "./manifestPaths.js";
 import { buildGroupPlan } from "../groups/resolveGroupPlan.js";
+import { buildBoundedGroupCollectionTypeRefs } from "../groups/boundedGroupCollectionType.js";
 import {
   isAppMode,
   isLibraryMode,
@@ -212,6 +213,11 @@ export const generateManifest = async (
     );
   }
 
+  const boundedGroupCollectionTypeRefs = buildBoundedGroupCollectionTypeRefs(
+    groupResult?.manifest,
+    { program, generatedDir, scanDirs, projectRoot },
+  );
+
   const writeOptions = {
     demandSupply,
     registryTypesBuildContext: {
@@ -220,6 +226,7 @@ export const generateManifest = async (
       scanDirs,
       projectRoot,
     },
+    boundedGroupCollectionTypeRefs,
   };
 
   const artifactSources = buildManifestArtifactSources(

@@ -7,7 +7,7 @@ import type { IocGroupsManifest } from "../core/manifest.js";
 import type { DemandSupplyAnalysisResult } from "./analyzeDemandSupply/index.js";
 import type { DiscoveredFactory } from "./types.js";
 import type { ResolvedContractRegistration } from "./resolveRegistrationPlan.js";
-import { writeManifest } from "./writeManifest.js";
+import { buildManifestArtifactSources, writeManifest } from "./writeManifest.js";
 
 const mkFactory = (
   partial: Pick<DiscoveredFactory, "contractName" | "implementationName"> &
@@ -799,6 +799,92 @@ describe("writeManifest", () => {
         ),
         "a collision warning should be emitted",
       );
+    });
+  });
+
+  describe("When a resolved type pulls in another package's IocGeneratedCradle", () => {
+    const mkEntry = (
+      key: string,
+      typeName: string,
+      imports: DemandSupplyAnalysisResult["entries"][number]["typeRef"]["imports"],
+    ): DemandSupplyAnalysisResult["entries"][number] => ({
+      key,
+      typeRef: { typeName, imports },
+      classification: "local",
+    });
+
+    const buildTypes = (
+      demandSupply: DemandSupplyAnalysisResult,
+    ): string =>
+      buildManifestArtifactSources(
+        [],
+        [],
+        undefined,
+        path.join(os.tmpdir(), "ioc-self-import", "ioc-manifest.ts"),
+        "ioc-manifest",
+        { demandSupply },
+      ).typesSource;
+
+    it("should never import a name this file also declares (no TS2440 self-import)", () => {
+      const typesSource = buildTypes({
+        entries: [
+          mkEntry("container", "IocGeneratedCradle", [
+            {
+              typeName: "IocGeneratedCradle",
+              relImport: "../../lib-foo/src/generated/ioc-registry.types.js",
+              useDefaultImport: false,
+            },
+          ]),
+          mkEntry("database", "Database", [
+            {
+              typeName: "Database",
+              relImport: "../fixtures/contracts.js",
+              useDefaultImport: false,
+            },
+          ]),
+        ],
+        externalKeys: [],
+        scopeProvidedKeys: [],
+      });
+
+      // The file declares its own cradle interface and must not also import that name.
+      assert.match(typesSource, /export interface IocGeneratedCradle \{/);
+      assert.doesNotMatch(typesSource, /import[^\n]*IocGeneratedCradle/);
+      // The self-import bucket held only that name, so the whole import line is dropped.
+      assert.doesNotMatch(typesSource, /ioc-registry\.types\.js/);
+      // Legitimate imports from other specifiers are untouched.
+      assert.match(
+        typesSource,
+        /import type \{ Database \} from "\.\.\/fixtures\/contracts\.js";/,
+      );
+      // A stripped bucket must never leave behind an empty import.
+      assert.doesNotMatch(typesSource, /import type \{\s*\} from/);
+    });
+
+    it("should strip only the declared name from a shared bucket, keeping co-located imports", () => {
+      const shared = "../../lib-foo/src/generated/ioc-registry.types.js";
+      const typesSource = buildTypes({
+        entries: [
+          mkEntry("container", "IocGeneratedCradle", [
+            {
+              typeName: "IocGeneratedCradle",
+              relImport: shared,
+              useDefaultImport: false,
+            },
+            { typeName: "PublicThing", relImport: shared, useDefaultImport: false },
+          ]),
+        ],
+        externalKeys: [],
+        scopeProvidedKeys: [],
+      });
+
+      // The co-located public type still imports; the declared name is gone from the import.
+      assert.match(
+        typesSource,
+        /import type \{ PublicThing \} from "\.\.\/\.\.\/lib-foo\/src\/generated\/ioc-registry\.types\.js";/,
+      );
+      assert.doesNotMatch(typesSource, /import[^\n]*IocGeneratedCradle/);
+      assert.doesNotMatch(typesSource, /import type \{\s*\} from/);
     });
   });
 });

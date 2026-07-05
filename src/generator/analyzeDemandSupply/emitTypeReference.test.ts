@@ -262,6 +262,62 @@ describe("emitTypeReference", () => {
     });
   });
 
+  describe("When a factory returns an alias of a generic with a defaulted param", () => {
+    const aliasFile = path.join(fixtureDir, "generic-default-alias.ts");
+
+    it("should emit the bare alias name with no type-arg brackets and still import it", () => {
+      const program = makeProgram([aliasFile]);
+      const checker = program.getTypeChecker();
+      const sf = program.getSourceFile(aliasFile)!;
+      const ctx = emitCtxForFile(program, sf);
+      const ref = emitTypeReference(
+        checker,
+        factoryReturnType(program, aliasFile, "buildAppConfig"),
+        ctx,
+      );
+      assert.ok(ref);
+      assert.strictEqual(ref.typeName, "AppConfig");
+      assert.strictEqual(ref.imports.length, 1);
+      assert.strictEqual(ref.imports[0]?.typeName, "AppConfig");
+      assert.match(ref.imports[0]?.relImport ?? "", /generic-default-alias\.js$/);
+    });
+
+    it("should emit the bare generic name when referenced with an unresolved param", () => {
+      const program = makeProgram([aliasFile]);
+      const checker = program.getTypeChecker();
+      const sf = program.getSourceFile(aliasFile)!;
+      const ctx = emitCtxForFile(program, sf);
+      const result = tryEmitTypeReference(
+        checker,
+        factoryReturnType(program, aliasFile, "buildOpenConfig"),
+        ctx,
+      );
+      assert.strictEqual(result.ok, true);
+      if (result.ok) {
+        assert.strictEqual(result.value.typeName, "Cfg");
+        assert.strictEqual(result.value.imports.length, 1);
+        assert.strictEqual(result.value.imports[0]?.typeName, "Cfg");
+      }
+    });
+  });
+
+  describe("When a factory returns a directly-instantiated generic", () => {
+    it("should still emit the base name with its concrete type argument", () => {
+      const program = makeProgram();
+      const checker = program.getTypeChecker();
+      const factoryFile = path.join(fixtureDir, "factories.ts");
+      const sf = program.getSourceFile(factoryFile)!;
+      const ctx = emitCtxForFile(program, sf);
+      const ref = emitTypeReference(
+        checker,
+        factoryReturnType(program, factoryFile, "buildLiteralStrategy"),
+        ctx,
+      );
+      assert.ok(ref);
+      assert.strictEqual(ref.typeName, 'Strategy<"album.shared">');
+    });
+  });
+
   describe("When a union contains an unresolvable type parameter member", () => {
     it("should name the compound type and failing constituent on the property", () => {
       const file = path.join(fixtureDir, "_generic-union.ts");

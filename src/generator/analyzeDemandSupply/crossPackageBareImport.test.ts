@@ -247,5 +247,66 @@ describe("cross-package bare import recovery", () => {
       assert.match(joined, /escapes the package root/);
       assert.match(joined, /packages\/lib-foo/);
     });
+
+    it("should name the factory that pulled the escaping import in", () => {
+      const program = loadFixtureProgram([
+        path.join(appDir, "src/buildService.ts"),
+      ]);
+      const escapingImport = "../../packages/lib-foo/src/MediaStorage.js";
+      const warnings: string[] = [];
+      const prevWarn = console.warn;
+      console.warn = (msg: unknown) => {
+        warnings.push(String(msg));
+      };
+      try {
+        buildManifestArtifactSources(
+          [],
+          [],
+          undefined,
+          path.join(generatedDir, "ioc-manifest.ts"),
+          "ioc-manifest",
+          {
+            demandSupply: {
+              entries: [
+                {
+                  key: "mediaStorage",
+                  typeRef: {
+                    typeName: "MediaStorage",
+                    imports: [
+                      {
+                        typeName: "MediaStorage",
+                        relImport: escapingImport,
+                        useDefaultImport: false,
+                        sourceFactory: {
+                          exportName: "buildService",
+                          modulePath: "src/buildService.ts",
+                          line: 7,
+                        },
+                      },
+                    ],
+                  },
+                  classification: "external",
+                },
+              ],
+              externalKeys: ["mediaStorage"],
+              scopeProvidedKeys: [],
+            },
+            registryTypesBuildContext: {
+              program,
+              generatedDir,
+              scanDirs,
+              projectRoot,
+            },
+          },
+        );
+      } finally {
+        console.warn = prevWarn;
+      }
+
+      const joined = warnings.join("\n");
+      assert.match(joined, /escapes the package root/);
+      assert.match(joined, /src\/buildService\.ts:7/);
+      assert.match(joined, /"MediaStorage"/);
+    });
   });
 });

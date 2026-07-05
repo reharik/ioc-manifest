@@ -5,6 +5,43 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-07-05
+
+### Added
+
+- **Type-argument declarations for generic groups, with a generation-time member
+  gate.** A group over a generic base contract now declares its type argument in
+  `ioc.config.ts`. Every member's bound argument is verified `member extends the
+group's declared arg` at generation — same satisfaction direction as the externals
+  check — and a mismatch fails generation. Declaring the constraint (`<TemplateName>`)
+  gives a bounded-heterogeneous group where each member narrows it; declaring a
+  literal (`<"shareInvite">`) gives a homogeneous group. The cradle emits
+  `ReadonlyArray<Base<declaredArg>>` for the collection. Failures aggregate: every
+  mismatch prints, then generation throws once naming each group, member, and both
+  args.
+
+- **Generic required-parameter bases must declare a group argument.** A group over a
+  generic base whose type parameter is required now fails generation with a
+  diagnostic naming the group and base when no argument is declared, instead of
+  emitting a bare reference. **This can surface a previously-passing build** if such a
+  group slipped through as uncompilable output. Bases whose parameter has a default
+  may omit the argument. Regenerate after upgrading.
+
+### Fixed
+
+- **An alias of a generic-with-default gained a spurious type argument (`TS2315`).**
+  `type KnexConfig = Knex.Config` (where `Config<SV = any>`) emitted `KnexConfig<any>`
+  against an alias that takes no parameters. Type-argument emission is now clamped to
+  the arity of the printed name: zero-arity names emit bare, only concrete arguments
+  render.
+
+- **The generated types file could import a name it also declares (`TS2440`).** In
+  composed mode a cross-package reference could pull another package's
+  `IocGeneratedCradle` into the import list of a file that also declares its own.
+  Locally-declared names (`IocGeneratedCradle`, `IocExternals`, `IocScopeProvided`,
+  emitted group aliases) are now stripped from the import buckets. Indexed-access
+  references (`IocGeneratedCradle["key"]`) are unaffected.
+
 ## [2.1.0] - 2026-07-05
 
 ### Added

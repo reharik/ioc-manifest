@@ -92,6 +92,13 @@ export type IocRegisterableManifest = IocGeneratedContainerManifestCore &
 export type IocGroupLeafManifest = {
   contractName: string;
   registrationKey: string;
+  /**
+   * When the group's base type is generic, the source text of the type argument this member binds
+   * to the base (e.g. `"album.shared"`). Captured for record/introspection; the bounded collection
+   * cradle type is emitted from the group's declared arg, not per-member args. Omitted for
+   * non-generic groups.
+   */
+  typeArgument?: string;
 };
 
 /** Collection group: ordered list of implementations to resolve from the cradle. */
@@ -116,6 +123,12 @@ export type IocGroupRootManifest = {
   readonly baseType: string;
   /** Opaque canonical identifier for cross-manifest base-type matching (§8.1). */
   readonly baseTypeId: string;
+  /**
+   * Source text of the type argument declared for a generic `baseType` in `ioc.config`
+   * (`groups.<name>.baseTypeArg`). Present only for groups over a generic base with a declared arg;
+   * drives the bounded collection cradle type `ReadonlyArray<baseType<baseTypeArg>>`.
+   */
+  readonly baseTypeArg?: string;
   readonly members: IocGroupNodeManifest;
 };
 

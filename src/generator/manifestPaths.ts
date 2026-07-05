@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { IocLifetime, IocScanDirSpec } from "../config/iocConfig.js";
+import type { FactorySourceLocation } from "./analyzeDemandSupply/types.js";
 
 const toPosix = (value: string): string => value.replace(/\\/g, "/");
 
@@ -256,13 +257,39 @@ export const relativeImportEscapesPackageRoot = (
   return rel.startsWith("..") || path.isAbsolute(rel);
 };
 
+/** Provenance for an escaping generated import, rendered into the warning when available. */
+export type EscapingImportProvenance = {
+  /** Type name(s) imported via the escaping specifier. */
+  typeNames?: readonly string[];
+  /** Factory whose type resolution pulled the escaping import in. */
+  sourceFactory?: FactorySourceLocation;
+};
+
 export const formatRelativeImportEscapesPackageRootWarning = (
   relImport: string,
-): string =>
-  `[ioc-warn] Generated import ${JSON.stringify(relImport)} escapes the package root.\n` +
-  `This usually means a factory imports a type via a deep relative path instead of the\n` +
-  `package's public API. Consider importing via the bare package specifier (e.g.\n` +
-  `"@packages/other-package") in the factory source.`;
+  provenance?: EscapingImportProvenance,
+): string => {
+  const typeNames = provenance?.typeNames ?? [];
+  const sourceFactory = provenance?.sourceFactory;
+
+  const typePart =
+    typeNames.length > 0
+      ? ` (${typeNames.length > 1 ? "types" : "type"} ${typeNames
+          .map((n) => JSON.stringify(n))
+          .join(", ")})`
+      : "";
+  const factoryLine =
+    sourceFactory !== undefined
+      ? `\nPulled in by factory ${JSON.stringify(sourceFactory.exportName)} at ${sourceFactory.modulePath}:${sourceFactory.line}.`
+      : "";
+
+  return (
+    `[ioc-warn] Generated import ${JSON.stringify(relImport)}${typePart} escapes the package root.${factoryLine}\n` +
+    `This usually means a factory imports a type via a deep relative path instead of the\n` +
+    `package's public API. Consider importing via the bare package specifier (e.g.\n` +
+    `"@packages/other-package") in the factory source.`
+  );
+};
 
 const isBarePackageModuleSpecifier = (spec: string): boolean => {
   if (spec.length === 0) {

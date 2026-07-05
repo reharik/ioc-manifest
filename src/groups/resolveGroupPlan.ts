@@ -7,6 +7,7 @@ import type * as ts from "typescript";
 import {
   collectContractDefaultMembersAssignableToBase,
   collectImplementationMembersAssignableToBase,
+  getBaseTypeParameterInfo,
   resolveDeclaredBaseType,
   shouldIncludeImplInCollectionGroup,
   type AssignableImplementationMember,
@@ -15,6 +16,7 @@ import {
 import {
   IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS,
   type IocGroupNodeManifest,
+  type IocGroupObjectManifest,
   type IocGroupRootManifest,
   type IocGroupsManifest,
 } from "../core/manifest.js";
@@ -37,6 +39,14 @@ export type IocGroupKind = "collection" | "object";
 export type IocGroupDefinition = {
   kind: IocGroupKind;
   baseType: string;
+  /**
+   * Type argument for a generic `baseType`, as the source text of a type the program can resolve
+   * (e.g. a constraint type name for a bounded-heterogeneous group, or a literal-alias name for a
+   * homogeneous group). Every member's bound arg must be assignable to it, checked at generation.
+   * Required when `baseType` has a required (non-defaulted) type parameter; a config error when
+   * `baseType` is non-generic.
+   */
+  baseTypeArg?: string;
 };
 
 export type IocGroupsConfig = Record<string, IocGroupDefinition>;
@@ -47,6 +57,7 @@ export type GroupPlan =
       kind: "collection";
       baseType: string;
       baseTypeId: string;
+      baseTypeArg?: string;
       members: readonly AssignableImplementationMember[];
     }
   | {
@@ -54,6 +65,7 @@ export type GroupPlan =
       kind: "object";
       baseType: string;
       baseTypeId: string;
+      baseTypeArg?: string;
       members: readonly ContractDefaultGroupMember[];
     };
 
@@ -68,7 +80,30 @@ export type GroupPlanIssue =
     }
   | { kind: "group_root_key_collision"; key: string }
   | { kind: "group_root_key_reserved_manifest"; key: string }
-  | { kind: "group_discovery_missing_context" };
+  | { kind: "group_discovery_missing_context" }
+  | {
+      kind: "group_base_not_generic";
+      groupName: string;
+      baseType: string;
+    }
+  | {
+      kind: "group_generic_base_missing_arg";
+      groupName: string;
+      baseType: string;
+    }
+  | {
+      kind: "group_unknown_base_type_arg";
+      groupName: string;
+      baseTypeArg: string;
+      message: string;
+    }
+  | {
+      kind: "group_member_arg_not_assignable";
+      groupName: string;
+      contractName: string;
+      memberArg: string;
+      declaredArg: string;
+    };
 
 export type GroupPlanResult = {
   plans: readonly GroupPlan[];
@@ -116,8 +151,15 @@ const validateGroupDefinition = (
     return { kind: "group_invalid_entry", groupName };
   }
 
+  if (
+    raw.baseTypeArg !== undefined &&
+    (typeof raw.baseTypeArg !== "string" || raw.baseTypeArg.length === 0)
+  ) {
+    return { kind: "group_invalid_entry", groupName };
+  }
+
   const extraKeys = Object.keys(raw).filter(
-    (key) => key !== "kind" && key !== "baseType",
+    (key) => key !== "kind" && key !== "baseType" && key !== "baseTypeArg",
   );
   if (extraKeys.length > 0) {
     return { kind: "group_invalid_entry", groupName };
@@ -126,23 +168,38 @@ const validateGroupDefinition = (
   return undefined;
 };
 
+/**
+ * Serializes a member's captured type argument to source text for the manifest leaf. Requires the
+ * checker; omitted when absent (callers without a checker — e.g. non-generic-group unit tests — get
+ * leaves without `typeArgument`).
+ */
+const memberTypeArgumentText = (
+  member: AssignableImplementationMember | ContractDefaultGroupMember,
+  checker: ts.TypeChecker | undefined,
+): { typeArgument: string } | Record<string, never> =>
+  member.typeArgument !== undefined && checker !== undefined
+    ? { typeArgument: checker.typeToString(member.typeArgument) }
+    : {};
+
 export const groupPlanToManifestNode = (
   plan: GroupPlan,
+  checker?: ts.TypeChecker,
 ): IocGroupNodeManifest => {
   if (plan.kind === "collection") {
     return plan.members.map((member) => ({
       contractName: member.contractName,
       registrationKey: member.registrationKey,
+      ...memberTypeArgumentText(member, checker),
     }));
   }
 
-  const out: Record<string, { contractName: string; registrationKey: string }> =
-    {};
+  const out: IocGroupObjectManifest = {};
 
   for (const member of plan.members) {
     out[member.contractKey] = {
       contractName: member.contractName,
       registrationKey: member.registrationKey,
+      ...memberTypeArgumentText(member, checker),
     };
   }
 
@@ -151,11 +208,13 @@ export const groupPlanToManifestNode = (
 
 export const groupPlanToManifestRoot = (
   plan: GroupPlan,
+  checker?: ts.TypeChecker,
 ): IocGroupRootManifest => ({
   kind: plan.kind,
   baseType: plan.baseType,
   baseTypeId: plan.baseTypeId,
-  members: groupPlanToManifestNode(plan),
+  ...(plan.baseTypeArg !== undefined ? { baseTypeArg: plan.baseTypeArg } : {}),
+  members: groupPlanToManifestNode(plan, checker),
 });
 
 const buildObjectGroupMembersOrIssue = (
@@ -206,6 +265,18 @@ export const formatGroupPlanIssue = (issue: GroupPlanIssue): string => {
 
     case "group_discovery_missing_context":
       return "[ioc-config] groups require TypeScript program context (program, generatedDir, scanDirs). Use the IoC manifest generator or pass GroupDiscoveryBuildContext into buildGroupPlan.";
+
+    case "group_base_not_generic":
+      return `[ioc-config] groups.${JSON.stringify(issue.groupName)}: base type ${JSON.stringify(issue.baseType)} is not generic, so baseTypeArg must not be declared`;
+
+    case "group_generic_base_missing_arg":
+      return `[ioc-config] groups.${JSON.stringify(issue.groupName)}: base type ${JSON.stringify(issue.baseType)} is generic with a required type parameter; declare groups.${JSON.stringify(issue.groupName)}.baseTypeArg to bound the group`;
+
+    case "group_unknown_base_type_arg":
+      return `[ioc-config] groups.${JSON.stringify(issue.groupName)}: baseTypeArg ${JSON.stringify(issue.baseTypeArg)}: ${issue.message}`;
+
+    case "group_member_arg_not_assignable":
+      return `[ioc-config] groups.${JSON.stringify(issue.groupName)}: member ${JSON.stringify(issue.contractName)} binds ${JSON.stringify(issue.memberArg)} to the base type argument, which is not assignable to the group's declared arg ${JSON.stringify(issue.declaredArg)}`;
 
     default: {
       const exhaustive: never = issue;
@@ -307,6 +378,86 @@ const runGroupPlan = (
       continue;
     }
 
+    // Generic base + declared-arg gate. A non-generic base must not declare an arg; a base with a
+    // required (non-defaulted) type parameter must declare one (bare emission is the TS2314 bug we
+    // reject). A defaulted-only base may omit the arg (its default applies, no bounded emission).
+    const baseInfo = getBaseTypeParameterInfo(checker, resolvedBase.type);
+    if (baseInfo.arity === 0 && entry.baseTypeArg !== undefined) {
+      issues.push({
+        kind: "group_base_not_generic",
+        groupName,
+        baseType: entry.baseType,
+      });
+      continue;
+    }
+    if (baseInfo.requiredCount > 0 && entry.baseTypeArg === undefined) {
+      issues.push({
+        kind: "group_generic_base_missing_arg",
+        groupName,
+        baseType: entry.baseType,
+      });
+      continue;
+    }
+
+    let declaredArgType: ts.Type | undefined;
+    if (entry.baseTypeArg !== undefined) {
+      const argResolution = resolveDeclaredBaseType(
+        discovery.program,
+        checker,
+        entry.baseTypeArg,
+      );
+      if (!argResolution.ok) {
+        issues.push({
+          kind: "group_unknown_base_type_arg",
+          groupName,
+          baseTypeArg: entry.baseTypeArg,
+          message: argResolution.message,
+        });
+        continue;
+      }
+      declaredArgType = argResolution.type;
+    }
+
+    // Aggregating gate: every member's bound arg must extend the declared arg (same satisfaction
+    // direction as the externals check). Collects one issue per offending member so a group with
+    // two bad members surfaces both in the single aggregated throw.
+    const collectMemberArgIssues = (
+      members: readonly (
+        | AssignableImplementationMember
+        | ContractDefaultGroupMember
+      )[],
+    ): GroupPlanIssue[] => {
+      if (declaredArgType === undefined || entry.baseTypeArg === undefined) {
+        return [];
+      }
+      const argIssues: GroupPlanIssue[] = [];
+      const seenContracts = new Set<string>();
+      for (const member of members) {
+        if (seenContracts.has(member.contractName)) {
+          continue;
+        }
+        seenContracts.add(member.contractName);
+        if (member.typeArgument === undefined) {
+          continue;
+        }
+        if (!checker.isTypeAssignableTo(member.typeArgument, declaredArgType)) {
+          argIssues.push({
+            kind: "group_member_arg_not_assignable",
+            groupName,
+            contractName: member.contractName,
+            memberArg: checker.typeToString(member.typeArgument),
+            declaredArg: entry.baseTypeArg,
+          });
+        }
+      }
+      return argIssues;
+    };
+
+    const baseTypeArgField =
+      entry.baseTypeArg !== undefined
+        ? { baseTypeArg: entry.baseTypeArg }
+        : {};
+
     if (entry.kind === "object") {
       const objectMembers = collectContractDefaultMembersAssignableToBase(
         checker,
@@ -325,8 +476,15 @@ const runGroupPlan = (
           kind: "object",
           baseType: entry.baseType,
           baseTypeId: canonical.baseTypeId,
+          ...baseTypeArgField,
           members: [],
         });
+        continue;
+      }
+
+      const argIssues = collectMemberArgIssues(objectMembers);
+      if (argIssues.length > 0) {
+        issues.push(...argIssues);
         continue;
       }
 
@@ -342,6 +500,7 @@ const runGroupPlan = (
         kind: "object",
         baseType: entry.baseType,
         baseTypeId: canonical.baseTypeId,
+        ...baseTypeArgField,
         members: built.members,
       });
       continue;
@@ -365,8 +524,15 @@ const runGroupPlan = (
         kind: "collection",
         baseType: entry.baseType,
         baseTypeId: canonical.baseTypeId,
+        ...baseTypeArgField,
         members: [],
       });
+      continue;
+    }
+
+    const argIssues = collectMemberArgIssues(members);
+    if (argIssues.length > 0) {
+      issues.push(...argIssues);
       continue;
     }
 
@@ -376,6 +542,7 @@ const runGroupPlan = (
       kind: "collection",
       baseType: entry.baseType,
       baseTypeId: canonical.baseTypeId,
+      ...baseTypeArgField,
       members,
     });
   }
@@ -386,7 +553,7 @@ const runGroupPlan = (
 
   const manifest: IocGroupsManifest = {};
   for (const plan of groupPlans) {
-    manifest[plan.groupName] = groupPlanToManifestRoot(plan);
+    manifest[plan.groupName] = groupPlanToManifestRoot(plan, checker);
   }
 
   return { ok: true, plans: groupPlans, manifest };

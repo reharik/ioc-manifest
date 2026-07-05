@@ -14,6 +14,8 @@ export type BaseTypeResolution =
 export type AssignableImplementationMember = {
   contractName: string;
   registrationKey: string;
+  /** Live type this member binds to the generic base's first type parameter (for the gen-time gate). */
+  typeArgument?: ts.Type;
 };
 
 /** One contract row for `kind: "object"` groups; manifest object keys are `contractKey`. */
@@ -21,6 +23,8 @@ export type ContractDefaultGroupMember = {
   contractKey: string;
   contractName: string;
   registrationKey: string;
+  /** Live type this member binds to the generic base's first type parameter (for the gen-time gate). */
+  typeArgument?: ts.Type;
 };
 
 const getTopLevelTypeDeclaration = (
@@ -272,6 +276,106 @@ export const isNominallyAssignable = (
   );
 };
 
+/** Declared type-parameter counts for a group's base type, read from its declaration. */
+export type BaseTypeParameterInfo = {
+  /** Total declared type parameters. */
+  arity: number;
+  /** Type parameters with no default (must be supplied). */
+  requiredCount: number;
+};
+
+const isTypeParameterizedDeclaration = (
+  decl: ts.Declaration,
+): decl is
+  | ts.InterfaceDeclaration
+  | ts.TypeAliasDeclaration
+  | ts.ClassDeclaration =>
+  ts.isInterfaceDeclaration(decl) ||
+  ts.isTypeAliasDeclaration(decl) ||
+  ts.isClassDeclaration(decl);
+
+/**
+ * Reads the base type's declared type parameters. `arity` is the total; `requiredCount` counts
+ * parameters without a default (a defaulted param may be omitted by a group, a required one may not).
+ */
+export const getBaseTypeParameterInfo = (
+  checker: ts.TypeChecker,
+  baseType: ts.Type,
+): BaseTypeParameterInfo => {
+  const sym = getNamedSymbolForType(baseType);
+  const canonical =
+    sym !== undefined ? resolveCanonicalSymbol(checker, sym) : undefined;
+  const decl = canonical?.declarations?.find(isTypeParameterizedDeclaration);
+  const typeParameters = decl?.typeParameters ?? [];
+  return {
+    arity: typeParameters.length,
+    requiredCount: typeParameters.filter((tp) => tp.default === undefined)
+      .length,
+  };
+};
+
+const isTypeReference = (type: ts.Type): type is ts.TypeReference =>
+  (type.flags & ts.TypeFlags.Object) !== 0 &&
+  ((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference) !== 0;
+
+const findBaseTypeArgument = (
+  checker: ts.TypeChecker,
+  type: ts.Type,
+  canonicalBase: ts.Symbol,
+  visited: Set<ts.Type>,
+): ts.Type | undefined => {
+  if (visited.has(type)) {
+    return undefined;
+  }
+  visited.add(type);
+
+  const sym = type.getSymbol();
+  if (sym !== undefined) {
+    if (resolveCanonicalSymbol(checker, sym) === canonicalBase) {
+      if (isTypeReference(type)) {
+        const args = checker.getTypeArguments(type);
+        return args.length > 0 ? args[0] : undefined;
+      }
+      return undefined;
+    }
+  }
+
+  if (type.isClassOrInterface()) {
+    for (const base of checker.getBaseTypes(type)) {
+      const found = findBaseTypeArgument(checker, base, canonicalBase, visited);
+      if (found !== undefined) {
+        return found;
+      }
+    }
+  }
+
+  return undefined;
+};
+
+/**
+ * The type a member contract binds to the generic `baseType`'s first type parameter, e.g. for
+ * `type AlbumStrategy = Strategy<"album.shared">` (or `interface X extends Strategy<...>`), returns
+ * the `"album.shared"` type. Walks the member's own reference and its transitive base types.
+ * Returns undefined when the base is not generic or the member does not instantiate it directly.
+ */
+export const extractMemberBaseTypeArgument = (
+  checker: ts.TypeChecker,
+  memberContractType: ts.Type,
+  baseType: ts.Type,
+): ts.Type | undefined => {
+  const baseSym = getNamedSymbolForType(baseType);
+  if (baseSym === undefined) {
+    return undefined;
+  }
+  const canonicalBase = resolveCanonicalSymbol(checker, baseSym);
+  return findBaseTypeArgument(
+    checker,
+    memberContractType,
+    canonicalBase,
+    new Set(),
+  );
+};
+
 const getContractDeclaredTypeRaw = (
   checker: ts.TypeChecker,
   program: ts.Program,
@@ -367,6 +471,11 @@ export const collectImplementationMembersAssignableToBase = (
     if (!isNominallyAssignable(checker, contractType, baseType)) {
       continue;
     }
+    const typeArgument = extractMemberBaseTypeArgument(
+      checker,
+      contractType,
+      baseType,
+    );
     for (const impl of plan.implementations) {
       if (filterImpl !== undefined && !filterImpl(plan, impl)) {
         continue;
@@ -374,6 +483,7 @@ export const collectImplementationMembersAssignableToBase = (
       members.push({
         contractName: plan.contractName,
         registrationKey: impl.registrationKey,
+        ...(typeArgument !== undefined ? { typeArgument } : {}),
       });
     }
   }
@@ -417,10 +527,16 @@ export const collectContractDefaultMembersAssignableToBase = (
         `[ioc-config] Contract ${JSON.stringify(plan.contractName)} has defaultImplementationName ${JSON.stringify(plan.defaultImplementationName)} but no matching implementation row (internal registration plan inconsistency).`,
       );
     }
+    const typeArgument = extractMemberBaseTypeArgument(
+      checker,
+      contractType,
+      baseType,
+    );
     members.push({
       contractKey: plan.contractKey,
       contractName: plan.contractName,
       registrationKey: defaultImpl.registrationKey,
+      ...(typeArgument !== undefined ? { typeArgument } : {}),
     });
   }
   members.sort((a, b) => a.contractKey.localeCompare(b.contractKey));

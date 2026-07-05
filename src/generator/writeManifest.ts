@@ -11,6 +11,10 @@ import {
   resolveContractTypeSourceFile,
 } from "./contractTypeSourceFile.js";
 import type { DemandSupplyAnalysisResult } from "./analyzeDemandSupply/index.js";
+import type {
+  EmittedTypeReference,
+  FactorySourceLocation,
+} from "./analyzeDemandSupply/types.js";
 import type { DiscoveredFactory } from "./types.js";
 import type { ResolvedContractRegistration } from "./resolveRegistrationPlan.js";
 import type {
@@ -38,6 +42,13 @@ export type IocRegistryTypesBuildContext = {
 export type WriteManifestOptions = {
   demandSupply: DemandSupplyAnalysisResult;
   registryTypesBuildContext?: IocRegistryTypesBuildContext;
+  /**
+   * Emitted `Base<declaredArg>` element type per collection group whose base is generic with a
+   * declared `baseTypeArg`. When present for a group, its collection cradle type is emitted as
+   * `ReadonlyArray<Base<declaredArg>>` (imports merged into the registry-types file) instead of the
+   * default per-member union.
+   */
+  boundedGroupCollectionTypeRefs?: Map<string, EmittedTypeReference>;
 };
 
 /** Deterministic ordering for manifest output. */
@@ -433,11 +444,22 @@ export const IOC_SCOPE_PROVIDED_KEYS = [${scopeProvidedKeys.map((k) => JSON.stri
 `;
 };
 
+/**
+ * Collected imports for one module specifier. `sourceFactory` is the first factory seen to pull
+ * this specifier in (first writer wins); dedupe by relImport must not split on provenance.
+ */
+type TypeImportBucket = {
+  named: Set<string>;
+  defaults: Set<string>;
+  sourceFactory?: FactorySourceLocation;
+};
+
 const addTypeImport = (
-  grouped: Map<string, { named: Set<string>; defaults: Set<string> }>,
+  grouped: Map<string, TypeImportBucket>,
   relImport: string,
   typeName: string,
   useDefaultImport: boolean,
+  sourceFactory?: FactorySourceLocation,
 ): void => {
   let bucket = grouped.get(relImport);
   if (bucket === undefined) {
@@ -449,10 +471,13 @@ const addTypeImport = (
   } else {
     bucket.named.add(typeName);
   }
+  if (sourceFactory !== undefined && bucket.sourceFactory === undefined) {
+    bucket.sourceFactory = sourceFactory;
+  }
 };
 
 const buildImportLinesFromBuckets = (
-  grouped: Map<string, { named: Set<string>; defaults: Set<string> }>,
+  grouped: Map<string, TypeImportBucket>,
 ): string[] => {
   const importLines: string[] = [];
   for (const [relImport, bucket] of Array.from(grouped.entries()).sort(
@@ -478,20 +503,24 @@ const buildImportLinesFromBuckets = (
 };
 
 const warnOnRelativeImportsEscapingPackageRoot = (
-  relImports: Iterable<string>,
+  grouped: Map<string, TypeImportBucket>,
   generatedDir: string,
   packageRoot: string,
 ): void => {
-  const warned = new Set<string>();
-  for (const relImport of relImports) {
-    if (warned.has(relImport)) {
-      continue;
-    }
+  // `grouped` is keyed by relImport, so each specifier is visited once — no extra dedupe needed.
+  for (const [relImport, bucket] of grouped) {
     if (
       relativeImportEscapesPackageRoot(relImport, generatedDir, packageRoot)
     ) {
-      console.warn(formatRelativeImportEscapesPackageRootWarning(relImport));
-      warned.add(relImport);
+      const typeNames = [...bucket.defaults, ...bucket.named].sort((a, b) =>
+        a.localeCompare(b),
+      );
+      console.warn(
+        formatRelativeImportEscapesPackageRootWarning(relImport, {
+          typeNames,
+          sourceFactory: bucket.sourceFactory,
+        }),
+      );
     }
   }
 };
@@ -501,11 +530,9 @@ const buildCradleTypeSource = (
   groupsManifest: IocGroupsManifest | undefined,
   demandSupply: DemandSupplyAnalysisResult,
   registryTypesBuildContext?: IocRegistryTypesBuildContext,
+  boundedGroupCollectionTypeRefs?: Map<string, EmittedTypeReference>,
 ): string => {
-  const grouped = new Map<
-    string,
-    { named: Set<string>; defaults: Set<string> }
-  >();
+  const grouped = new Map<string, TypeImportBucket>();
 
   for (const entry of demandSupply.entries) {
     for (const imp of entry.typeRef.imports) {
@@ -514,6 +541,7 @@ const buildCradleTypeSource = (
         imp.relImport,
         imp.typeName,
         imp.useDefaultImport,
+        imp.sourceFactory,
       );
     }
   }
@@ -550,16 +578,6 @@ const buildCradleTypeSource = (
     }
   }
 
-  const importLines = buildImportLinesFromBuckets(grouped);
-
-  if (registryTypesBuildContext?.projectRoot !== undefined) {
-    warnOnRelativeImportsEscapingPackageRoot(
-      grouped.keys(),
-      registryTypesBuildContext.generatedDir,
-      registryTypesBuildContext.projectRoot,
-    );
-  }
-
   const demandSupplyKeys = new Set(demandSupply.entries.map((e) => e.key));
   const cradleProperties: { key: string; line: string }[] = [];
 
@@ -591,8 +609,24 @@ const buildCradleTypeSource = (
   const appendGroupNodeType = (
     node: IocGroupNodeManifest,
     indent: string,
+    groupName?: string,
   ): string => {
     if (Array.isArray(node)) {
+      // Bounded collection: a group over a generic base with a declared arg emits
+      // `ReadonlyArray<Base<declaredArg>>` (the array is bounded, not per-element narrowed) and
+      // pulls Base/arg imports into the registry-types file. addTypeImport dedupes, so registering
+      // on both the cradle-property and type-alias call sites is harmless.
+      const boundedRef =
+        groupName !== undefined
+          ? boundedGroupCollectionTypeRefs?.get(groupName)
+          : undefined;
+      if (boundedRef !== undefined) {
+        for (const imp of boundedRef.imports) {
+          addTypeImport(grouped, imp.relImport, imp.typeName, imp.useDefaultImport);
+        }
+        return `ReadonlyArray<${boundedRef.typeName}>`;
+      }
+
       const seen = new Set<string>();
       const order: string[] = [];
 
@@ -633,7 +667,7 @@ const buildCradleTypeSource = (
       const root = groupsManifest[key]!;
       cradleProperties.push({
         key,
-        line: `  ${tsIdentifierOrQuoted(key)}: ${appendGroupNodeType(root.members, "")};`,
+        line: `  ${tsIdentifierOrQuoted(key)}: ${appendGroupNodeType(root.members, "", key)};`,
       });
       demandSupplyKeys.add(key);
     }
@@ -642,15 +676,20 @@ const buildCradleTypeSource = (
   cradleProperties.sort((a, b) => a.key.localeCompare(b.key));
   const propertyLines = cradleProperties.map((p) => p.line);
 
-  // Exported per-group type aliases so consumers can `import type { Channels }`
-  // instead of `IocGeneratedCradle["channels"]`. Named after the group key in
-  // PascalCase; skipped (with a warning) if the name would collide with an
-  // imported contract type or another alias, so the file always compiles.
-  const reservedTopLevelNames = new Set<string>([
+  // Names this file declares at top level. Single source of truth: it seeds the
+  // alias-collision set below and is reused as the exclusion list that strips
+  // self-imports before import lines are emitted (a file must never import a name it
+  // also declares — that is a TS2440 duplicate identifier). Emitted group aliases are
+  // added to it as they are produced.
+  const locallyDeclaredNames = new Set<string>([
     "IocGeneratedCradle",
     "IocExternals",
     "IocScopeProvided",
   ]);
+  // Alias-collision guard also reserves every imported name, so an alias can never
+  // shadow an imported contract type. (Imported names are NOT locally declared, so
+  // they must stay out of `locallyDeclaredNames` above or their imports would strip.)
+  const reservedTopLevelNames = new Set<string>(locallyDeclaredNames);
   for (const bucket of grouped.values()) {
     for (const named of bucket.named) {
       reservedTopLevelNames.add(named);
@@ -660,6 +699,10 @@ const buildCradleTypeSource = (
     }
   }
 
+  // Exported per-group type aliases so consumers can `import type { Channels }`
+  // instead of `IocGeneratedCradle["channels"]`. Named after the group key in
+  // PascalCase; skipped (with a warning) if the name would collide with an
+  // imported contract type or another alias, so the file always compiles.
   const groupAliasLines: string[] = [];
   if (groupsManifest !== undefined) {
     const aliasGroupKeys = Object.keys(groupsManifest).sort((a, b) =>
@@ -677,15 +720,43 @@ const buildCradleTypeSource = (
         continue;
       }
       reservedTopLevelNames.add(aliasName);
+      locallyDeclaredNames.add(aliasName);
       const root = groupsManifest[key]!;
       groupAliasLines.push(
-        `export type ${aliasName} = ${appendGroupNodeType(root.members, "")};`,
+        `export type ${aliasName} = ${appendGroupNodeType(root.members, "", key)};`,
       );
     }
   }
 
   const groupAliasBlock =
     groupAliasLines.length > 0 ? `\n\n${groupAliasLines.join("\n\n")}` : "";
+
+  // Never import a name this file also declares (self-import → TS2440). Strip the
+  // locally-declared top-level names from every import bucket, then drop any bucket
+  // left empty so no `import type {} from '…'` line is emitted. Only the import
+  // buckets are touched here — group-alias emission and the declared interfaces above
+  // are already finalized.
+  for (const bucket of grouped.values()) {
+    for (const name of locallyDeclaredNames) {
+      bucket.named.delete(name);
+      bucket.defaults.delete(name);
+    }
+  }
+  for (const [relImport, bucket] of grouped) {
+    if (bucket.named.size === 0 && bucket.defaults.size === 0) {
+      grouped.delete(relImport);
+    }
+  }
+
+  const importLines = buildImportLinesFromBuckets(grouped);
+
+  if (registryTypesBuildContext?.projectRoot !== undefined) {
+    warnOnRelativeImportsEscapingPackageRoot(
+      grouped,
+      registryTypesBuildContext.generatedDir,
+      registryTypesBuildContext.projectRoot,
+    );
+  }
 
   const externalEntries = demandSupply.entries.filter(
     (e) => e.classification === "external",
@@ -802,6 +873,7 @@ export const buildManifestArtifactSources = (
     iocGroupsManifest,
     options.demandSupply,
     options.registryTypesBuildContext,
+    options.boundedGroupCollectionTypeRefs,
   );
 
   return { mainSource, typesSource, typesPath };
