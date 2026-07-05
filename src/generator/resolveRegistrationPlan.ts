@@ -76,6 +76,15 @@ export type ResolvedContractRegistration = {
   accessKey: string;
   /** Which implementation is selected for the default contract key (implementation name). */
   defaultImplementationName: string;
+  /**
+   * Whether a default implementation was actually elected for this contract's singular default-slot
+   * key. False only for a group-base contract with no explicitly elected default (`default: true`):
+   * forming a group no longer requires electing a default of the base, and such a base emits no
+   * singular contract-default key (the group root and member keys stand alone). Absent ⇒ true
+   * (normal contracts always back their default slot). {@link defaultImplementationName} still holds
+   * a deterministic pick for internal use (group membership, lifetimes).
+   */
+  contractDefaultElected?: boolean;
   implementations: ResolvedImplementationEntry[];
 };
 
@@ -166,9 +175,30 @@ const listImplFactories = (factories: readonly DiscoveredFactory[]): string =>
     )
     .join("; ");
 
+/** Contract names used as a group's base type. A group base may omit electing a default (Step 1). */
+const groupBaseTypeNamesFromConfig = (
+  config: IocConfig | undefined,
+): Set<string> =>
+  new Set(Object.values(config?.groups ?? {}).map((group) => group.baseType));
+
+/**
+ * True when a group-base contract has no explicitly elected default (`default: true`). Such a base
+ * does not require electing a default and emits no singular contract-default key.
+ */
+const isGroupBaseWithoutElectedDefault = (
+  contractName: string,
+  mergedByImplName: Map<string, DiscoveredFactory>,
+  groupBaseTypeNames: ReadonlySet<string>,
+): boolean =>
+  groupBaseTypeNames.has(contractName) &&
+  !Array.from(mergedByImplName.values()).some(
+    (factory) => factory.default === true,
+  );
+
 const selectDefaultImplementationKey = (
   contractName: string,
   mergedByImplName: Map<string, DiscoveredFactory>,
+  electionOptional = false,
 ): string => {
   const factories = Array.from(mergedByImplName.values());
   const withDefault = factories.filter((factory) => factory.default === true);
@@ -187,7 +217,9 @@ const selectDefaultImplementationKey = (
     }),
   );
 
-  return selectDefaultImplementationName(contractName, rows);
+  return selectDefaultImplementationName(contractName, rows, {
+    electionOptional,
+  });
 };
 
 const resolveLifetime = (factory: DiscoveredFactory): IocLifetime => {
@@ -543,11 +575,14 @@ const validateGlobalNamespaceCollisions = (
     accessKeyOwnerContract.set(accessKey, contractName);
   }
 
+  const groupBaseTypeNames = groupBaseTypeNamesFromConfig(config);
+
   for (const [contractName, merged] of mergedByContract) {
     const accessKey = accessKeyByContract.get(contractName)!;
     const defaultImplementationName = selectDefaultImplementationKey(
       contractName,
       merged,
+      isGroupBaseWithoutElectedDefault(contractName, merged, groupBaseTypeNames),
     );
     const defaultKey = merged.get(defaultImplementationName)!.registrationKey;
     const { accessKey: configuredAccessKey } = getContractLevelConfig(
@@ -643,14 +678,28 @@ export const buildRegistrationPlan = (
     a.localeCompare(b),
   );
 
+  // Contract names used as a group's base type. A group base with no explicitly elected default
+  // does not require electing one (Step 1) and emits no singular contract-default key (Step 2).
+  const groupBaseTypeNames = groupBaseTypeNamesFromConfig(config);
+
   const out: ResolvedContractRegistration[] = [];
 
   for (const contractName of sortedContracts) {
     const mergedByImplName = mergedByContract.get(contractName)!;
 
+    // Election is required for ordinary contracts; a group base may omit it. When a group base has
+    // no explicit `default: true`, its default slot is not "elected" and its singular key is
+    // suppressed downstream — but a deterministic default is still picked for internal use.
+    const contractDefaultElected = !isGroupBaseWithoutElectedDefault(
+      contractName,
+      mergedByImplName,
+      groupBaseTypeNames,
+    );
+
     const defaultImplementationName = selectDefaultImplementationKey(
       contractName,
       mergedByImplName,
+      !contractDefaultElected,
     );
 
     const contractTypeRelImport = assertUniqueContractTypeRelImport(
@@ -731,6 +780,7 @@ export const buildRegistrationPlan = (
       contractKey,
       accessKey,
       defaultImplementationName,
+      ...(contractDefaultElected ? {} : { contractDefaultElected: false }),
       implementations,
     });
   }

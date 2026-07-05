@@ -5,6 +5,32 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-07-05
+
+### Added
+
+- **Groups no longer require an elected default implementation.** A base type that
+  exists only to define group membership — injected as the group and via each
+  member's own key, but never as the base type itself — can now form a group without
+  electing a default. No singular contract-default key is emitted for such a base.
+  This applies to both generic and non-generic bases; it keys on "group base with no
+  elected default," not on whether the type is generic. To keep the base injectable
+  on its own, elect a default (`default: true`) as before and its singular key is
+  emitted as usual. **This can change generated output:** a group base you previously
+  gave a throwaway default purely to satisfy the requirement will lose its singular
+  cradle key on regeneration — remove those defaults where the singular was never
+  consumed. Regenerate after upgrading.
+
+## [2.2.1] - 2026-07-05
+
+### Fixed
+
+- **`baseTypeArg` was rejected by the config loader.** The fail-fast loader's
+  group-key allow-list omitted `baseTypeArg`, so a valid generic-group config was
+  rejected before `resolveGroupPlan` (which already accepted it) could run. The key
+  is now allowed and validated with the same non-empty-string check, keeping the
+  loader and plan resolver consistent.
+
 ## [2.2.0] - 2026-07-05
 
 ### Added

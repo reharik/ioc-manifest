@@ -80,6 +80,80 @@ groups: {
 
 Now `container.resolve("readServices")` returns an object keyed by each contract's convention name — `{ userReadService: UserReadService, orderReadService: OrderReadService, ... }`. You can spread that straight onto your GraphQL context without importing each service individually.
 
+## Generic base types
+
+A base type can be generic. When it is, the group declares the type argument with `baseTypeArg`, and every member's bound argument is checked against it at generation.
+
+Say each notification strategy is typed to one template:
+
+```ts
+export interface FastSweepNotificationStrategy<T extends TemplateName> {
+  kind: T;
+  execute: (rows: PendingNotification[]) => Promise<PayloadResult<T>[]>;
+}
+
+// buildShareInviteStrategy.ts    → FastSweepNotificationStrategy<'shareInvite'>
+// buildWelcomeStrategy.ts        → FastSweepNotificationStrategy<'welcome'>
+// buildPasswordResetStrategy.ts  → FastSweepNotificationStrategy<'passwordReset'>
+```
+
+The group declares the **bound** — the constraint — so it holds every template:
+
+```ts
+groups: {
+  fastSweepNotificationStrategies: {
+    kind: "collection",
+    baseType: "FastSweepNotificationStrategy",
+    baseTypeArg: "TemplateName",
+  },
+},
+```
+
+Generation verifies each member's argument is assignable to the declared one (`'shareInvite' extends TemplateName`, etc.) and emits the bounded collection:
+
+```ts
+fastSweepNotificationStrategies: ReadonlyArray<
+  FastSweepNotificationStrategy<TemplateName>
+>;
+```
+
+Declare the **constraint** (`TemplateName`) for a bounded-heterogeneous group — members each narrow it. Declare a **literal** (`'welcome'`) for a homogeneous group — only `<'welcome'>` members pass; any other argument fails generation, naming the group, the member, and both arguments.
+
+`baseTypeArg` resolves as source text, so its type must be in scope in the generated file — a named type gets imported automatically. A required-parameter base used with no `baseTypeArg` fails generation rather than emitting a bare, uncompilable reference.
+
+## Group-only base types
+
+A base type often exists *only* to define membership — you inject the group and each member by its own key, but never the base type by itself. Such a base needs no default: declare the group and stop.
+
+```ts
+export interface PublicReadServiceBase {
+  readonly scope: "public";
+}
+
+// buildPublicAlbumReadService.ts      → PublicAlbumReadService (extends PublicReadServiceBase)
+// buildPublicMediaItemReadService.ts  → PublicMediaItemReadService (extends PublicReadServiceBase)
+```
+
+```ts
+groups: {
+  publicReadServices: {
+    kind: "object",
+    baseType: "PublicReadServiceBase",
+  },
+},
+```
+
+Generation emits the group and each member's own key — but no `publicReadServiceBase` key, because nothing injects the base directly:
+
+```ts
+publicReadServices: {
+  publicAlbumReadService: PublicAlbumReadService;
+  publicMediaItemReadService: PublicMediaItemReadService;
+};
+```
+
+This holds for both generic and non-generic bases — it keys on "group base with no elected default," not on whether the type is generic. If you *do* want the base injectable on its own, elect a default implementation (`default: true`) and its singular key is emitted as usual.
+
 ## Group validation
 
 The generator validates that group names don't collide with implementation keys or access keys. Group names are otherwise unconstrained — a collection group can take a contract's plural name (e.g. a `storages` group for the `Storage` contract), which earlier versions reserved for an auto-generated collection. If a base type has no assignable implementations, generation fails with an actionable error. Cross-manifest group composition is covered in [Cross-package composition](/monorepo/composition).

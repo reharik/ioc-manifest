@@ -171,7 +171,11 @@ const plansToIocContractManifest = (
         );
       }
 
+      // A group-base contract with no elected default backs no default slot: don't mark any
+      // implementation as the resolved default (keeps runtime registration consistent with the
+      // suppressed cradle key).
       const isResolvedDefault =
+        plan.contractDefaultElected !== false &&
         impl.implementationName === plan.defaultImplementationName;
       const accessKeyDiffersFromConvention =
         plan.accessKey !== plan.contractKey;
@@ -596,6 +600,13 @@ const buildCradleTypeSource = (
   );
 
   for (const plan of sortedPlans) {
+    // A group-base contract with no elected default emits no singular contract-default key — it is
+    // injected only as the group (root + member keys stand alone). This also removes the phantom
+    // bare-generic singular (e.g. `strategy: Strategy`) that would be a TS2314 error. Member and
+    // group-root keys are unaffected.
+    if (plan.contractDefaultElected === false) {
+      continue;
+    }
     const typeName = plan.contractName;
     if (!demandSupplyKeys.has(plan.accessKey)) {
       cradleProperties.push({

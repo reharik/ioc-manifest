@@ -6,16 +6,29 @@ export type ContractDefaultSelectionRow = {
   readonly default?: boolean;
 };
 
+export type SelectDefaultImplementationOptions = {
+  /**
+   * When true, a contract that would otherwise be "ambiguous — none selected" (multiple
+   * implementations, no `default: true`, no convention-key match) resolves to a deterministic pick
+   * (first implementation name alphabetically) instead of throwing. Used for group-base contracts,
+   * whose singular contract-default key is suppressed anyway, so no election is required to form the
+   * group. Rules 1–3 and the "multiple default: true" error are unchanged.
+   */
+  electionOptional?: boolean;
+};
+
 /**
  * Resolves which implementation backs the contract default slot. Precedence:
  * 1. Exactly one row with `default: true`
  * 2. Exactly one row whose `registrationKey` equals the contract key (camel-cased contract name)
  * 3. Exactly one row total
- * 4. Otherwise throws (ambiguous)
+ * 4. Otherwise throws (ambiguous) — unless {@link SelectDefaultImplementationOptions.electionOptional}
+ *    is set, in which case a deterministic first-by-name pick is returned.
  */
 export const selectDefaultImplementationName = (
   contractName: string,
   rows: readonly ContractDefaultSelectionRow[],
+  options?: SelectDefaultImplementationOptions,
 ): string => {
   if (rows.length === 0) {
     throw new Error(
@@ -52,6 +65,12 @@ export const selectDefaultImplementationName = (
 
   if (rows.length === 1) {
     return rows[0]!.implementationName;
+  }
+
+  if (options?.electionOptional === true) {
+    return [...rows]
+      .map((r) => r.implementationName)
+      .sort((a, b) => a.localeCompare(b))[0]!;
   }
 
   const names = rows

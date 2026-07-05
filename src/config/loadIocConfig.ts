@@ -196,11 +196,20 @@ const validateGroupsShape = (value: unknown, pathLabel: string): void => {
       );
     }
 
-    const allowed = new Set(["kind", "baseType"]);
+    if (
+      entry.baseTypeArg !== undefined &&
+      (typeof entry.baseTypeArg !== "string" || entry.baseTypeArg.length === 0)
+    ) {
+      throw new Error(
+        `[ioc-config] ${pathLabel}.${JSON.stringify(name)}.baseTypeArg must be a non-empty string when set`,
+      );
+    }
+
+    const allowed = new Set(["kind", "baseType", "baseTypeArg"]);
     for (const key of Object.keys(entry)) {
       if (!allowed.has(key)) {
         throw new Error(
-          `[ioc-config] ${pathLabel}.${JSON.stringify(name)} has unknown property ${JSON.stringify(key)} (only kind and baseType are allowed)`,
+          `[ioc-config] ${pathLabel}.${JSON.stringify(name)} has unknown property ${JSON.stringify(key)} (only kind, baseType and baseTypeArg are allowed)`,
         );
       }
     }

@@ -60,7 +60,6 @@ export const iocManifest = {
         implementationName: "storageEventLogger",
         lifetime: "singleton",
         moduleIndex: 2,
-        default: true,
         discoveredBy: "naming",
       },
     },

@@ -183,6 +183,71 @@ describe("loadIocConfig", () => {
       );
     });
   });
+
+  describe("When a group declares a valid baseTypeArg", () => {
+    it("should load without throwing", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-grouparg-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" }, groups: {
+          strategies: { kind: "collection", baseType: "Strategy", baseTypeArg: "SharedEventName" }
+        } };`,
+      );
+      const c = await loadIocConfig(cfg);
+      assert.equal(c.groups?.strategies?.baseTypeArg, "SharedEventName");
+    });
+  });
+
+  describe("When a group's baseTypeArg is an empty string", () => {
+    it("should throw the non-empty-string mirror error", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-grouparg-empty-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" }, groups: {
+          strategies: { kind: "collection", baseType: "Strategy", baseTypeArg: "" }
+        } };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /baseTypeArg must be a non-empty string when set/,
+      );
+    });
+  });
+
+  describe("When a group's baseTypeArg is not a string", () => {
+    it("should throw the non-empty-string mirror error", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-grouparg-num-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" }, groups: {
+          strategies: { kind: "collection", baseType: "Strategy", baseTypeArg: 123 }
+        } };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /baseTypeArg must be a non-empty string when set/,
+      );
+    });
+  });
+
+  describe("When a group omits baseTypeArg", () => {
+    it("should still load (baseTypeArg is optional)", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-groupnoarg-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" }, groups: {
+          readServices: { kind: "collection", baseType: "ReadService" }
+        } };`,
+      );
+      const c = await loadIocConfig(cfg);
+      assert.equal(c.groups?.readServices?.baseType, "ReadService");
+      assert.equal(c.groups?.readServices?.baseTypeArg, undefined);
+    });
+  });
 });
 
 describe("resolveProjectRootFromIocConfigPath", () => {

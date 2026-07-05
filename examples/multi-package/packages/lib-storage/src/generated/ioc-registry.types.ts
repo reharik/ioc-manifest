@@ -7,7 +7,6 @@ import type { LoggingService } from "@example/lib-contracts/types/LoggingService
 export interface IocGeneratedCradle {
   localStorage: Storage;
   loggers: ReadonlyArray<LoggingService>;
-  loggingService: LoggingService;
   s3Storage: Storage;
   storage: Storage;
   storageEventLogger: LoggingService;
