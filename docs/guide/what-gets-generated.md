@@ -34,6 +34,8 @@ export interface IocScopeProvided {
 
 The main manifest file also exports `IOC_SCOPE_PROVIDED_KEYS` (a `readonly` string tuple) so app code can reference the set — for example, to assert a request-scope helper covers the keys the current path resolves. See [`scopeProvided`](/config/reference#scopeprovided).
 
+If the package declares [groups](/concepts/groups), each group's aggregate type is also exported as a named alias (the access key in PascalCase — `channels` → `export type Channels = …`), so factories can import the group type directly instead of indexing `IocGeneratedCradle`.
+
 **`ioc-manifest.ts`** — the registration data:
 
 ```ts

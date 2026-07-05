@@ -90,6 +90,16 @@ const sanitizeToIdentifierPart = (raw: string): string => {
 const tsIdentifierOrQuoted = (key: string): string =>
   /^[a-zA-Z_$][\w$]*$/.test(key) ? key : JSON.stringify(key);
 
+const isValidTsIdentifier = (name: string): boolean =>
+  /^[A-Za-z_$][\w$]*$/.test(name);
+
+/**
+ * Group access keys are camelCase; the exported per-group type alias is the same key
+ * with an uppercased first letter (`channels` → `Channels`).
+ */
+const groupKeyToTypeAliasName = (key: string): string =>
+  key.length === 0 ? key : key.charAt(0).toUpperCase() + key.slice(1);
+
 /**
  * Stable, collision-safe namespace identifiers derived from module paths
  * (e.g. `examples/a-single-implementation.ts` → `ioc_examples_a_single_implementation`).
@@ -632,6 +642,51 @@ const buildCradleTypeSource = (
   cradleProperties.sort((a, b) => a.key.localeCompare(b.key));
   const propertyLines = cradleProperties.map((p) => p.line);
 
+  // Exported per-group type aliases so consumers can `import type { Channels }`
+  // instead of `IocGeneratedCradle["channels"]`. Named after the group key in
+  // PascalCase; skipped (with a warning) if the name would collide with an
+  // imported contract type or another alias, so the file always compiles.
+  const reservedTopLevelNames = new Set<string>([
+    "IocGeneratedCradle",
+    "IocExternals",
+    "IocScopeProvided",
+  ]);
+  for (const bucket of grouped.values()) {
+    for (const named of bucket.named) {
+      reservedTopLevelNames.add(named);
+    }
+    for (const def of bucket.defaults) {
+      reservedTopLevelNames.add(def);
+    }
+  }
+
+  const groupAliasLines: string[] = [];
+  if (groupsManifest !== undefined) {
+    const aliasGroupKeys = Object.keys(groupsManifest).sort((a, b) =>
+      a.localeCompare(b),
+    );
+    for (const key of aliasGroupKeys) {
+      const aliasName = groupKeyToTypeAliasName(key);
+      if (
+        !isValidTsIdentifier(aliasName) ||
+        reservedTopLevelNames.has(aliasName)
+      ) {
+        console.warn(
+          `[ioc-warn] group "${key}": cannot emit type alias "${aliasName}" (name is invalid or collides with an existing type). Use IocGeneratedCradle["${key}"] instead.`,
+        );
+        continue;
+      }
+      reservedTopLevelNames.add(aliasName);
+      const root = groupsManifest[key]!;
+      groupAliasLines.push(
+        `export type ${aliasName} = ${appendGroupNodeType(root.members, "")};`,
+      );
+    }
+  }
+
+  const groupAliasBlock =
+    groupAliasLines.length > 0 ? `\n\n${groupAliasLines.join("\n\n")}` : "";
+
   const externalEntries = demandSupply.entries.filter(
     (e) => e.classification === "external",
   );
@@ -674,7 +729,7 @@ Re-run \`npm run gen:manifest\` after changing factories or IoC config.
 
   return `${header}${importLines.length > 0 ? importLines.join("\n") + "\n\n" : ""}export interface IocGeneratedCradle {
 ${propertyLines.join("\n")}
-}${externalsBlock}${scopeProvidedBlock}
+}${groupAliasBlock}${externalsBlock}${scopeProvidedBlock}
 `;
 };
 

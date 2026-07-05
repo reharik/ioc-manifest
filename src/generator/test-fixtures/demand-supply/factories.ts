@@ -3,7 +3,9 @@ import type {
   AlbumService,
   Database,
   Logger,
+  NotificationPayload,
   PostgresClient,
+  Strategy,
   UserService,
 } from "./contracts.js";
 
@@ -55,4 +57,12 @@ export const buildAlbumService = ({
 
 export const buildOrphanSupply = (): Logger => ({
   log: () => {},
+});
+
+export const buildNotificationStrategy = (): Strategy<NotificationPayload> => ({
+  handle: () => {},
+});
+
+export const buildLiteralStrategy = (): Strategy<"album.shared"> => ({
+  handle: () => {},
 });

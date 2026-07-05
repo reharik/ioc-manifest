@@ -699,6 +699,16 @@ describe("writeManifest", () => {
       assert.match(typesSource, /\bwidgetObjectGroup:\s*\{/);
       assert.match(typesSource, /\bwidget:\s*Widget\b/);
 
+      // Each group root also gets an exported PascalCase type alias.
+      assert.match(
+        typesSource,
+        /export type WidgetGroup = ReadonlyArray<Widget>;/,
+      );
+      assert.match(
+        typesSource,
+        /export type WidgetObjectGroup = \{[\s\S]*?widget:\s*Widget;[\s\S]*?\};/,
+      );
+
       const mainSource = await fs.readFile(manifestOutPath, "utf8");
       assert.ok(
         !/\bgroups\s*:/.test(mainSource),
@@ -711,6 +721,84 @@ describe("writeManifest", () => {
         /IocGeneratedContainerManifest<\s*IocManifestGroupRoots\s*>/,
       );
       assert.match(mainSource, /\bmanifestSchemaVersion:\s*2\b/);
+    });
+
+    it("should skip a group type alias that would collide with an imported contract type and warn", async () => {
+      const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ioc-write-manifest-"));
+      const generatedDir = path.join(tempRoot, "src", "generated");
+      await fs.mkdir(generatedDir, { recursive: true });
+      const manifestOutPath = path.join(generatedDir, "ioc-manifest.ts");
+
+      const acceptedFactories: DiscoveredFactory[] = [
+        mkFactory({
+          contractName: "Channel",
+          implementationName: "emailChannel",
+          registrationKey: "emailChannel",
+          modulePath: "fixtures/e.ts",
+          relImport: "../fixtures/e.js",
+        }),
+      ];
+      const plans: ResolvedContractRegistration[] = [
+        mkPlan({
+          contractName: "Channel",
+          contractTypeRelImport: "../fixtures/contracts.js",
+          contractKey: "channel",
+          accessKey: "emailChannel",
+          defaultImplementationName: "emailChannel",
+          implementations: [
+            {
+              implementationName: "emailChannel",
+              exportName: "buildEmailChannel",
+              modulePath: "fixtures/e.ts",
+              relImport: "../fixtures/e.js",
+              registrationKey: "emailChannel",
+              lifetime: "singleton",
+            },
+          ],
+        }),
+      ];
+
+      // Group key PascalCases to "Channel", colliding with the imported contract type.
+      const groups: IocGroupsManifest = {
+        channel: {
+          kind: "collection",
+          baseType: "Channel",
+          baseTypeId: "/fake/Channel.ts:Channel",
+          members: [{ contractName: "Channel", registrationKey: "emailChannel" }],
+        },
+      };
+
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+      console.warn = (...args: unknown[]) => {
+        warnings.push(args.map((a) => String(a)).join(" "));
+      };
+      try {
+        await writeWithDemandSupply(
+          acceptedFactories,
+          plans,
+          groups,
+          manifestOutPath,
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      const typesSource = await fs.readFile(
+        path.join(generatedDir, "ioc-registry.types.ts"),
+        "utf8",
+      );
+      assert.ok(
+        !/export type Channel\b/.test(typesSource),
+        "colliding alias must not be emitted",
+      );
+      assert.match(typesSource, /\bchannel:\s*ReadonlyArray<Channel>;/);
+      assert.ok(
+        warnings.some(
+          (w) => w.includes("[ioc-warn]") && w.includes('group "channel"'),
+        ),
+        "a collision warning should be emitted",
+      );
     });
   });
 });

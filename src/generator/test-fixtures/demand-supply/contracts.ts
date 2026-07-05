@@ -21,3 +21,11 @@ export type AlbumRepository = {
 export type AlbumService = {
   list: () => string[];
 };
+
+export type NotificationPayload = {
+  body: string;
+};
+
+export interface Strategy<TInput> {
+  handle: (input: TInput) => void;
+}

@@ -14,6 +14,10 @@ export interface IocGeneratedCradle {
   storages: ReadonlyArray<Storage>;
 }
 
+export type Loggers = ReadonlyArray<LoggingService>;
+
+export type Storages = ReadonlyArray<Storage>;
+
 export interface IocExternals {}
 
 export interface IocScopeProvided {}

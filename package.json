@@ -1,6 +1,6 @@
 {
   "name": "ioc-manifest",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "B uild-time factory discovery and codegen: generates a typed Awilix (PROXY) registration manifest from TypeScript sources with ioc.config as the single policy surface.",
   "license": "MIT",
   "repository": {

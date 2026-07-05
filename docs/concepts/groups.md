@@ -86,14 +86,16 @@ The generator validates that group names don't collide with implementation keys 
 
 ## Consuming a group from the same package
 
-A factory can consume a group declared in its own package. The group's aggregate type — the array for a collection, the keyed object for an object group — is generated, so there's no hand-written type to import. You name it by indexing the generated cradle inside your deps type:
+A factory can consume a group declared in its own package. The group's aggregate type — the array for a collection, the keyed object for an object group — is generated, so there's no hand-written type to import.
+
+Alongside `IocGeneratedCradle`, generation emits a **named type alias for each group**, so you can import it directly. The alias is the group's access key in PascalCase — `channels` → `Channels`:
 
 ```ts
-import type { IocGeneratedCradle } from "./generated/ioc-registry.types.js";
+import type { Channels } from "./generated/ioc-registry.types.js";
 import type { NotificationService } from "./channel-contracts.js";
 
 type NotificationServiceDeps = {
-  channels: IocGeneratedCradle["channels"];
+  channels: Channels;
 };
 
 export const buildNotificationService = ({
@@ -106,7 +108,9 @@ export const buildNotificationService = ({
 });
 ```
 
-This is the one sanctioned use of `IocGeneratedCradle` in a factory. The [named-deps-type rule](/guide/quick-start#1-create-factories) still holds: the parameter binds to a named type (`NotificationServiceDeps`), and `IocGeneratedCradle["channels"]` appears only as a *type reference inside it*, to name the otherwise-unnameable group type. You still cannot bind the parameter directly to the cradle (`({ channels }: IocGeneratedCradle)`).
+The equivalent indexed access is still valid and identical — `channels: IocGeneratedCradle["channels"]` — and remains the fallback in the rare case where a group's PascalCase alias would collide with an imported contract type name (generation skips that one alias and emits an `[ioc-warn]` naming the group; every other group still gets its alias, and the file always compiles).
+
+Either way, the [named-deps-type rule](/guide/quick-start#1-create-factories) still holds: the parameter binds to a named type (`NotificationServiceDeps`), and the group type appears only as a *type reference inside it*. You still cannot bind the parameter directly to the cradle (`({ channels }: IocGeneratedCradle)`).
 
 For an object group, members are keyed by their convention name — `channels.emailChannel`, `channels.smsChannel`, the same registration keys derived from `buildEmailChannel` and `buildSmsChannel`. A collection group indexes to `ReadonlyArray<BaseType>` instead.
 

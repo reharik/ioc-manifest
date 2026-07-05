@@ -5,6 +5,46 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-07-05
+
+### Added
+
+- **Named type-alias exports for groups.** The generated registry types file now
+  emits an `export type` alias for every group, named as the group's access key in
+  PascalCase (`channels` → `Channels`). The alias equals the exact aggregate the
+  group resolves to — `ReadonlyArray<Base>` for collection groups, the keyed `{ … }`
+  object for object groups — so you can import the name directly instead of reaching
+  through the cradle:
+
+```ts
+// before
+type Deps = {
+  strategies: IocGeneratedCradle["fastSweepNotificationStrategies"];
+};
+// now
+import type { FastSweepNotificationStrategies } from "./generated/ioc-registry.types.js";
+type Deps = { strategies: FastSweepNotificationStrategies };
+```
+
+**Collision guard:** if a group's PascalCase alias would collide with an imported
+contract type name or another alias, or would not be a valid identifier, that one
+alias is skipped with an `[ioc-warn]` naming the group — the indexed-access form
+still works, so the generated file always compiles. The plural-group-vs-singular-
+interface convention means this is rare. Regenerate (`ioc generate`) to pick up
+aliases.
+
+### Fixed
+
+- **Generic type arguments were dropped from generated cradle types.** A factory
+  returning a generic instantiation (e.g. `Strategy<"album.shared">`) emitted the
+  bare interface name in the cradle, producing uncompilable output for any generic
+  whose type parameter is required (`TS2314: requires 1 type argument`). The emitter
+  now preserves the full instantiation: named-type arguments are imported, literal
+  arguments inline (`Strategy<"album.shared">`), and nested/compound arguments resolve
+  through the same pipeline. An **un-instantiated** type parameter reaching the cradle
+  now fails generation with a clear diagnostic rather than emitting bad output — so a
+  factory that was quietly under-typed surfaces loudly. Regenerate after upgrading.
+
 ## [2.0.0] - 2026-06-26
 
 ### Removed

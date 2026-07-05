@@ -77,6 +77,31 @@ const depsPropertyType = (
   return checker.getTypeOfSymbol(prop);
 };
 
+const factoryReturnType = (
+  program: ts.Program,
+  factoryFile: string,
+  exportName: string,
+): ts.Type => {
+  const checker = program.getTypeChecker();
+  const sf = program.getSourceFile(factoryFile);
+  assert.ok(sf);
+  const stmt = sf.statements.find(
+    (s) =>
+      ts.isVariableStatement(s) &&
+      s.declarationList.declarations.some(
+        (d) => ts.isIdentifier(d.name) && d.name.text === exportName,
+      ),
+  );
+  assert.ok(stmt && ts.isVariableStatement(stmt));
+  const decl = stmt.declarationList.declarations.find(
+    (d) => ts.isIdentifier(d.name) && d.name.text === exportName,
+  );
+  assert.ok(decl?.initializer && ts.isArrowFunction(decl.initializer));
+  const sig = checker.getSignatureFromDeclaration(decl.initializer);
+  assert.ok(sig);
+  return checker.getReturnTypeOfSignature(sig);
+};
+
 describe("emitTypeReference", () => {
   describe("When a deps property uses the string primitive", () => {
     it("should emit inline string without a typescript package import", () => {
@@ -189,6 +214,50 @@ describe("emitTypeReference", () => {
       assert.strictEqual(ref.typeName, "string | Database");
       assert.strictEqual(ref.imports.length, 1);
       assert.strictEqual(ref.imports[0]?.typeName, "Database");
+      assert.match(ref.imports[0]?.relImport ?? "", /contracts\.js$/);
+    });
+  });
+
+  describe("When a factory returns an imported generic instantiation", () => {
+    it("should emit the base name with its named type argument and merge both imports", () => {
+      const program = makeProgram();
+      const checker = program.getTypeChecker();
+      const factoryFile = path.join(fixtureDir, "factories.ts");
+      const sf = program.getSourceFile(factoryFile)!;
+      const ctx = emitCtxForFile(program, sf);
+      const ref = emitTypeReference(
+        checker,
+        factoryReturnType(program, factoryFile, "buildNotificationStrategy"),
+        ctx,
+      );
+      assert.ok(ref);
+      assert.strictEqual(ref.typeName, "Strategy<NotificationPayload>");
+      assert.strictEqual(ref.imports.length, 2);
+      const strategyImport = ref.imports.find((i) => i.typeName === "Strategy");
+      const payloadImport = ref.imports.find(
+        (i) => i.typeName === "NotificationPayload",
+      );
+      assert.ok(strategyImport, "base import present");
+      assert.ok(payloadImport, "argument import present");
+      assert.match(strategyImport.relImport, /contracts\.js$/);
+      assert.match(payloadImport.relImport, /contracts\.js$/);
+    });
+
+    it("should inline a string-literal type argument without an extra import", () => {
+      const program = makeProgram();
+      const checker = program.getTypeChecker();
+      const factoryFile = path.join(fixtureDir, "factories.ts");
+      const sf = program.getSourceFile(factoryFile)!;
+      const ctx = emitCtxForFile(program, sf);
+      const ref = emitTypeReference(
+        checker,
+        factoryReturnType(program, factoryFile, "buildLiteralStrategy"),
+        ctx,
+      );
+      assert.ok(ref);
+      assert.strictEqual(ref.typeName, 'Strategy<"album.shared">');
+      assert.strictEqual(ref.imports.length, 1);
+      assert.strictEqual(ref.imports[0]?.typeName, "Strategy");
       assert.match(ref.imports[0]?.relImport ?? "", /contracts\.js$/);
     });
   });

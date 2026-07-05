@@ -23,6 +23,21 @@ type IocManifestGroupRoots = {
       },
     ];
   };
+  readonly storages: {
+    readonly kind: "collection";
+    readonly baseType: "Storage";
+    readonly baseTypeId: "/home/reharik/Development/ioc-manifest/examples/multi-package/packages/lib-storage/src/types/Storage.ts:Storage";
+    readonly members: readonly [
+      {
+        readonly contractName: "Storage";
+        readonly registrationKey: "localStorage";
+      },
+      {
+        readonly contractName: "Storage";
+        readonly registrationKey: "s3Storage";
+      },
+    ];
+  };
 };
 
 export const iocManifest = {
@@ -86,6 +101,24 @@ export const iocManifest = {
       {
         contractName: "LoggingService",
         registrationKey: "storageEventLogger",
+      },
+    ],
+  },
+
+  // storages
+  storages: {
+    kind: "collection",
+    baseType: "Storage",
+    baseTypeId:
+      "/home/reharik/Development/ioc-manifest/examples/multi-package/packages/lib-storage/src/types/Storage.ts:Storage",
+    members: [
+      {
+        contractName: "Storage",
+        registrationKey: "localStorage",
+      },
+      {
+        contractName: "Storage",
+        registrationKey: "s3Storage",
       },
     ],
   },

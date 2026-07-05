@@ -247,6 +247,34 @@ type EmitInnerResult = {
   imports: TypeImportSpec[];
 };
 
+const emitTypeArgumentList = (
+  checker: ts.TypeChecker,
+  type: ts.Type,
+  ctx: EmitTypeReferenceContext,
+  compoundContext?: { compoundDisplay: string },
+): { text: string; imports: TypeImportSpec[] } | undefined => {
+  if ((type.flags & ts.TypeFlags.Object) === 0) {
+    return undefined;
+  }
+  if (
+    ((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference) === 0
+  ) {
+    return undefined;
+  }
+  const args = checker.getTypeArguments(type as ts.TypeReference);
+  if (args.length === 0) {
+    return undefined;
+  }
+  const parts: string[] = [];
+  const imports: TypeImportSpec[] = [];
+  for (const arg of args) {
+    const emitted = emitTypeReferenceInner(checker, arg, ctx, compoundContext);
+    parts.push(emitted.typeName);
+    imports.push(...emitted.imports);
+  }
+  return { text: `<${parts.join(", ")}>`, imports };
+};
+
 const emitNamedTypeImport = (
   checker: ts.TypeChecker,
   type: ts.Type,
@@ -316,9 +344,18 @@ const emitNamedTypeImport = (
     ) ||
     (cradleTypeImportUsesDefaultExport(declSource, importName) ?? false);
 
-  return {
+  const base: EmitInnerResult = {
     typeName: importName,
     imports: [{ typeName: importName, relImport, useDefaultImport }],
+  };
+
+  const typeArgs = emitTypeArgumentList(checker, apparent, ctx, compoundContext);
+  if (typeArgs === undefined) {
+    return base;
+  }
+  return {
+    typeName: `${base.typeName}${typeArgs.text}`,
+    imports: mergeImports([...base.imports, ...typeArgs.imports]),
   };
 };
 
@@ -389,6 +426,13 @@ const emitTypeReferenceInner = (
     throw new EmitTypeReferenceError(
       `[ioc] Cannot resolve import for type ${JSON.stringify(typeDisplay)}${compoundSuffix}`,
     );
+  }
+
+  // Literal types must be inlined from the un-widened type: getApparentType widens a
+  // string/number/boolean literal to its primitive (`"a"` -> `String`), so this check has
+  // to run before apparent narrowing to preserve narrowed literal type arguments in the cradle.
+  if (hasLiteralTypeFlags(type)) {
+    return inlineResult(checker, type);
   }
 
   const apparent = checker.getApparentType(type);

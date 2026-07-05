@@ -22,6 +22,8 @@ export interface IocGeneratedCradle {
   widget: Widget;
 }
 
+export type MediaStoragesGroup = ReadonlyArray<MediaStorage>;
+
 export interface IocExternals {}
 
 export interface IocScopeProvided {}
