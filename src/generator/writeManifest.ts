@@ -31,6 +31,7 @@ import {
   relativeImportEscapesPackageRoot,
   type ResolvedScanDir,
 } from "./manifestPaths.js";
+import { groupKeyToTypeAliasName } from "./naming.js";
 import { MANIFEST_SCHEMA_VERSION } from "../schemaVersion.js";
 
 export type IocRegistryTypesBuildContext = {
@@ -105,13 +106,6 @@ const tsIdentifierOrQuoted = (key: string): string =>
 
 const isValidTsIdentifier = (name: string): boolean =>
   /^[A-Za-z_$][\w$]*$/.test(name);
-
-/**
- * Group access keys are camelCase; the exported per-group type alias is the same key
- * with an uppercased first letter (`channels` → `Channels`).
- */
-const groupKeyToTypeAliasName = (key: string): string =>
-  key.length === 0 ? key : key.charAt(0).toUpperCase() + key.slice(1);
 
 /**
  * Stable, collision-safe namespace identifiers derived from module paths

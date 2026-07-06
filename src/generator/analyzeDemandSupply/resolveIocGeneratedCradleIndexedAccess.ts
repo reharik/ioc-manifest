@@ -1,6 +1,20 @@
+import path from "node:path";
 import ts from "typescript";
+import type { IocGroupsManifest } from "../../core/manifest.js";
+import { IOC_REGISTRY_TYPES_BASENAME } from "../manifestPaths.js";
+import { groupKeyToTypeAliasName } from "../naming.js";
 
 const IOC_GENERATED_CRADLE_NAME = "IocGeneratedCradle";
+
+/** Basename of the generated registry-types file with its extension dropped (`ioc-registry.types`),
+ * so a `.js` import specifier and the `.ts` source file compare equal. */
+const REGISTRY_TYPES_BASENAME_STEM = IOC_REGISTRY_TYPES_BASENAME.replace(
+  /\.(?:m|c)?[jt]sx?$/,
+  "",
+);
+
+const moduleSpecifierBasenameStem = (specifier: string): string =>
+  path.basename(specifier).replace(/\.(?:m|c)?[jt]sx?$/, "");
 
 const propertyNameText = (name: ts.PropertyName): string | undefined => {
   if (ts.isIdentifier(name)) {
@@ -149,6 +163,95 @@ export const tryParseIocGeneratedCradleIndexedAccessKey = (
   ) {
     return indexType.literal.text;
   }
+  return undefined;
+};
+
+/**
+ * The name imported by an `ImportSpecifier` (`import type { A as B }` → `A`; `import type { A }` → `A`).
+ */
+const importSpecifierImportedName = (
+  spec: ts.ImportSpecifier,
+): string | undefined => {
+  if (spec.propertyName !== undefined && ts.isIdentifier(spec.propertyName)) {
+    return spec.propertyName.text;
+  }
+  if (ts.isIdentifier(spec.name)) {
+    return spec.name.text;
+  }
+  return undefined;
+};
+
+/** The `ImportDeclaration` a named binding was imported through, if the symbol is one. */
+const importDeclarationForSpecifier = (
+  spec: ts.ImportSpecifier,
+): ts.ImportDeclaration | undefined =>
+  ts.findAncestor(spec, ts.isImportDeclaration) ?? undefined;
+
+/**
+ * When a deps property is typed as a bare reference to a group's exported type alias imported by
+ * name from the generated registry-types file
+ * (`import type { Channels } from './generated/ioc-registry.types.js'` → `deps: { channels: Channels }`),
+ * returns the group key (`channels`).
+ *
+ * ENTIRELY SYNTACTIC and cold-start-safe: it reads the import specifier node and reverse-maps the
+ * imported name against the groups manifest. It never resolves the alias's underlying type or reads
+ * the alias declaration from the generated file — either would reintroduce the chicken-egg where the
+ * generated file must already exist for the deps-resolution pass to succeed. The import specifier is
+ * present in the factory source even when the target module cannot resolve on a cold start, so the
+ * module specifier is matched on BASENAME only (the full path can't be resolved yet).
+ */
+export const tryParseConsumedGroupAliasKey = (
+  checker: ts.TypeChecker,
+  typeNode: ts.TypeNode | undefined,
+  groupsManifest: IocGroupsManifest | undefined,
+): string | undefined => {
+  if (groupsManifest === undefined) {
+    return undefined;
+  }
+
+  const resolved = resolveDepsPropertyTypeNode(typeNode, checker);
+  if (
+    resolved === undefined ||
+    !ts.isTypeReferenceNode(resolved) ||
+    (resolved.typeArguments !== undefined && resolved.typeArguments.length > 0) ||
+    !ts.isIdentifier(resolved.typeName)
+  ) {
+    return undefined;
+  }
+
+  const symbol = checker.getSymbolAtLocation(resolved.typeName);
+  if (symbol === undefined) {
+    return undefined;
+  }
+
+  for (const decl of symbol.declarations ?? []) {
+    if (!ts.isImportSpecifier(decl)) {
+      continue;
+    }
+    const importDecl = importDeclarationForSpecifier(decl);
+    if (
+      importDecl === undefined ||
+      !ts.isStringLiteral(importDecl.moduleSpecifier)
+    ) {
+      continue;
+    }
+    if (
+      moduleSpecifierBasenameStem(importDecl.moduleSpecifier.text) !==
+      REGISTRY_TYPES_BASENAME_STEM
+    ) {
+      continue;
+    }
+    const importedName = importSpecifierImportedName(decl);
+    if (importedName === undefined) {
+      continue;
+    }
+    for (const key of Object.keys(groupsManifest)) {
+      if (groupKeyToTypeAliasName(key) === importedName) {
+        return key;
+      }
+    }
+  }
+
   return undefined;
 };
 

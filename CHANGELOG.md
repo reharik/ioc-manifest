@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.3] - 2026-07-06
+
+### Fixed
+
+- **Named group-alias imports could not cold-start (`unresolvable deps type`).** A factory
+  typing a dependency as a group's exported alias imported by name from the generated file
+  (`import type { Channels } from './generated/ioc-registry.types.js'` then
+  `deps: { channels: Channels }`) forced the deps-resolution pass to resolve the alias's
+  underlying type, which requires the generated file to already exist. On a clean checkout,
+  cleared CI cache, or after deleting the generated file, the import resolved to nothing and
+  the run hard-aborted before the file could be written — a chicken-and-egg deadlock. Named
+  alias imports are now recognized **syntactically** off the import specifier (the same
+  cold-start-safe strategy already used for `IocGeneratedCradle['key']` indexed access) and
+  reverse-mapped to their group key, so consumption resolves against the group without ever
+  reading the generated file.
+
 ## [2.3.2] - 2026-07-05
 
 ### Fixed

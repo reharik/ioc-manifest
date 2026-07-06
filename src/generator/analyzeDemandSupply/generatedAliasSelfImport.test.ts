@@ -185,6 +185,28 @@ const typecheckGeneratedSource = (source: string): readonly ts.Diagnostic[] => {
   return program.getSemanticDiagnostics(probe);
 };
 
+/**
+ * Common assertions for the fixture whose factory consumes a group's alias by name. The named-alias
+ * consumption is recognized syntactically and short-circuits to group resolution, so the consuming
+ * property registers no per-property demand: the generated file never imports itself, the group
+ * alias and its cradle key are present, the mismatched property key is absent, and it typechecks.
+ */
+const assertGroupAliasConsumptionClean = (typesSource: string): void => {
+  // Never imports the generated file into itself.
+  assert.doesNotMatch(typesSource, /from ["'][^"']*ioc-registry\.types(\.js)?["']/);
+  // The group alias is declared/exported and the group cradle key is present.
+  assert.match(typesSource, /export type SweepTasks = ReadonlyArray<SweepTask>;/);
+  assert.match(typesSource, /sweepTasks:\s*ReadonlyArray<SweepTask>;/);
+  // The consuming property short-circuits to the group; it is not emitted as its own demand.
+  assert.doesNotMatch(typesSource, /pendingSweeps\s*:/);
+  // The generated file typechecks (no TS2303/TS2304/TS2459).
+  const diagnostics = typecheckGeneratedSource(typesSource);
+  const messages = diagnostics.map((d) =>
+    ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+  );
+  assert.deepStrictEqual(messages, [], messages.join("\n"));
+};
+
 describe("generated group-alias self-import guard", () => {
   describe("When a factory dep resolves to a type declared in the generated output file", () => {
     it("emits the bare local name with no import spec", () => {
@@ -203,22 +225,8 @@ describe("generated group-alias self-import guard", () => {
   });
 
   describe("When a factory imports a group alias from the generated file (warm regen)", () => {
-    it("produces no self-import, keeps the alias declaration, and typechecks", () => {
-      const { typesSource } = buildTypesSource();
-
-      // No import from the registry-types file into itself.
-      assert.doesNotMatch(typesSource, /from ["'][^"']*ioc-registry\.types(\.js)?["']/);
-      // The consumed alias is still declared and exported (reserved-name collision is gone).
-      assert.match(typesSource, /export type SweepTasks = ReadonlyArray<SweepTask>;/);
-      // The property resolves against the local declaration, not an import.
-      assert.match(typesSource, /pendingSweeps:\s*SweepTasks;/);
-
-      // The generated file typechecks (no TS2303/TS2304/TS2459).
-      const diagnostics = typecheckGeneratedSource(typesSource);
-      const messages = diagnostics.map((d) =>
-        ts.flattenDiagnosticMessageText(d.messageText, "\n"),
-      );
-      assert.deepStrictEqual(messages, [], messages.join("\n"));
+    it("short-circuits to group resolution with no self-import, alias declared, and typechecks", () => {
+      assertGroupAliasConsumptionClean(buildTypesSource().typesSource);
     });
   });
 
@@ -257,18 +265,8 @@ describe("generated group-alias self-import guard", () => {
       assert.deepStrictEqual(ref.imports, []);
     });
 
-    it("produces no self-import, keeps the alias declaration, and typechecks", () => {
-      const { typesSource } = buildTypesSource(relGeneratedDir);
-
-      assert.doesNotMatch(typesSource, /from ["'][^"']*ioc-registry\.types(\.js)?["']/);
-      assert.match(typesSource, /export type SweepTasks = ReadonlyArray<SweepTask>;/);
-      assert.match(typesSource, /pendingSweeps:\s*SweepTasks;/);
-
-      const diagnostics = typecheckGeneratedSource(typesSource);
-      const messages = diagnostics.map((d) =>
-        ts.flattenDiagnosticMessageText(d.messageText, "\n"),
-      );
-      assert.deepStrictEqual(messages, [], messages.join("\n"));
+    it("short-circuits to group resolution with no self-import, alias declared, and typechecks", () => {
+      assertGroupAliasConsumptionClean(buildTypesSource(relGeneratedDir).typesSource);
     });
   });
 
@@ -276,32 +274,14 @@ describe("generated group-alias self-import guard", () => {
   // contract-import resolution branch AND the Fix B self-import exclusion in reservedTopLevelNames
   // seeding. Confirms the full composed path emits correct output under both path shapes.
   describe("When registryTypesBuildContext is supplied (composed run)", () => {
-    it("keeps the alias declaration and emits no self-import (absolute generatedDir)", () => {
-      const { typesSource } = buildTypesSource(generatedDir, true);
-
-      assert.doesNotMatch(typesSource, /from ["'][^"']*ioc-registry\.types(\.js)?["']/);
-      assert.match(typesSource, /export type SweepTasks = ReadonlyArray<SweepTask>;/);
-      assert.match(typesSource, /pendingSweeps:\s*SweepTasks;/);
-
-      const diagnostics = typecheckGeneratedSource(typesSource);
-      const messages = diagnostics.map((d) =>
-        ts.flattenDiagnosticMessageText(d.messageText, "\n"),
-      );
-      assert.deepStrictEqual(messages, [], messages.join("\n"));
+    it("short-circuits with no self-import, alias declared, typechecks (absolute generatedDir)", () => {
+      assertGroupAliasConsumptionClean(buildTypesSource(generatedDir, true).typesSource);
     });
 
-    it("keeps the alias declaration and emits no self-import (relative generatedDir)", () => {
-      const { typesSource } = buildTypesSource(relGeneratedDir, true);
-
-      assert.doesNotMatch(typesSource, /from ["'][^"']*ioc-registry\.types(\.js)?["']/);
-      assert.match(typesSource, /export type SweepTasks = ReadonlyArray<SweepTask>;/);
-      assert.match(typesSource, /pendingSweeps:\s*SweepTasks;/);
-
-      const diagnostics = typecheckGeneratedSource(typesSource);
-      const messages = diagnostics.map((d) =>
-        ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+    it("short-circuits with no self-import, alias declared, typechecks (relative generatedDir)", () => {
+      assertGroupAliasConsumptionClean(
+        buildTypesSource(relGeneratedDir, true).typesSource,
       );
-      assert.deepStrictEqual(messages, [], messages.join("\n"));
     });
   });
 });

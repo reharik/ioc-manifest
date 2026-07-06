@@ -17,6 +17,7 @@ import {
 import { validateNamedDepsType } from "./enforceNamedDepsType.js";
 import {
   depsPropertyTypeNodeByName,
+  tryParseConsumedGroupAliasKey,
   tryParseIocGeneratedCradleIndexedAccessKey,
 } from "./resolveIocGeneratedCradleIndexedAccess.js";
 import type {
@@ -325,10 +326,16 @@ export const analyzeDemandSupply = (
     const propTypeNodes = depsPropertyTypeNodeByName(checker, named.depsType);
     const props = collectDepsProperties(checker, named.depsType);
     for (const { name: propName, type: propType } of props) {
-      const consumedCradleKey = tryParseIocGeneratedCradleIndexedAccessKey(
-        checker,
-        propTypeNodes.get(propName),
-      );
+      const consumedCradleKey =
+        tryParseIocGeneratedCradleIndexedAccessKey(
+          checker,
+          propTypeNodes.get(propName),
+        ) ??
+        tryParseConsumedGroupAliasKey(
+          checker,
+          propTypeNodes.get(propName),
+          groupsManifest,
+        );
 
       if (consumedCradleKey !== undefined) {
         if (groupsManifest?.[consumedCradleKey] !== undefined) {

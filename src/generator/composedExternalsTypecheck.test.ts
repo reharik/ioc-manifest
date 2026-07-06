@@ -13,20 +13,6 @@ const tscBin = path.join(
   "tsc",
 );
 
-const runTsc = (root: string, source: string): "pass" | "fail" => {
-  writeFileSync(path.join(root, "src", "ioc-composed.ts"), source);
-  try {
-    execFileSync(process.execPath, [tscBin, "-p", root], {
-      cwd: root,
-      encoding: "utf8",
-      stdio: "pipe",
-    });
-    return "pass";
-  } catch {
-    return "fail";
-  }
-};
-
 const buildFixtureRoot = (): string => {
   const root = mkdtempSync(path.join(tmpdir(), "ioc-ext-"));
   const srcDir = path.join(root, "src");
@@ -141,68 +127,118 @@ const satisfactionMatrix: readonly ExternalsScenario[] = [
   },
 ];
 
-describe("composed externals satisfaction assertion", () => {
-  describe("When AppCradle does not supply a composed package external", () => {
-    it("should fail tsc at the per-key satisfaction assertion", () => {
-      const root = buildFixtureRoot();
-      const source = `export type AppCradle = { appOnly: string };
+const scenarioHeader = (scenario: ExternalsScenario): string =>
+  `export type Logger = { log: (msg: string) => void };
+export type AppCradle = ${scenario.appCradle};
+export interface PkgExternals ${scenario.externals}
+type _IocExpect<T extends true> = T;`;
+
+const slugify = (name: string): string =>
+  name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+// Each scenario source is written to its OWN file in one shared fixture root so a
+// single tsc pass over the root can type-check them all together. Because every
+// file uses `export`, each is an isolated module scope — top-level names never
+// collide and a type error in one file cannot mask errors in another. tsc reports
+// diagnostics for all files, so we map each diagnostic's file back to its scenario.
+const root = buildFixtureRoot();
+const srcDir = path.join(root, "src");
+
+const writeScenarioFile = (slug: string, source: string): string => {
+  const fileName = `${slug}.ts`;
+  writeFileSync(path.join(srcDir, fileName), source);
+  return fileName;
+};
+
+const noSupplyFile = writeScenarioFile(
+  "no-supply",
+  `export type AppCradle = { appOnly: string };
 export interface LibExternals { database: unknown; }
 type _IocExpect<T extends true> = T;
 ${buildPerKeyAssertions("Lib", "LibExternals", ["database"])}
-`;
+`,
+);
 
-      assert.equal(runTsc(root, source), "fail");
+const perKeyFiles = new Map<string, string>();
+const bulkFiles = new Map<string, string>();
+for (const scenario of satisfactionMatrix) {
+  const slug = slugify(scenario.name);
+  const header = scenarioHeader(scenario);
+  perKeyFiles.set(
+    scenario.name,
+    writeScenarioFile(
+      `${slug}-perkey`,
+      `${header}
+${buildPerKeyAssertions("Pkg", "PkgExternals", scenario.keys)}`,
+    ),
+  );
+  bulkFiles.set(
+    scenario.name,
+    writeScenarioFile(
+      `${slug}-bulk`,
+      `${header}
+${buildBulkAssertion("PkgExternals")}`,
+    ),
+  );
+}
+
+// Run tsc ONCE over the whole fixture root. execFileSync throws on a non-zero exit
+// (any diagnostics), so capture the output either way rather than letting it throw.
+const runTscOnce = (): Set<string> => {
+  let output = "";
+  try {
+    execFileSync(process.execPath, [tscBin, "-p", root], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string };
+    output = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+  }
+  const failed = new Set<string>();
+  for (const line of output.split(/\r?\n/)) {
+    const match = /^(.+?\.ts)\(\d+,\d+\): error/.exec(line);
+    if (match) failed.add(path.basename(match[1]));
+  }
+  return failed;
+};
+
+const failedFiles = runTscOnce();
+const resultFor = (fileName: string): "pass" | "fail" =>
+  failedFiles.has(fileName) ? "fail" : "pass";
+
+describe("composed externals satisfaction assertion", () => {
+  describe("When AppCradle does not supply a composed package external", () => {
+    it("should fail tsc at the per-key satisfaction assertion", () => {
+      assert.equal(resultFor(noSupplyFile), "fail");
     });
   });
 
   for (const scenario of satisfactionMatrix) {
     describe(`When ${scenario.name}`, () => {
       it(`should ${scenario.expected} per-key assertions (supplied extends demanded)`, () => {
-        const root = buildFixtureRoot();
-        const header = `export type Logger = { log: (msg: string) => void };
-export type AppCradle = ${scenario.appCradle};
-export interface PkgExternals ${scenario.externals}
-type _IocExpect<T extends true> = T;`;
-        const perKeySource = `${header}
-${buildPerKeyAssertions("Pkg", "PkgExternals", scenario.keys)}`;
-
         assert.equal(
-          runTsc(root, perKeySource),
+          resultFor(perKeyFiles.get(scenario.name)!),
           scenario.expected,
           `per-key assertion for ${scenario.name}`,
         );
       });
 
       it(`should ${scenario.expected} corrected bulk Pick extends Externals`, () => {
-        const root = buildFixtureRoot();
-        const header = `export type Logger = { log: (msg: string) => void };
-export type AppCradle = ${scenario.appCradle};
-export interface PkgExternals ${scenario.externals}
-type _IocExpect<T extends true> = T;`;
-        const bulkSource = `${header}
-${buildBulkAssertion("PkgExternals")}`;
-
         assert.equal(
-          runTsc(root, bulkSource),
+          resultFor(bulkFiles.get(scenario.name)!),
           scenario.expected,
           `bulk assertion for ${scenario.name}`,
         );
       });
 
       it("should agree between per-key and corrected bulk assertions", () => {
-        const root = buildFixtureRoot();
-        const header = `export type Logger = { log: (msg: string) => void };
-export type AppCradle = ${scenario.appCradle};
-export interface PkgExternals ${scenario.externals}
-type _IocExpect<T extends true> = T;`;
-
-        const bulkSource = `${header}
-${buildBulkAssertion("PkgExternals")}`;
-        const perKeySource = `${header}
-${buildPerKeyAssertions("Pkg", "PkgExternals", scenario.keys)}`;
-
-        const bulkResult = runTsc(root, bulkSource);
-        const perKeyResult = runTsc(root, perKeySource);
+        const bulkResult = resultFor(bulkFiles.get(scenario.name)!);
+        const perKeyResult = resultFor(perKeyFiles.get(scenario.name)!);
 
         assert.equal(
           perKeyResult,
