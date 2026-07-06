@@ -261,9 +261,100 @@ const inlineResult = (
   };
 };
 
+/**
+ * True when the type's printed name is a compiler-synthetic placeholder (`__type`, `__object`,
+ * `__function`, …) rather than a real, importable identifier. TypeScript names anonymous type
+ * literals (`{ viewerId: EntityId }`), object literals, and other structural types with the
+ * `InternalSymbolName` set — all of which begin with `__`. A user identifier that happens to
+ * start with `__` is escaped to `___…`, so it is excluded here.
+ */
+const isSyntheticSymbolName = (escapedName: ts.__String): boolean => {
+  const name = escapedName as string;
+  return name.startsWith("__") && !name.startsWith("___");
+};
+
+/**
+ * True when {@link type} is an anonymous structural type with no importable name and must be
+ * inlined instead of imported. Reaching here means the type is a non-union/intersection object
+ * type that is not a primitive, literal, or lib global — so the only remaining shapes are a
+ * named reference (importable) or an anonymous type literal (must inline). Emitting an import for
+ * the latter produces `import type { __type } from '…'`, which nothing exports (TS2305).
+ */
+const isAnonymousStructuralType = (
+  checker: ts.TypeChecker,
+  type: ts.Type,
+): boolean => {
+  const t = checker.getApparentType(type);
+  if (t.isUnion() || t.isIntersection()) {
+    return false;
+  }
+  if ((t.flags & ts.TypeFlags.Object) === 0) {
+    return false;
+  }
+  const symbol = t.aliasSymbol ?? t.getSymbol();
+  if (symbol === undefined) {
+    return true;
+  }
+  return isSyntheticSymbolName(symbol.escapedName);
+};
+
 type EmitInnerResult = {
   typeName: string;
   imports: TypeImportSpec[];
+};
+
+/**
+ * Emit an anonymous structural type (`{ viewerId: EntityId; viewer: User; … }`) by INLINING the
+ * object shape while still collecting imports for its field types. An anonymous member has no
+ * importable name of its own — only its named field types (`EntityId`, `User`) need importing.
+ *
+ * The rendered text comes from {@link formatType} (which correctly renders readonly/optional
+ * modifiers, index signatures, `unique symbol`, and nested shapes). Imports are gathered by a
+ * best-effort walk of the field/index/signature types: a field that cannot be turned into a
+ * named import (a primitive, `unique symbol`, or an otherwise unresolvable type) simply renders
+ * inline in that text and contributes no import.
+ */
+const emitAnonymousStructuralType = (
+  checker: ts.TypeChecker,
+  type: ts.Type,
+  ctx: EmitTypeReferenceContext,
+  compoundContext?: { compoundDisplay: string },
+): EmitInnerResult => {
+  const imports: TypeImportSpec[] = [];
+  const collect = (fieldType: ts.Type): void => {
+    try {
+      imports.push(
+        ...emitTypeReferenceInner(checker, fieldType, ctx, compoundContext)
+          .imports,
+      );
+    } catch (err) {
+      if (!(err instanceof EmitTypeReferenceError)) {
+        throw err;
+      }
+      // Field type has no importable reference (primitive, `unique symbol`, unresolved
+      // parameter). It is rendered inline by formatType, so it needs no import.
+    }
+  };
+
+  for (const prop of checker.getPropertiesOfType(type)) {
+    collect(checker.getTypeOfSymbol(prop));
+  }
+  for (const info of checker.getIndexInfosOfType(type)) {
+    collect(info.type);
+  }
+  for (const kind of [ts.SignatureKind.Call, ts.SignatureKind.Construct]) {
+    for (const sig of checker.getSignaturesOfType(type, kind)) {
+      collect(checker.getReturnTypeOfSignature(sig));
+      for (const param of sig.getParameters()) {
+        collect(checker.getTypeOfSymbol(param));
+      }
+    }
+  }
+
+  return {
+    typeName: formatType(checker, type),
+    imports: mergeImports(imports),
+  };
 };
 
 /**
@@ -352,6 +443,14 @@ const emitNamedTypeImport = (
   compoundContext?: { compoundDisplay: string },
 ): EmitInnerResult => {
   const apparent = checker.getApparentType(type);
+
+  // Guard: an anonymous structural type must never reach the import path — its name is the
+  // compiler placeholder `__type`, which nothing exports (TS2305). Inline it instead. Callers
+  // route these away up front; this backstops any path that reaches here directly.
+  if (isAnonymousStructuralType(checker, apparent)) {
+    return emitAnonymousStructuralType(checker, apparent, ctx, compoundContext);
+  }
+
   const typeDisplay = formatType(checker, apparent);
   let importName = importSymbolNameFromType(checker, apparent);
   if (importName === "default") {
@@ -569,6 +668,13 @@ const emitTypeReferenceInner = (
 
   if (isGlobalLibType(ctx.program, checker, apparent)) {
     return inlineResult(checker, apparent);
+  }
+
+  // An anonymous structural member of a compound type (`AppCradle & { viewerId: EntityId }`) has
+  // no importable name — its symbol is the compiler placeholder `__type`. Inline the object shape
+  // and import only its field types; emitting `import type { __type }` would fail with TS2305.
+  if (isAnonymousStructuralType(checker, apparent)) {
+    return emitAnonymousStructuralType(checker, apparent, ctx, compoundContext);
   }
 
   return emitNamedTypeImport(checker, apparent, ctx, compoundContext);

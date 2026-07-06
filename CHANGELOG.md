@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.4] - 2026-07-06
+
+### Fixed
+
+- **Anonymous intersection members emitted a broken `import { __type }` (`TS2305`).** A
+  dependency typed through an intersection with an inline anonymous member — e.g.
+  `type Cradle = AppCradle & { viewerId: EntityId; … }` — made the emitter name that member
+  with the compiler's `__type` placeholder and import it, which nothing exports. Anonymous
+  intersection members are now inlined structurally instead of imported; only named members
+  are imported, and the anonymous member's own field types are still imported as needed.
+
 ## [2.3.3] - 2026-07-06
 
 ### Fixed

@@ -255,6 +255,99 @@ describe("emitTypeReference", () => {
     });
   });
 
+  describe("When a compound type has a cross-file anonymous member", () => {
+    const anonFile = path.join(fixtureDir, "anon-intersection-deps.ts");
+
+    it("should import the named member, inline the anonymous member, and never import __type", () => {
+      const program = makeProgram([anonFile]);
+      const checker = program.getTypeChecker();
+      const sf = program.getSourceFile(anonFile)!;
+      const ctx = emitCtxForFile(program, sf);
+      const ref = emitTypeReference(
+        checker,
+        depsPropertyType(program, sf.fileName, "buildAnon", "ctx"),
+        ctx,
+      );
+      assert.ok(ref);
+
+      // Named member imported; anonymous member rendered as an inline object literal.
+      assert.strictEqual(
+        ref.typeName,
+        "AppCradle & { viewerId: EntityId; viewer: User; }",
+      );
+
+      // The anonymous placeholder must never surface as an import (would be TS2305).
+      assert.ok(
+        !ref.imports.some((i) => i.typeName === "__type"),
+        "no __type import",
+      );
+      assert.ok(
+        !ref.typeName.includes("__type"),
+        "no __type in rendered text",
+      );
+
+      // The named member is imported...
+      assert.ok(
+        ref.imports.some((i) => i.typeName === "AppCradle"),
+        "AppCradle imported",
+      );
+      // ...and the FIELD types of the inlined anonymous member are still imported. This is the
+      // one that bites: inlining the wrapper object must not drop its named field imports.
+      assert.ok(
+        ref.imports.some((i) => i.typeName === "EntityId"),
+        "EntityId (anonymous field type) imported",
+      );
+      assert.ok(
+        ref.imports.some((i) => i.typeName === "User"),
+        "User (anonymous field type) imported",
+      );
+      for (const imp of ref.imports) {
+        assert.match(imp.relImport, /anon-intersection-contracts\.js$/);
+      }
+    });
+
+    it("should produce a tsc-clean registry-types artifact for the anonymous intersection", () => {
+      const program = makeProgram([anonFile]);
+      const factories = [
+        {
+          contractName: "Anon",
+          contractTypeRelImport: "../test-fixtures/demand-supply/anon-intersection-contracts.js",
+          implementationName: "anon",
+          exportName: "buildAnon",
+          registrationKey: "anon",
+          modulePath: "anon-intersection-deps.ts",
+          relImport: "./anon-intersection-deps.js",
+        },
+      ] as const;
+
+      const result = analyzeDemandSupply(factories, {
+        program,
+        projectRoot,
+        scanDirs,
+        generatedDir,
+      });
+
+      const ctxEntry = result.entries.find((e) => e.key === "ctx");
+      assert.ok(ctxEntry);
+      assert.ok(!ctxEntry.typeRef.typeName.includes("__type"));
+
+      const { typesSource } = buildManifestArtifactSources(
+        factories,
+        [],
+        undefined,
+        path.join(generatedDir, "ioc-manifest.ts"),
+        "ioc-manifest",
+        { demandSupply: result },
+      );
+
+      // The broken import that this fix removes must not appear; the field-type imports must.
+      assert.ok(!typesSource.includes("__type"));
+      assert.match(typesSource, /import type \{[^}]*\bEntityId\b/);
+      assert.match(typesSource, /import type \{[^}]*\bUser\b/);
+      assert.match(typesSource, /AppCradle & \{ viewerId: EntityId; viewer: User; \}/);
+    });
+  });
+
   describe("When a factory returns an imported generic instantiation", () => {
     it("should emit the base name with its named type argument and merge both imports", () => {
       const program = makeProgram();
