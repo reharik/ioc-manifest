@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.5] - 2026-07-06
+
+### Fixed
+
+- **Group-only base with two or more implementations aborted at container boot ("no
+  default is selected for the contract slot").** Generation correctly suppressed the
+  contract-default for a group-only base, but the signal lived only in the generator —
+  at runtime `registerContractDefaultAliases` re-elected a default over every contract
+  with direct implementations and threw when a group base had two or more and no
+  `default: true`. The runtime now derives group-base contracts from the groups manifest
+  (already in scope, no manifest schema change) and skips default election for a group
+  base with no elected default, mirroring the generator. A group base that does mark an
+  implementation `default: true` still registers it; a normal contract with multiple
+  implementations and no default still throws, as before.
+
 ## [2.3.4] - 2026-07-06
 
 ### Fixed

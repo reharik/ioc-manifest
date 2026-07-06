@@ -786,6 +786,278 @@ describe("registerIocFromManifest", () => {
     });
   });
 
+  describe("When a group-only base has no elected default (boot the container)", () => {
+    describe("When the base is generic and its narrowed members collapse to ≥2 impls under one contract", () => {
+      it("should boot without a 'no default selected' abort and resolve the group to both members", () => {
+        // Generic base `DomainEventHandler<T>` narrows to two impls that discovery collapses under
+        // the single erased contract name — no default is (or can be) elected.
+        const manifest: IocContractManifest = {
+          DomainEventHandler: {
+            orderHandler: {
+              exportName: "buildOrderHandler",
+              registrationKey: "orderHandler",
+              modulePath: "order.ts",
+              relImport: "../order.js",
+              contractName: "DomainEventHandler",
+              implementationName: "orderHandler",
+              lifetime: "singleton",
+              moduleIndex: 0,
+              group: "handlers",
+            },
+            paymentHandler: {
+              exportName: "buildPaymentHandler",
+              registrationKey: "paymentHandler",
+              modulePath: "payment.ts",
+              relImport: "../payment.js",
+              contractName: "DomainEventHandler",
+              implementationName: "paymentHandler",
+              lifetime: "singleton",
+              moduleIndex: 1,
+              group: "handlers",
+            },
+          },
+        };
+        const groups: IocGroupsManifest = {
+          handlers: {
+            kind: "collection",
+            baseType: "DomainEventHandler",
+            baseTypeId: "/fake/DomainEventHandler.ts:DomainEventHandler",
+            baseTypeArg: "EventShape",
+            members: [
+              { contractName: "DomainEventHandler", registrationKey: "orderHandler" },
+              { contractName: "DomainEventHandler", registrationKey: "paymentHandler" },
+            ],
+          },
+        };
+        const moduleImports: readonly IocModuleNamespace[] = [
+          { buildOrderHandler: (): { tag: string } => ({ tag: "order" }) },
+          { buildPaymentHandler: (): { tag: string } => ({ tag: "payment" }) },
+        ];
+        const container = createContainer<{
+          orderHandler: { tag: string };
+          paymentHandler: { tag: string };
+          handlers: { tag: string }[];
+        }>({ injectionMode: "PROXY" });
+
+        assert.doesNotThrow(() =>
+          registerIocFromManifest(container, [
+            {
+              manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
+              contracts: manifest,
+              moduleImports,
+              ...groups,
+            },
+          ]),
+        );
+
+        const handlers = container.resolve("handlers");
+        assert.deepStrictEqual(
+          handlers.map((h) => h.tag),
+          ["order", "payment"],
+        );
+      });
+    });
+
+    describe("When the base is non-generic with two direct impls under the base contract", () => {
+      it("should boot clean (the untested shape that aborts today)", () => {
+        const manifest: IocContractManifest = {
+          PublicReadServiceBase: {
+            albumRead: {
+              exportName: "buildAlbumRead",
+              registrationKey: "albumRead",
+              modulePath: "album.ts",
+              relImport: "../album.js",
+              contractName: "PublicReadServiceBase",
+              implementationName: "albumRead",
+              lifetime: "singleton",
+              moduleIndex: 0,
+              group: "publicReads",
+            },
+            photoRead: {
+              exportName: "buildPhotoRead",
+              registrationKey: "photoRead",
+              modulePath: "photo.ts",
+              relImport: "../photo.js",
+              contractName: "PublicReadServiceBase",
+              implementationName: "photoRead",
+              lifetime: "singleton",
+              moduleIndex: 1,
+              group: "publicReads",
+            },
+          },
+        };
+        const groups: IocGroupsManifest = {
+          publicReads: {
+            kind: "collection",
+            baseType: "PublicReadServiceBase",
+            baseTypeId: "/fake/PublicReadServiceBase.ts:PublicReadServiceBase",
+            members: [
+              { contractName: "PublicReadServiceBase", registrationKey: "albumRead" },
+              { contractName: "PublicReadServiceBase", registrationKey: "photoRead" },
+            ],
+          },
+        };
+        const moduleImports: readonly IocModuleNamespace[] = [
+          { buildAlbumRead: (): { tag: string } => ({ tag: "album" }) },
+          { buildPhotoRead: (): { tag: string } => ({ tag: "photo" }) },
+        ];
+        const container = createContainer<{
+          albumRead: { tag: string };
+          photoRead: { tag: string };
+          publicReads: { tag: string }[];
+        }>({ injectionMode: "PROXY" });
+
+        assert.doesNotThrow(() =>
+          registerIocFromManifest(container, [
+            {
+              manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
+              contracts: manifest,
+              moduleImports,
+              ...groups,
+            },
+          ]),
+        );
+
+        const publicReads = container.resolve("publicReads");
+        assert.deepStrictEqual(
+          publicReads.map((r) => r.tag),
+          ["album", "photo"],
+        );
+      });
+    });
+
+    describe("When a group base explicitly elects a default (default: true)", () => {
+      it("should still register the default and stay resolvable by the singular key", () => {
+        const manifest: IocContractManifest = {
+          PublicReadServiceBase: {
+            albumRead: {
+              exportName: "buildAlbumRead",
+              registrationKey: "albumRead",
+              modulePath: "album.ts",
+              relImport: "../album.js",
+              contractName: "PublicReadServiceBase",
+              implementationName: "albumRead",
+              lifetime: "singleton",
+              moduleIndex: 0,
+              group: "publicReads",
+              default: true,
+            },
+            photoRead: {
+              exportName: "buildPhotoRead",
+              registrationKey: "photoRead",
+              modulePath: "photo.ts",
+              relImport: "../photo.js",
+              contractName: "PublicReadServiceBase",
+              implementationName: "photoRead",
+              lifetime: "singleton",
+              moduleIndex: 1,
+              group: "publicReads",
+            },
+          },
+        };
+        const groups: IocGroupsManifest = {
+          publicReads: {
+            kind: "collection",
+            baseType: "PublicReadServiceBase",
+            baseTypeId: "/fake/PublicReadServiceBase.ts:PublicReadServiceBase",
+            members: [
+              { contractName: "PublicReadServiceBase", registrationKey: "albumRead" },
+              { contractName: "PublicReadServiceBase", registrationKey: "photoRead" },
+            ],
+          },
+        };
+        const moduleImports: readonly IocModuleNamespace[] = [
+          { buildAlbumRead: (): { tag: string } => ({ tag: "album" }) },
+          { buildPhotoRead: (): { tag: string } => ({ tag: "photo" }) },
+        ];
+        const container = createContainer<{
+          albumRead: { tag: string };
+          photoRead: { tag: string };
+          publicReadServiceBase: { tag: string };
+          publicReads: { tag: string }[];
+        }>({ injectionMode: "PROXY" });
+
+        registerIocFromManifest(container, [
+          {
+            manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
+            contracts: manifest,
+            moduleImports,
+            ...groups,
+          },
+        ]);
+
+        // Singular default slot still resolves to the elected default.
+        assert.strictEqual(
+          container.resolve("publicReadServiceBase").tag,
+          "album",
+        );
+        // Group still resolves too.
+        assert.deepStrictEqual(
+          container.resolve("publicReads").map((r) => r.tag),
+          ["album", "photo"],
+        );
+      });
+    });
+
+    describe("When a normal (non-group-base) contract has two impls and no default", () => {
+      it("should STILL throw — only group bases are exempt from default election", () => {
+        const manifest: IocContractManifest = {
+          MediaStorage: {
+            local: {
+              exportName: "buildLocal",
+              registrationKey: "localMediaStorage",
+              modulePath: "local.ts",
+              relImport: "../local.js",
+              contractName: "MediaStorage",
+              implementationName: "local",
+              lifetime: "singleton",
+              moduleIndex: 0,
+            },
+            remote: {
+              exportName: "buildRemote",
+              registrationKey: "remoteMediaStorage",
+              modulePath: "remote.ts",
+              relImport: "../remote.js",
+              contractName: "MediaStorage",
+              implementationName: "remote",
+              lifetime: "singleton",
+              moduleIndex: 1,
+            },
+          },
+        };
+        // A group over an UNRELATED base — MediaStorage is not a group baseType.
+        const groups: IocGroupsManifest = {
+          somethingElse: {
+            kind: "collection",
+            baseType: "Unrelated",
+            baseTypeId: "/fake/Unrelated.ts:Unrelated",
+            members: [],
+          },
+        };
+        const moduleImports: readonly IocModuleNamespace[] = [
+          { buildLocal: (): { kind: string } => ({ kind: "local" }) },
+          { buildRemote: (): { kind: string } => ({ kind: "remote" }) },
+        ];
+        const container = createContainer<{ mediaStorage: { kind: string } }>({
+          injectionMode: "PROXY",
+        });
+
+        assert.throws(
+          () =>
+            registerIocFromManifest(container, [
+              {
+                manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
+                contracts: manifest,
+                moduleImports,
+                ...groups,
+              },
+            ]),
+          /Multiple implementations for contract/,
+        );
+      });
+    });
+  });
+
   describe("When a manifest declares an incompatible schema version", () => {
     it("should throw before registering factories", () => {
       const bad = {

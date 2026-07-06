@@ -218,12 +218,45 @@ const resolveManifestAccessKey = (
   return contractNameToDefaultRegistrationKey(contractName);
 };
 
+/** Contract names used as a group's base type (mirrors the generator's `groups.<name>.baseType`). */
+const groupBaseTypeNamesFromManifest = (
+  groupsManifest: IocGroupsManifest | undefined,
+): ReadonlySet<string> =>
+  new Set(
+    Object.values(groupsManifest ?? {}).map((root) => root.baseType),
+  );
+
+/**
+ * True when a group-base contract elects no default (no impl marked `default: true`) — mirrors the
+ * generator's `isGroupBaseWithoutElectedDefault` exactly. Such a base emits no singular
+ * contract-default key, so runtime must skip default-alias election for it (otherwise a base whose
+ * narrowed members collapse to ≥2 impls under one contract aborts boot with "no default selected").
+ */
+const isGroupBaseWithoutElectedDefault = (
+  contractName: string,
+  implList: readonly ModuleFactoryManifestMetadata[],
+  groupBaseTypeNames: ReadonlySet<string>,
+): boolean =>
+  groupBaseTypeNames.has(contractName) &&
+  !implList.some((meta) => meta.default === true);
+
 const registerContractDefaultAliases = <TCradle extends object>(
   container: AwilixContainer<TCradle>,
   manifestByContract: IocContractManifest,
+  groupBaseTypeNames: ReadonlySet<string>,
 ): void => {
   for (const [contractName, impls] of Object.entries(manifestByContract)) {
     const implList = Object.values(impls);
+
+    /* A group base with no elected default emits no singular key at generation time; do not elect
+       one at boot — mirrors generation's `contractDefaultElected === false`. A group base that DOES
+       mark an impl `default: true` falls through and registers that default as normal. */
+    if (
+      isGroupBaseWithoutElectedDefault(contractName, implList, groupBaseTypeNames)
+    ) {
+      continue;
+    }
+
     const accessKey = resolveManifestAccessKey(contractName, implList);
     const defaultImpl = resolveDefaultImplementation(contractName, implList);
 
@@ -314,6 +347,10 @@ export const registerIocFromManifest = <TCradle extends object>(
     moduleImports,
     keyIndex,
   );
-  registerContractDefaultAliases(container, manifestByContract);
+  registerContractDefaultAliases(
+    container,
+    manifestByContract,
+    groupBaseTypeNamesFromManifest(groupsManifest),
+  );
   registerGroups(container, groupsManifest, keyIndex);
 };
