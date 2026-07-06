@@ -24,6 +24,12 @@ const contractsPath = path.join(fixtureDir, "contracts.ts");
 const factoriesPath = path.join(fixtureDir, "factories.ts");
 const scanDirs = [{ absPath: fixtureDir }];
 
+// A project-relative `generatedDir`, as produced by a composed/monorepo run. The 2.3.1 guard
+// compared `path.normalize(absolute) === path.normalize(relative)`, which never matched, so the
+// same-file guard missed and the generated file imported itself. `path.resolve` reconciles this
+// against cwd, so `path.resolve(cwd, relGeneratedDir)` === the absolute `generatedDir`.
+const relGeneratedDir = path.relative(process.cwd(), generatedDir);
+
 const groups: IocGroupsConfig = {
   sweepTasks: { kind: "collection", baseType: "SweepTask" },
   workerTasks: { kind: "collection", baseType: "WorkerTask" },
@@ -44,13 +50,20 @@ const makeProgram = (): ts.Program =>
 const emitCtxForFile = (
   program: ts.Program,
   sourceFile: ts.SourceFile,
+  gd: string = generatedDir,
 ): {
   program: ts.Program;
   projectRoot: string;
   scanDirs: typeof scanDirs;
   generatedDir: string;
   contextSourceFile: ts.SourceFile;
-} => ({ program, projectRoot, scanDirs, generatedDir, contextSourceFile: sourceFile });
+} => ({
+  program,
+  projectRoot,
+  scanDirs,
+  generatedDir: gd,
+  contextSourceFile: sourceFile,
+});
 
 const depPropertyType = (
   program: ts.Program,
@@ -76,7 +89,10 @@ const depPropertyType = (
   return checker.getTypeOfSymbol(prop);
 };
 
-const buildTypesSource = (): { typesSource: string; warnings: string[] } => {
+const buildTypesSource = (
+  gd: string = generatedDir,
+  withRegistryTypesBuildContext = false,
+): { typesSource: string; warnings: string[] } => {
   const program = makeProgram();
   const config = { discovery: { scanDirs: "." }, groups } as unknown as IocConfig;
   const { contractMap, acceptedFactories } = discoverFactories(
@@ -84,25 +100,25 @@ const buildTypesSource = (): { typesSource: string; warnings: string[] } => {
     program,
     projectRoot,
     "build",
-    { projectRoot, scanDirs, generatedDir },
+    { projectRoot, scanDirs, generatedDir: gd },
     config,
   );
   const plans = buildRegistrationPlan(contractMap, config);
   const groupResult = buildGroupPlan(groups, plans, {
     program,
-    generatedDir,
+    generatedDir: gd,
     scanDirs,
   });
   const demandSupply = analyzeDemandSupply(acceptedFactories, {
     program,
     projectRoot,
     scanDirs,
-    generatedDir,
+    generatedDir: gd,
     groupsManifest: groupResult?.manifest,
   });
   const boundedGroupCollectionTypeRefs = buildBoundedGroupCollectionTypeRefs(
     groupResult?.manifest,
-    { program, generatedDir, scanDirs, projectRoot },
+    { program, generatedDir: gd, scanDirs, projectRoot },
   );
 
   const warnings: string[] = [];
@@ -115,9 +131,22 @@ const buildTypesSource = (): { typesSource: string; warnings: string[] } => {
       acceptedFactories,
       plans,
       groupResult?.manifest,
-      path.join(generatedDir, "ioc-manifest.ts"),
+      path.join(gd, "ioc-manifest.ts"),
       "ioc-manifest",
-      { demandSupply, boundedGroupCollectionTypeRefs },
+      {
+        demandSupply,
+        boundedGroupCollectionTypeRefs,
+        ...(withRegistryTypesBuildContext
+          ? {
+              registryTypesBuildContext: {
+                program,
+                generatedDir: gd,
+                scanDirs,
+                projectRoot,
+              },
+            }
+          : {}),
+      },
     );
     return { typesSource, warnings };
   } finally {
@@ -203,6 +232,76 @@ describe("generated group-alias self-import guard", () => {
         !warnings.some((w) => /workerTasks/i.test(w) && /collide/i.test(w)),
         `unexpected collision warning: ${warnings.join("\n")}`,
       );
+    });
+  });
+
+  // REGRESSION: 2.3.1 shipped because every fixture used an ABSOLUTE generatedDir. A composed run
+  // passes a project-relative generatedDir, and the old `path.normalize`-based guard never matched
+  // absolute-vs-relative, so the file imported itself. These cases pin the relative path down.
+  describe("When generatedDir is project-relative (composed run)", () => {
+    it("emits the bare local name with no import spec (direct emit)", () => {
+      const program = makeProgram();
+      const checker = program.getTypeChecker();
+      const type = depPropertyType(program, "buildSweepReport", "pendingSweeps");
+      const ref = emitTypeReference(
+        checker,
+        type,
+        emitCtxForFile(
+          program,
+          program.getSourceFile(factoriesPath)!,
+          relGeneratedDir,
+        ),
+      );
+      assert.ok(ref);
+      assert.strictEqual(ref.typeName, "SweepTasks");
+      assert.deepStrictEqual(ref.imports, []);
+    });
+
+    it("produces no self-import, keeps the alias declaration, and typechecks", () => {
+      const { typesSource } = buildTypesSource(relGeneratedDir);
+
+      assert.doesNotMatch(typesSource, /from ["'][^"']*ioc-registry\.types(\.js)?["']/);
+      assert.match(typesSource, /export type SweepTasks = ReadonlyArray<SweepTask>;/);
+      assert.match(typesSource, /pendingSweeps:\s*SweepTasks;/);
+
+      const diagnostics = typecheckGeneratedSource(typesSource);
+      const messages = diagnostics.map((d) =>
+        ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+      );
+      assert.deepStrictEqual(messages, [], messages.join("\n"));
+    });
+  });
+
+  // Composed-run codegen path (registryTypesBuildContext supplied): enabling it activates the
+  // contract-import resolution branch AND the Fix B self-import exclusion in reservedTopLevelNames
+  // seeding. Confirms the full composed path emits correct output under both path shapes.
+  describe("When registryTypesBuildContext is supplied (composed run)", () => {
+    it("keeps the alias declaration and emits no self-import (absolute generatedDir)", () => {
+      const { typesSource } = buildTypesSource(generatedDir, true);
+
+      assert.doesNotMatch(typesSource, /from ["'][^"']*ioc-registry\.types(\.js)?["']/);
+      assert.match(typesSource, /export type SweepTasks = ReadonlyArray<SweepTask>;/);
+      assert.match(typesSource, /pendingSweeps:\s*SweepTasks;/);
+
+      const diagnostics = typecheckGeneratedSource(typesSource);
+      const messages = diagnostics.map((d) =>
+        ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+      );
+      assert.deepStrictEqual(messages, [], messages.join("\n"));
+    });
+
+    it("keeps the alias declaration and emits no self-import (relative generatedDir)", () => {
+      const { typesSource } = buildTypesSource(relGeneratedDir, true);
+
+      assert.doesNotMatch(typesSource, /from ["'][^"']*ioc-registry\.types(\.js)?["']/);
+      assert.match(typesSource, /export type SweepTasks = ReadonlyArray<SweepTask>;/);
+      assert.match(typesSource, /pendingSweeps:\s*SweepTasks;/);
+
+      const diagnostics = typecheckGeneratedSource(typesSource);
+      const messages = diagnostics.map((d) =>
+        ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+      );
+      assert.deepStrictEqual(messages, [], messages.join("\n"));
     });
   });
 });

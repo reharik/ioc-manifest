@@ -27,6 +27,7 @@ import type {
 import {
   formatRelativeImportEscapesPackageRootWarning,
   IOC_REGISTRY_TYPES_BASENAME,
+  registryTypesFilePath,
   relativeImportEscapesPackageRoot,
   type ResolvedScanDir,
 } from "./manifestPaths.js";
@@ -530,6 +531,33 @@ const warnOnRelativeImportsEscapingPackageRoot = (
   }
 };
 
+/** Strips a trailing JS/TS module extension (`.js`, `.ts`, `.mjs`, `.cts`, `.jsx`, …) only — so a
+ * compound basename like `ioc-registry.types` keeps its `.types` segment. */
+const stripModuleExtension = (p: string): string =>
+  p.replace(/\.(?:m|c)?[jt]sx?$/, "");
+
+/**
+ * True when an import bucket's module specifier resolves to the generated registry-types file
+ * itself. A self-import is never a real external collision, so it must not seed the alias-collision
+ * reservation set — otherwise a stray self-import (from an upstream guard miss) reserves the group
+ * alias name and silently suppresses the alias's own `export type` declaration. Both sides are
+ * resolved to absolute paths (matching how `generatedDir` is used elsewhere) with the module
+ * extension stripped, because the emitted specifier ends in `.js` while the file is `.ts`.
+ */
+export const importResolvesToRegistryFile = (
+  relImport: string,
+  generatedDir: string,
+): boolean => {
+  if (!relImport.startsWith(".")) {
+    return false;
+  }
+  const resolved = stripModuleExtension(path.resolve(generatedDir, relImport));
+  const registry = stripModuleExtension(
+    path.resolve(registryTypesFilePath(generatedDir)),
+  );
+  return resolved === registry;
+};
+
 const buildCradleTypeSource = (
   plans: ResolvedContractRegistration[],
   groupsManifest: IocGroupsManifest | undefined,
@@ -702,7 +730,18 @@ const buildCradleTypeSource = (
   // shadow an imported contract type. (Imported names are NOT locally declared, so
   // they must stay out of `locallyDeclaredNames` above or their imports would strip.)
   const reservedTopLevelNames = new Set<string>(locallyDeclaredNames);
-  for (const bucket of grouped.values()) {
+  const generatedDir = registryTypesBuildContext?.generatedDir;
+  for (const [relImport, bucket] of grouped) {
+    // A self-import (specifier resolving to the generated registry file) is never a real
+    // external collision. Excluding it here breaks the self-reinforcing loop: a residual
+    // self-import can't reserve the alias name, so the `export type` alias declaration still
+    // emits, the name enters locallyDeclaredNames, and the self-import strip below removes it.
+    if (
+      generatedDir !== undefined &&
+      importResolvesToRegistryFile(relImport, generatedDir)
+    ) {
+      continue;
+    }
     for (const named of bucket.named) {
       reservedTopLevelNames.add(named);
     }

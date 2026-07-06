@@ -7,7 +7,11 @@ import type { IocGroupsManifest } from "../core/manifest.js";
 import type { DemandSupplyAnalysisResult } from "./analyzeDemandSupply/index.js";
 import type { DiscoveredFactory } from "./types.js";
 import type { ResolvedContractRegistration } from "./resolveRegistrationPlan.js";
-import { buildManifestArtifactSources, writeManifest } from "./writeManifest.js";
+import {
+  buildManifestArtifactSources,
+  importResolvesToRegistryFile,
+  writeManifest,
+} from "./writeManifest.js";
 
 const mkFactory = (
   partial: Pick<DiscoveredFactory, "contractName" | "implementationName"> &
@@ -885,6 +889,80 @@ describe("writeManifest", () => {
       );
       assert.doesNotMatch(typesSource, /import[^\n]*IocGeneratedCradle/);
       assert.doesNotMatch(typesSource, /import type \{\s*\} from/);
+    });
+  });
+});
+
+describe("importResolvesToRegistryFile", () => {
+  describe("When the specifier points at the generated registry file", () => {
+    it("matches the emitted .js specifier against the .ts file (absolute generatedDir)", () => {
+      const generatedDir = path.join(os.tmpdir(), "ioc-gen");
+      assert.strictEqual(
+        importResolvesToRegistryFile("./ioc-registry.types.js", generatedDir),
+        true,
+      );
+    });
+
+    it("matches the extensionless specifier", () => {
+      const generatedDir = path.join(os.tmpdir(), "ioc-gen");
+      assert.strictEqual(
+        importResolvesToRegistryFile("./ioc-registry.types", generatedDir),
+        true,
+      );
+    });
+
+    it("matches when generatedDir is project-relative", () => {
+      // The bug's failure shape: a relative generatedDir. path.resolve reconciles it against cwd,
+      // so a self-import specifier still resolves to the registry file.
+      assert.strictEqual(
+        importResolvesToRegistryFile(
+          "./ioc-registry.types.js",
+          "src/generated",
+        ),
+        true,
+      );
+    });
+
+    it("matches a specifier that climbs back to the generated dir's own file", () => {
+      // generatedDir is `.../ioc-gen`; a specifier that climbs out and back resolves to the same
+      // registry file, so it is still a self-import.
+      const generatedDir = path.join(os.tmpdir(), "ioc-gen");
+      assert.strictEqual(
+        importResolvesToRegistryFile(
+          "../ioc-gen/ioc-registry.types.js",
+          generatedDir,
+        ),
+        true,
+      );
+    });
+  });
+
+  describe("When the specifier is not the registry file", () => {
+    it("rejects a bare package specifier", () => {
+      assert.strictEqual(
+        importResolvesToRegistryFile("knex", path.join(os.tmpdir(), "ioc-gen")),
+        false,
+      );
+    });
+
+    it("rejects a sibling contract module", () => {
+      assert.strictEqual(
+        importResolvesToRegistryFile(
+          "../contracts.js",
+          path.join(os.tmpdir(), "ioc-gen"),
+        ),
+        false,
+      );
+    });
+
+    it("rejects a same-named file in a different directory", () => {
+      assert.strictEqual(
+        importResolvesToRegistryFile(
+          "../other/ioc-registry.types.js",
+          path.join(os.tmpdir(), "ioc-gen"),
+        ),
+        false,
+      );
     });
   });
 });

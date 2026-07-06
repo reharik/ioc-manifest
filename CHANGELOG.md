@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.2] - 2026-07-05
+
+### Fixed
+
+- **Group alias self-import returned when `generatedDir` is relative (`TS2303` /
+  `TS2459`).** The 2.3.1 same-file guard compared the type's absolute declaration path
+  against `registryTypesFilePath(generatedDir)` with `path.normalize`, which doesn't
+  reconcile a relative `generatedDir` against an absolute path — so in a composed run
+  with a project-relative `generatedDir`, a factory importing a group's alias by name
+  produced an import of the generated file into itself. Both sides are now resolved to
+  absolute, symlink-resolved paths before comparison. As added protection, a self-import
+  can no longer suppress the alias's own `export type` declaration, so any residual case
+  fails loudly instead of silently. Regenerate after upgrading.
+
 ## [2.3.1] - 2026-07-05
 
 ### Fixed
