@@ -2,6 +2,7 @@ import path from "node:path";
 import ts from "typescript";
 import {
   computeManifestModuleSpecifier,
+  registryTypesFilePath,
   type FactoryDiscoveryPaths,
 } from "../manifestPaths.js";
 import {
@@ -347,6 +348,21 @@ const emitNamedTypeImport = (
   }
   const declSource = getTypeDeclarationSourceFile(checker, apparent);
 
+  // Same-file guard: when a factory imports a name that resolves to a type declared in the
+  // generated registry-types output itself (a group alias like `FastSweepNotificationStrategies`,
+  // or `IocGeneratedCradle` / `IocExternals` / `IocScopeProvided`), regen must not import that file
+  // into itself. A self-import reserves the name, which suppresses the alias's own `export type`
+  // declaration and defeats the self-import strip (TS2303/TS2459). Emit the bare LOCAL name with no
+  // import spec — a type declared in the generated output is always a local reference.
+  if (
+    declSource !== undefined &&
+    importName !== undefined &&
+    path.normalize(declSource.fileName) ===
+      path.normalize(registryTypesFilePath(ctx.generatedDir))
+  ) {
+    return { typeName: importName, imports: [] };
+  }
+
   // Top-level named types declared in the factory file still require imports because the
   // generated output file is generated/ioc-registry.types.ts, not the factory file.
   // Inlining is reserved for primitives, literals, lib globals (handled above), and anonymous
@@ -410,6 +426,19 @@ const emitNamedTypeImport = (
   };
 };
 
+/** Drop duplicate identical rendered members, preserving first-occurrence order. */
+const dedupePartTexts = (parts: string[]): string[] => {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of parts) {
+    if (!seen.has(part)) {
+      seen.add(part);
+      out.push(part);
+    }
+  }
+  return out;
+};
+
 const orderUnionPartTexts = (parts: string[]): string[] => {
   const out = [...parts];
   for (const trailing of ["null", "undefined"]) {
@@ -451,10 +480,14 @@ const emitCompoundType = (
     }
   }
 
+  // Collapse identical members (`A | A` → `A`, `A & A` → `A`); a factory typed
+  // `AwilixContainer<IocGeneratedCradle>` composed across manifests otherwise renders
+  // `IocGeneratedCradle & IocGeneratedCradle & …`. Dedup before union ordering.
+  const dedupedParts = dedupePartTexts(parts);
   const typeName =
     separator === " | "
-      ? orderUnionPartTexts(parts).join(separator)
-      : parts.join(separator);
+      ? orderUnionPartTexts(dedupedParts).join(separator)
+      : dedupedParts.join(separator);
 
   return {
     typeName,

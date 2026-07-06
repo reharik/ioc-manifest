@@ -6,6 +6,13 @@ const toPosix = (value: string): string => value.replace(/\\/g, "/");
 
 const NODE_MODULES_MARKER = `${path.sep}node_modules${path.sep}`;
 
+/** Basename of the generated cradle-typing file emitted alongside `ioc-manifest.ts`. */
+export const IOC_REGISTRY_TYPES_BASENAME = "ioc-registry.types.ts";
+
+/** Absolute path of the generated `ioc-registry.types.ts` for a given generated directory. */
+export const registryTypesFilePath = (generatedDir: string): string =>
+  path.join(generatedDir, IOC_REGISTRY_TYPES_BASENAME);
+
 /** After resolving `path` against the package root. Optional `scope` is default registration lifetime for factories under this root. */
 export type ResolvedScanDir = {
   absPath: string;

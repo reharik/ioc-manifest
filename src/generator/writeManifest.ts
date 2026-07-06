@@ -26,6 +26,7 @@ import type {
 } from "../core/manifest.js";
 import {
   formatRelativeImportEscapesPackageRootWarning,
+  IOC_REGISTRY_TYPES_BASENAME,
   relativeImportEscapesPackageRoot,
   type ResolvedScanDir,
 } from "./manifestPaths.js";
@@ -876,7 +877,7 @@ export const buildManifestArtifactSources = (
 
   const typesPath = path.join(
     path.dirname(manifestOutPath),
-    "ioc-registry.types.ts",
+    IOC_REGISTRY_TYPES_BASENAME,
   );
 
   const typesSource = buildCradleTypeSource(

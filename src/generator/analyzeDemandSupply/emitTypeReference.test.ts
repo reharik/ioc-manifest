@@ -218,6 +218,43 @@ describe("emitTypeReference", () => {
     });
   });
 
+  describe("When a compound type has identical members", () => {
+    const dupFile = path.join(fixtureDir, "dup-member-deps.ts");
+
+    it("should collapse repeated identical members to a single rendering", () => {
+      const program = makeProgram([dupFile]);
+      const checker = program.getTypeChecker();
+      const sf = program.getSourceFile(dupFile)!;
+      const ctx = emitCtxForFile(program, sf);
+      const ref = emitTypeReference(
+        checker,
+        depsPropertyType(program, sf.fileName, "buildDup", "repeated"),
+        ctx,
+      );
+      assert.ok(ref);
+      // Two distinct `DupCradle` types render to the same name → one member, no `& DupCradle`.
+      assert.strictEqual(ref.typeName, "DupCradle");
+      assert.ok(!ref.typeName.includes("&"));
+      // Imports are merged separately and unaffected by the render-string dedup.
+      assert.strictEqual(ref.imports.length, 2);
+      assert.ok(ref.imports.every((i) => i.typeName === "DupCradle"));
+    });
+
+    it("should leave a genuine multi-member compound unchanged", () => {
+      const program = makeProgram([dupFile]);
+      const checker = program.getTypeChecker();
+      const sf = program.getSourceFile(dupFile)!;
+      const ctx = emitCtxForFile(program, sf);
+      const ref = emitTypeReference(
+        checker,
+        depsPropertyType(program, sf.fileName, "buildDup", "distinct"),
+        ctx,
+      );
+      assert.ok(ref);
+      assert.strictEqual(ref.typeName, "DupCradle & { readonly extra: number; }");
+    });
+  });
+
   describe("When a factory returns an imported generic instantiation", () => {
     it("should emit the base name with its named type argument and merge both imports", () => {
       const program = makeProgram();

@@ -5,6 +5,24 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.1] - 2026-07-05
+
+### Fixed
+
+- **Importing a generated group type alias produced a self-import (`TS2303` /
+  `TS2459`).** When a factory imported a group's generated alias by name, regeneration
+  resolved that type to a declaration inside the file being written and emitted an
+  import from the file into itself — reserving the name, suppressing the alias's own
+  `export type` declaration, and defeating the self-import strip. Types declared in the
+  generated registry file (`IocGeneratedCradle`, `IocExternals`, `IocScopeProvided`,
+  and emitted group aliases) are now resolved as local references. Regenerate after
+  upgrading.
+
+- **Identical members in a compound type were not collapsed.** A composed container
+  type emitted `AwilixContainer<IocGeneratedCradle & IocGeneratedCradle & …>` instead
+  of a single member. Duplicate members in an intersection or union are now deduped in
+  the emitted type.
+
 ## [2.3.0] - 2026-07-05
 
 ### Added

@@ -1,6 +1,9 @@
 import path from "node:path";
 import ts from "typescript";
-import type { ResolvedScanDir } from "./manifestPaths.js";
+import {
+  registryTypesFilePath,
+  type ResolvedScanDir,
+} from "./manifestPaths.js";
 
 const matchSourceFileByAbsoluteBase = (
   program: ts.Program,
@@ -93,7 +96,7 @@ const tryResolveBarePackageSpecifierToSourceFile = (
   if (!looksLikeBarePackageSpecifier(trimmed)) {
     return undefined;
   }
-  const containingFile = path.join(generatedDir, "ioc-registry.types.ts");
+  const containingFile = registryTypesFilePath(generatedDir);
   const host = ts.createCompilerHost(program.getCompilerOptions());
   const resolved = ts.resolveModuleName(
     trimmed,
