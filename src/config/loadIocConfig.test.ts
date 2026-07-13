@@ -74,6 +74,57 @@ describe("loadIocConfig", () => {
     });
   });
 
+  describe("When a registration override sets allowLifetimeInversion", () => {
+    it("should accept the boolean form", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-ali-bool-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" }, registrations: {
+          Foo: { bar: { allowLifetimeInversion: true } }
+        } };`,
+      );
+      const c = await loadIocConfig(cfg);
+      assert.equal(
+        (c.registrations?.Foo as Record<string, { allowLifetimeInversion?: unknown }>)
+          .bar.allowLifetimeInversion,
+        true,
+      );
+    });
+
+    it("should accept the string[] form", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-ali-arr-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" }, registrations: {
+          Foo: { bar: { allowLifetimeInversion: ["connectionFactory"] } }
+        } };`,
+      );
+      const c = await loadIocConfig(cfg);
+      assert.deepEqual(
+        (c.registrations?.Foo as Record<string, { allowLifetimeInversion?: unknown }>)
+          .bar.allowLifetimeInversion,
+        ["connectionFactory"],
+      );
+    });
+
+    it("should reject a non-boolean / non-string[] value", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-ali-bad-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" }, registrations: {
+          Foo: { bar: { allowLifetimeInversion: "true" } }
+        } };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /allowLifetimeInversion must be a boolean or a non-empty string\[\]/,
+      );
+    });
+  });
+
   describe("When the config is valid minimal shape", () => {
     it("should return discovery settings", async () => {
       const root = mkdtempSync(path.join(tmpdir(), "ioc-ok-"));

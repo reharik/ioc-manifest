@@ -6,8 +6,8 @@
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import fg from "fast-glob";
+import { tsImport } from "tsx/esm/api";
 import {
   IOC_CONTRACT_CONFIG_KEY,
   parseContractLevelConfig,
@@ -43,7 +43,13 @@ const DISCOVERY_KEYS = new Set([
   "generatedDir",
 ]);
 
-const IMPL_OVERRIDE_KEYS = new Set(["name", "lifetime", "default", "source"]);
+const IMPL_OVERRIDE_KEYS = new Set([
+  "name",
+  "lifetime",
+  "default",
+  "source",
+  "allowLifetimeInversion",
+]);
 
 const assertOnlyKeys = (
   record: Record<string, unknown>,
@@ -472,6 +478,21 @@ const validateRegistrationsShape = (
           );
         }
       }
+
+      if (override.allowLifetimeInversion !== undefined) {
+        const allow = override.allowLifetimeInversion;
+        const isValid =
+          typeof allow === "boolean" ||
+          (Array.isArray(allow) &&
+            allow.every(
+              (key) => typeof key === "string" && key.length > 0,
+            ));
+        if (!isValid) {
+          throw new Error(
+            `[ioc-config] ${sourceLabel} registrations["${contractName}"]["${implementationName}"].allowLifetimeInversion must be a boolean or a non-empty string[] when set`,
+          );
+        }
+      }
     }
   }
 };
@@ -605,12 +626,46 @@ const validateIocConfig = async (
   return config;
 };
 
+/**
+ * Extracts the raw config from a loaded module namespace, tolerating both the ESM shape
+ * (`{ default: config }` / `{ iocConfig: config }`) and the CJS-interop shape tsx emits for a
+ * config whose package is not `type: module` (`{ default: { __esModule, default: config } }`).
+ * A valid config never carries a `default` / `iocConfig` / `config` / `__esModule` key, so any
+ * picked object still bearing one is an interop wrapper to descend through. Returns the first
+ * non-wrapper value; a missing or non-object export falls through to {@link validateIocConfig}.
+ */
+const resolveConfigFromModule = (mod: Record<string, unknown>): unknown => {
+  let current: Record<string, unknown> = mod;
+  for (let depth = 0; depth < 4; depth++) {
+    const picked = current.default ?? current.iocConfig ?? current.config;
+    if (!isRecord(picked)) {
+      return picked;
+    }
+    const isInteropWrapper =
+      "__esModule" in picked ||
+      "default" in picked ||
+      "iocConfig" in picked ||
+      "config" in picked;
+    if (!isInteropWrapper) {
+      return picked;
+    }
+    current = picked;
+  }
+  return current;
+};
+
 export const loadIocConfig = async (
   absoluteConfigPath: string,
 ): Promise<IocConfig> => {
-  const url = pathToFileURL(absoluteConfigPath).href;
-  const mod = await import(url);
-  const raw = mod.default ?? mod.iocConfig ?? mod.config;
+  // Transpile the `.ts` config in-process via tsx's scoped loader rather than delegating to a
+  // bare `import()`, which fails on Node versions without native type stripping. `tsImport`
+  // patches the loader only for this import and restores it after, so the rest of the CLI is
+  // untouched.
+  const mod = (await tsImport(absoluteConfigPath, import.meta.url)) as Record<
+    string,
+    unknown
+  >;
+  const raw = resolveConfigFromModule(mod);
   return validateIocConfig(raw, absoluteConfigPath);
 };
 

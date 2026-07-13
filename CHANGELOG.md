@@ -5,6 +5,34 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.6] - 2026-07-13
+
+### Fixed
+
+- **The documented `allowLifetimeInversion` escape hatch was unreachable — config
+  loading rejected it.** The `IocOverride` type accepted `allowLifetimeInversion` and the
+  codegen inversion check consumed it, but `IMPL_OVERRIDE_KEYS` — the per-implementation
+  key whitelist in `loadIocConfig` — omitted it, so `assertOnlyKeys` threw
+  `[ioc-config] … has unknown property "allowLifetimeInversion"` while loading the config,
+  before the inversion check ever ran. Following the documented opt-out therefore cleared
+  the codegen error only to hard-fail at config load. The key is now whitelisted, and its
+  value is shape-validated (`boolean | non-empty string[]`) alongside the other overrides —
+  previously a malformed value such as a string would have loaded without complaint and then
+  silently suppressed nothing at codegen, resurfacing the inversion error despite the flag
+  being set.
+
+- **`ioc generate` could not load a TypeScript `ioc.config.ts` on Node versions without
+  full native type stripping.** The config was pulled in with a bare dynamic `import()`,
+  delegating `.ts` execution to the host runtime — which fails outright below Node 22.18 and,
+  on newer versions, falls back to strip-only mode that rejects `enum`, `namespace`,
+  parameter properties, and other non-erasable syntax. The loader now transpiles the config
+  in-process through tsx's scoped `tsImport`, so a TypeScript `ioc.config.ts` loads on every
+  supported Node version with no per-project loader wiring or `NODE_OPTIONS`, and the returned
+  module is unwrapped tolerant of both the ESM and CJS-interop export shapes tsx can emit.
+  `tsx` moves from a dev dependency to a runtime dependency for this reason.
+  Discovery is unaffected — it reads factory source as AST through the TypeScript compiler
+  API and never executes it.
+
 ## [2.3.5] - 2026-07-06
 
 ### Fixed

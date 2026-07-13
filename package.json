@@ -1,6 +1,6 @@
 {
   "name": "ioc-manifest",
-  "version": "2.3.5",
+  "version": "2.3.6",
   "description": "Build-time factory discovery and codegen: generates a typed Awilix (PROXY) registration manifest from TypeScript sources with ioc.config as the single policy surface.",
   "license": "MIT",
   "repository": {
@@ -67,7 +67,8 @@
   },
   "dependencies": {
     "awilix": "^12.0.5",
-    "fast-glob": "^3.3.3"
+    "fast-glob": "^3.3.3",
+    "tsx": "^4.19.2"
   },
   "peerDependencies": {
     "prettier": "^3.0.0",
@@ -81,7 +82,6 @@
   "devDependencies": {
     "@types/node": "^22.10.0",
     "prettier": "^3.4.2",
-    "tsx": "^4.19.2",
     "typescript": "^5.0.0",
     "vitepress": "^1.6.4"
   }
