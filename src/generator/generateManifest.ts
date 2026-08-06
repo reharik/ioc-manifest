@@ -49,6 +49,7 @@ import { loadComposedPackageSpecs } from "./loadComposedPackageExternalKeys.js";
 import { resolveLifetimeMarkersForFactories } from "./resolveLifetimeMarkers.js";
 import { validateScopeProvidedAtCodegen } from "./validateScopeProvidedAtCodegen.js";
 import { validateLifetimeInversionsAtCodegen } from "./validateLifetimeInversionsAtCodegen.js";
+import { validateDivergentNamesAtCodegen } from "./validateDivergentNamesAtCodegen.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../../package.json") as { name?: unknown };
@@ -206,6 +207,8 @@ export const generateManifest = async (
     demandSupply,
     config,
   );
+
+  validateDivergentNamesAtCodegen(plans, config, factoryExportPrefix);
 
   if (demandSupply.scopeProvidedKeys.length > 0) {
     console.log(

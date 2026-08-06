@@ -61,9 +61,10 @@ Under each contract name, keys are implementation names from discovery (`buildFo
 | `source`                 | (app mode only) Resolve same-key conflicts across composed manifests. See [Cross-package composition](/monorepo/composition). |
 | `allowLifetimeInversion` | Opt out of the lifetime-inversion check for this implementation. `true` allows all shorter-lived dependencies; a `string[]` allows only the listed demanded keys. See [Lifetime inversion checks](/concepts/lifetimes#lifetime-inversion-checks). |
 
-| `$contract` field | Effect                                                                                          |
-| ----------------- | ----------------------------------------------------------------------------------------------- |
-| `accessKey`       | Overrides the cradle property name for the default slot (e.g. `"database"` instead of `"knex"`) |
+| `$contract` field    | Effect                                                                                          |
+| -------------------- | ----------------------------------------------------------------------------------------------- |
+| `accessKey`          | Overrides the cradle property name for the default slot (e.g. `"database"` instead of `"knex"`) |
+| `allowDivergentName` | `true` suppresses the codegen warning for a single-implementation contract whose implementation key differs from the contract access key. See [Divergent-name warning](/concepts/conventions#divergent-name-warning). |
 
 ### `lifetimeMarkers`
 

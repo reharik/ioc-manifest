@@ -15,6 +15,12 @@ export type IocContractMetadata = {
    * contract name (e.g. `Knex` → `knex`).
    */
   accessKey?: string;
+  /**
+   * Suppresses the codegen warning emitted when this contract has a single implementation whose
+   * registration key diverges from the contract access key (two cradle names for one thing).
+   * Set `true` to declare the divergence intentional.
+   */
+  allowDivergentName?: boolean;
 };
 
 /**
@@ -54,27 +60,41 @@ export const parseContractLevelConfig = (
   }
   const rec = entry as Record<string, unknown>;
   for (const k of Object.keys(rec)) {
-    if (k !== "accessKey") {
+    if (k !== "accessKey" && k !== "allowDivergentName") {
       throw new Error(
-        `[ioc-config] ${pathForError} has unknown property ${JSON.stringify(k)} (only accessKey is allowed)`,
+        `[ioc-config] ${pathForError} has unknown property ${JSON.stringify(k)} (only accessKey and allowDivergentName are allowed)`,
       );
     }
   }
+
+  const out: IocContractMetadata = {};
+
   const accessKey = rec.accessKey;
-  if (accessKey === undefined) {
-    return {};
+  if (accessKey !== undefined) {
+    if (typeof accessKey !== "string" || accessKey.length === 0) {
+      throw new Error(
+        `[ioc-config] ${pathForError}.accessKey must be a non-empty string when set`,
+      );
+    }
+    if (accessKey === IOC_CONTRACT_CONFIG_KEY) {
+      throw new Error(
+        `[ioc-config] ${pathForError}.accessKey cannot be ${JSON.stringify(IOC_CONTRACT_CONFIG_KEY)} (reserved)`,
+      );
+    }
+    out.accessKey = accessKey;
   }
-  if (typeof accessKey !== "string" || accessKey.length === 0) {
-    throw new Error(
-      `[ioc-config] ${pathForError}.accessKey must be a non-empty string when set`,
-    );
+
+  const allowDivergentName = rec.allowDivergentName;
+  if (allowDivergentName !== undefined) {
+    if (typeof allowDivergentName !== "boolean") {
+      throw new Error(
+        `[ioc-config] ${pathForError}.allowDivergentName must be a boolean when set`,
+      );
+    }
+    out.allowDivergentName = allowDivergentName;
   }
-  if (accessKey === IOC_CONTRACT_CONFIG_KEY) {
-    throw new Error(
-      `[ioc-config] ${pathForError}.accessKey cannot be ${JSON.stringify(IOC_CONTRACT_CONFIG_KEY)} (reserved)`,
-    );
-  }
-  return { accessKey };
+
+  return out;
 };
 
 export const getContractLevelConfig = (
@@ -107,7 +127,7 @@ export const isIocImplementationOverride = (
   if ("allowLifetimeInversion" in value) {
     return true;
   }
-  if ("accessKey" in value) {
+  if ("accessKey" in value || "allowDivergentName" in value) {
     return false;
   }
   return true;

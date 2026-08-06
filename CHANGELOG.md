@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-08-06
+
+### Added
+
+- **`ioc generate` now warns when a single-implementation contract has two cradle names.**
+  When a contract's only implementation registers under a key that differs from the contract
+  access key (e.g. `buildCreateMediaItemUpload` returning `CreateMediaUpload`), injection
+  sites resolve through the contract-key alias while the implementation key appears only in
+  generated files — so grepping for the factory's own name finds no usages. Since a
+  single-implementation contract gets none of the benefits of the dual naming, codegen now
+  emits a warning suggesting the factory (or contract) be renamed so the keys collapse to
+  one. Suppress intentionally with `registrations[Contract].$contract.allowDivergentName:
+  true`. The warning never fires for multi-implementation contracts, contracts with an
+  explicit `$contract.accessKey`, or group bases with no elected default.
+
 ## [2.3.6] - 2026-07-13
 
 ### Fixed
