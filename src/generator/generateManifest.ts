@@ -39,7 +39,10 @@ import {
   resolveManifestExportPath,
 } from "../config/iocMode.js";
 import { loadComposedManifestContractNames } from "./loadComposedManifestContracts.js";
-import { validateGroupBaseTypeAliasKeysAtCodegen } from "./loadComposedManifestGroups.js";
+import {
+  loadComposedManifestGroupNames,
+  validateGroupBaseTypeAliasKeysAtCodegen,
+} from "./loadComposedManifestGroups.js";
 import { buildComposedRegistrationOverridesFromConfig } from "./buildComposedRegistrationOverrides.js";
 import {
   buildComposedManifestSource,
@@ -50,6 +53,8 @@ import { resolveLifetimeMarkersForFactories } from "./resolveLifetimeMarkers.js"
 import { validateScopeProvidedAtCodegen } from "./validateScopeProvidedAtCodegen.js";
 import { validateLifetimeInversionsAtCodegen } from "./validateLifetimeInversionsAtCodegen.js";
 import { validateDivergentNamesAtCodegen } from "./validateDivergentNamesAtCodegen.js";
+import { validateNonEmptyGroupsAtCodegen } from "./validateNonEmptyGroupsAtCodegen.js";
+import { warnUnusableFactoryExports } from "./warnUnusableFactoryExports.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../../package.json") as { name?: unknown };
@@ -149,14 +154,17 @@ export const generateManifest = async (
   const program = createIocProgramForDiscovery(projectRoot, files, tsconfigContext);
 
   try {
-  const { contractMap, acceptedFactories } = discoverFactories(
+  const { contractMap, acceptedFactories, discoveryFiles } = discoverFactories(
     files,
     program,
     projectRoot,
     factoryExportPrefix,
     { projectRoot, scanDirs, generatedDir },
     config,
+    { collectFileRecords: true },
   );
+
+  warnUnusableFactoryExports(discoveryFiles);
 
   const composedContractNames =
     config !== undefined && isAppMode(config)
@@ -184,6 +192,25 @@ export const generateManifest = async (
     generatedDir,
     scanDirs,
   });
+
+  // App mode: a locally-empty group root is legitimate when the same group key exists in a
+  // composed package manifest — its members merge in at runtime via `composeManifests`.
+  const composedGroupNames =
+    config !== undefined && isAppMode(config)
+      ? (
+          await loadComposedManifestGroupNames(
+            projectRoot,
+            config.composedManifests!,
+            tsconfigContext.customConditions,
+          )
+        ).all
+      : undefined;
+
+  validateNonEmptyGroupsAtCodegen(
+    groupResult?.manifest,
+    config,
+    composedGroupNames,
+  );
 
   // Ordering invariant: `buildGroupPlan` must finish before `analyzeDemandSupply`.
   // Demand analysis resolves `IocGeneratedCradle['<key>']` against `groupsManifest` and

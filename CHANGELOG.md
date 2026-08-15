@@ -5,6 +5,72 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0]
+
+### Added
+
+- Generation now fails when a configured group resolves to zero members. An empty
+  group emits `ReadonlyArray<never>` into the cradle and produces a container that
+  boots into a no-op, so this is never a correct emission. The error names the group
+  key, base type, and kind, and lists the likely causes.
+
+- `groups.<name>.allowEmpty` suppresses the empty-group failure for a group that is
+  intentionally empty:
+
+```ts
+  groups: {
+    workerTasks: {
+      baseType: "WorkerTaskBase",
+      allowEmpty: true,
+    },
+  }
+```
+
+App-mode builds do not need this. When a group key is also declared by a composed
+package manifest, members arrive at boot via `composeManifests` and the check is
+skipped automatically.
+
+- Generation now warns for exported factories that matched the factory prefix but
+  could not be registered — `invalid_factory_signature`, `contract_not_found`,
+  `contract_not_imported`, `contract_not_resolved`, and `unsupported_pattern`.
+  Previously these outcomes were recorded but only visible through `ioc --discovery`.
+  Benign skips (non-factory files, config exclusions) stay silent.
+
+### Changed
+
+- **Upgrading may fail a build that previously passed.** Any group that was silently
+  resolving to zero members now throws at generation time. This surfaces an existing
+  defect rather than introducing one — such a group was already emitting
+  `ReadonlyArray<never>` and producing a container with nothing registered. Fix the
+  group membership, or set `allowEmpty: true` if the group is intentionally empty.
+
+- Factories whose return type is a bare union are still not discoverable, but no
+  longer fail silently. Contract identity is derived from the return type's symbol
+  name, and group membership walks `extends` heritage — a union has neither, so such
+  factories are skipped with `contract_not_resolved` and now surface as a warning at
+  generation time.
+
+  A union is a shape discriminator, not a member enumeration. Give the group a shared
+  base and have each implementation reach it through its own contract:
+
+```ts
+  export type WorkerTaskBase = {
+    name: string;
+    run: () => Promise<WorkerTaskOutcome>;
+  };
+
+  export type QueueWorkerTask = WorkerTaskBase & { type: "queue"; order: number };
+
+  export interface ThumbnailTask extends QueueWorkerTask {
+    name: "thumbnail";
+  }
+
+  export const build__thumbnailTask = (): ThumbnailTask => { ... };
+```
+
+Bare type aliases of each arm do not work — they collapse through `getApparentType`
+back to the base symbol and dedupe into a single contract.
+
 ## [2.4.0] - 2026-08-06
 
 ### Added
@@ -17,7 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   single-implementation contract gets none of the benefits of the dual naming, codegen now
   emits a warning suggesting the factory (or contract) be renamed so the keys collapse to
   one. Suppress intentionally with `registrations[Contract].$contract.allowDivergentName:
-  true`. The warning never fires for multi-implementation contracts, contracts with an
+true`. The warning never fires for multi-implementation contracts, contracts with an
   explicit `$contract.accessKey`, or group bases with no elected default.
 
 ## [2.3.6] - 2026-07-13

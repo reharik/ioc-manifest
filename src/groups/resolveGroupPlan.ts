@@ -47,6 +47,12 @@ export type IocGroupDefinition = {
    * `baseType` is non-generic.
    */
   baseTypeArg?: string;
+  /**
+   * Suppresses the codegen-time empty-group error for this group. An empty group emits a no-op
+   * cradle entry (`ReadonlyArray<never>` for collections), so generation fails loud by default;
+   * opt in only when zero local members is genuinely expected.
+   */
+  allowEmpty?: boolean;
 };
 
 export type IocGroupsConfig = Record<string, IocGroupDefinition>;
@@ -158,8 +164,16 @@ const validateGroupDefinition = (
     return { kind: "group_invalid_entry", groupName };
   }
 
+  if (raw.allowEmpty !== undefined && typeof raw.allowEmpty !== "boolean") {
+    return { kind: "group_invalid_entry", groupName };
+  }
+
   const extraKeys = Object.keys(raw).filter(
-    (key) => key !== "kind" && key !== "baseType" && key !== "baseTypeArg",
+    (key) =>
+      key !== "kind" &&
+      key !== "baseType" &&
+      key !== "baseTypeArg" &&
+      key !== "allowEmpty",
   );
   if (extraKeys.length > 0) {
     return { kind: "group_invalid_entry", groupName };

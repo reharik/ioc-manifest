@@ -8,6 +8,7 @@ import {
   IocDiscoveryStatus,
 } from "./discoveryOutcomeTypes.js";
 import type { DiscoveredFactory } from "../types.js";
+import { warnUnusableFactoryExports } from "../warnUnusableFactoryExports.js";
 import { discoverFactories } from "./discoverFactories.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -29,6 +30,7 @@ const makeProgram = (): ts.Program => {
     path.join(fixtureDir, "create-factories.ts"),
     path.join(fixtureDir, "both-matching-factories.ts"),
     path.join(fixtureDir, "invalid-factory.ts"),
+    path.join(fixtureDir, "union-alias-factory.ts"),
   ];
 
   return ts.createProgram({
@@ -192,6 +194,85 @@ describe("discoverFactories", () => {
           IocDiscoverySkipReason.CONTRACT_NOT_RESOLVED,
         );
       }
+    });
+  });
+
+  describe("When a factory returns a bare union alias", () => {
+    it("should warn during generation with the export, contract_not_resolved, and the union hint", () => {
+      const program = makeProgram();
+      const unionFile = path.join(fixtureDir, "union-alias-factory.ts");
+
+      const { acceptedFactories, discoveryFiles } = discoverFactories(
+        [unionFile],
+        program,
+        projectRoot,
+        "build",
+        {
+          projectRoot,
+          scanDirs: [{ absPath: srcDir }],
+          generatedDir,
+        },
+        undefined,
+        { collectFileRecords: true },
+      );
+
+      assert.strictEqual(acceptedFactories.length, 0);
+
+      const warnings: string[] = [];
+      const prevWarn = console.warn;
+      console.warn = (msg: unknown) => {
+        warnings.push(String(msg));
+      };
+      try {
+        warnUnusableFactoryExports(discoveryFiles);
+      } finally {
+        console.warn = prevWarn;
+      }
+
+      assert.strictEqual(warnings.length, 1);
+      const warning = warnings[0]!;
+      assert.match(warning, /1 export\(s\) matched the factory prefix/);
+      assert.match(warning, /union-alias-factory\.ts/);
+      assert.match(warning, /"buildUnionTask"/);
+      assert.match(warning, /contract_not_resolved/);
+      assert.match(warning, /bare union return annotation is the common cause/);
+      assert.match(
+        warning,
+        /contract interface extending its union arm/,
+      );
+      assert.match(warning, /ioc --discovery/);
+    });
+
+    it("should not warn for file-scoped or benign skip reasons", () => {
+      const program = makeProgram();
+      const namingFile = path.join(fixtureDir, "naming-factories.ts");
+
+      const { discoveryFiles } = discoverFactories(
+        [namingFile],
+        program,
+        projectRoot,
+        "build",
+        {
+          projectRoot,
+          scanDirs: [{ absPath: srcDir }],
+          generatedDir,
+        },
+        undefined,
+        { collectFileRecords: true },
+      );
+
+      const warnings: string[] = [];
+      const prevWarn = console.warn;
+      console.warn = (msg: unknown) => {
+        warnings.push(String(msg));
+      };
+      try {
+        warnUnusableFactoryExports(discoveryFiles);
+      } finally {
+        console.warn = prevWarn;
+      }
+
+      assert.deepStrictEqual(warnings, []);
     });
   });
 
