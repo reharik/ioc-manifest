@@ -8,13 +8,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import fg from "fast-glob";
 import { tsImport } from "tsx/esm/api";
-import {
-  IOC_CONTRACT_CONFIG_KEY,
-  parseContractLevelConfig,
-  type IocConfig,
-  type IocLifetime,
-} from "./iocConfig.js";
-import { parseDiscoveryScanDirs } from "./parseDiscoveryScanDirs.js";
+import type { IocConfig } from "./iocConfig.js";
+import { formatIocConfigIssues, iocConfigSchema } from "./iocConfigSchema.js";
 import {
   findPackageIdentifierCollisions,
   formatPackageIdentifierCollisionError,
@@ -22,91 +17,6 @@ import {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-
-const TOP_LEVEL_KEYS = new Set([
-  "discovery",
-  "composedManifests",
-  "manifestExportPath",
-  "packageName",
-  "registrations",
-  "groups",
-  "groupBaseTypeAliases",
-  "lifetimeMarkers",
-  "scopeProvided",
-]);
-
-const DISCOVERY_KEYS = new Set([
-  "scanDirs",
-  "includes",
-  "excludes",
-  "factoryPrefix",
-  "generatedDir",
-]);
-
-const IMPL_OVERRIDE_KEYS = new Set([
-  "name",
-  "lifetime",
-  "default",
-  "source",
-  "allowLifetimeInversion",
-]);
-
-const assertOnlyKeys = (
-  record: Record<string, unknown>,
-  allowed: Set<string>,
-  pathLabel: string,
-): void => {
-  for (const k of Object.keys(record)) {
-    if (!allowed.has(k)) {
-      throw new Error(
-        `[ioc-config] ${pathLabel} has unknown property ${JSON.stringify(k)}`,
-      );
-    }
-  }
-};
-
-const GROUP_KINDS = new Set(["collection", "object"]);
-const IOC_LIFETIMES = new Set(["singleton", "scoped", "transient"]);
-
-const isIocLifetime = (value: unknown): value is IocLifetime =>
-  typeof value === "string" && IOC_LIFETIMES.has(value);
-
-const validateGroupBaseTypeAliasesShape = (
-  value: unknown,
-  pathLabel: string,
-): void => {
-  if (!isRecord(value)) {
-    throw new Error(`[ioc-config] ${pathLabel} must be an object when set`);
-  }
-
-  for (const [groupName, ids] of Object.entries(value)) {
-    const entryPath = `${pathLabel}.${JSON.stringify(groupName)}`;
-    if (!Array.isArray(ids)) {
-      throw new Error(`[ioc-config] ${entryPath} must be a string array`);
-    }
-    if (ids.length < 2) {
-      throw new Error(
-        `[ioc-config] ${entryPath} must contain at least 2 canonical identifier strings`,
-      );
-    }
-    for (let i = 0; i < ids.length; i++) {
-      if (typeof ids[i] !== "string" || ids[i]!.length === 0) {
-        throw new Error(
-          `[ioc-config] ${entryPath}[${i}] must be a non-empty string`,
-        );
-      }
-    }
-    const seen = new Set<string>();
-    for (const id of ids) {
-      if (seen.has(id)) {
-        console.warn(
-          `[ioc-config] warning: ${entryPath} contains duplicate entry ${JSON.stringify(id)}`,
-        );
-      }
-      seen.add(id);
-    }
-  }
-};
 
 const BUILTIN_TYPE_NAMES = new Set([
   "string",
@@ -123,128 +33,32 @@ const BUILTIN_TYPE_NAMES = new Set([
   "void",
 ]);
 
-const validateLifetimeMarkersShape = (
-  value: unknown,
-  pathLabel: string,
-): void => {
-  if (!isRecord(value)) {
-    throw new Error(`[ioc-config] ${pathLabel} must be an object when set`);
+/** Advisory warnings preserved from the previous hand validators (never throws). */
+const warnIocConfigAdvisories = (config: IocConfig, sourceLabel: string): void => {
+  if (config.composedManifests !== undefined && config.composedManifests.length === 0) {
+    console.warn(
+      `[ioc-config] ${sourceLabel} composedManifests is an empty array; omit the field for library mode.`,
+    );
   }
 
-  for (const [markerName, lifetime] of Object.entries(value)) {
-    const entryPath = `${pathLabel}.${JSON.stringify(markerName)}`;
-    if (typeof markerName !== "string" || markerName.length === 0) {
-      throw new Error(
-        `[ioc-config] ${pathLabel} keys must be non-empty strings`,
-      );
-    }
+  for (const markerName of Object.keys(config.lifetimeMarkers ?? {})) {
     if (BUILTIN_TYPE_NAMES.has(markerName)) {
       console.warn(
-        `[ioc-config] warning: ${entryPath} uses a built-in type name ${JSON.stringify(markerName)}; prefer a dedicated marker interface`,
-      );
-    }
-    if (!isIocLifetime(lifetime)) {
-      throw new Error(
-        `[ioc-config] ${entryPath} must be singleton | scoped | transient`,
+        `[ioc-config] warning: ${sourceLabel} lifetimeMarkers.${JSON.stringify(markerName)} uses a built-in type name ${JSON.stringify(markerName)}; prefer a dedicated marker interface`,
       );
     }
   }
-};
 
-const validateScopeProvidedShape = (
-  value: unknown,
-  pathLabel: string,
-): void => {
-  if (!Array.isArray(value)) {
-    throw new Error(`[ioc-config] ${pathLabel} must be an array when set`);
-  }
-
-  const seen = new Set<string>();
-  for (let i = 0; i < value.length; i++) {
-    const key = value[i];
-    if (typeof key !== "string" || key.length === 0) {
-      throw new Error(
-        `[ioc-config] ${pathLabel}[${i}] must be a non-empty string`,
-      );
-    }
-    if (seen.has(key)) {
-      throw new Error(
-        `[ioc-config] ${pathLabel} contains duplicate entry ${JSON.stringify(key)}`,
-      );
-    }
-    seen.add(key);
-  }
-};
-
-const validateGroupsShape = (value: unknown, pathLabel: string): void => {
-  if (!isRecord(value)) {
-    throw new Error(`[ioc-config] ${pathLabel} must be an object`);
-  }
-
-  for (const [name, entry] of Object.entries(value)) {
-    if (!isRecord(entry)) {
-      throw new Error(
-        `[ioc-config] ${pathLabel}.${JSON.stringify(name)} must be an object`,
-      );
-    }
-
-    const kind = entry.kind;
-    if (typeof kind !== "string" || !GROUP_KINDS.has(kind)) {
-      throw new Error(
-        `[ioc-config] ${pathLabel}.${JSON.stringify(name)}.kind must be "collection" or "object"`,
-      );
-    }
-
-    const baseType = entry.baseType;
-    if (typeof baseType !== "string" || baseType.length === 0) {
-      throw new Error(
-        `[ioc-config] ${pathLabel}.${JSON.stringify(name)}.baseType must be a non-empty string`,
-      );
-    }
-
-    if (
-      entry.baseTypeArg !== undefined &&
-      (typeof entry.baseTypeArg !== "string" || entry.baseTypeArg.length === 0)
-    ) {
-      throw new Error(
-        `[ioc-config] ${pathLabel}.${JSON.stringify(name)}.baseTypeArg must be a non-empty string when set`,
-      );
-    }
-
-    const allowed = new Set(["kind", "baseType", "baseTypeArg"]);
-    for (const key of Object.keys(entry)) {
-      if (!allowed.has(key)) {
-        throw new Error(
-          `[ioc-config] ${pathLabel}.${JSON.stringify(name)} has unknown property ${JSON.stringify(key)} (only kind, baseType and baseTypeArg are allowed)`,
+  for (const [groupName, ids] of Object.entries(config.groupBaseTypeAliases ?? {})) {
+    const seen = new Set<string>();
+    for (const id of ids) {
+      if (seen.has(id)) {
+        console.warn(
+          `[ioc-config] warning: ${sourceLabel} groupBaseTypeAliases.${JSON.stringify(groupName)} contains duplicate entry ${JSON.stringify(id)}`,
         );
       }
+      seen.add(id);
     }
-  }
-};
-
-const validateStringArray: (
-  value: unknown,
-  pathLabel: string,
-) => asserts value is string[] = (value, pathLabel) => {
-  if (
-    !Array.isArray(value) ||
-    !value.every((item) => typeof item === "string")
-  ) {
-    throw new Error(`[ioc-config] ${pathLabel} must be string[] when set`);
-  }
-};
-
-const validateOptionalNonEmptyString = (
-  value: unknown,
-  pathLabel: string,
-): void => {
-  if (
-    value !== undefined &&
-    (typeof value !== "string" || value.length === 0)
-  ) {
-    throw new Error(
-      `[ioc-config] ${pathLabel} must be a non-empty string when set`,
-    );
   }
 };
 
@@ -280,47 +94,6 @@ const resolveLocalPackageName = async (
   return undefined;
 };
 
-const validateComposedManifestsField = (
-  value: unknown,
-  sourceLabel: string,
-): string[] | undefined => {
-  if (value === undefined) {
-    return undefined;
-  }
-  validateStringArray(value, `${sourceLabel} composedManifests`);
-  const list = value;
-  if (list.length === 0) {
-    console.warn(
-      `[ioc-config] ${sourceLabel} composedManifests is an empty array; omit the field for library mode.`,
-    );
-    return list;
-  }
-  const seen = new Set<string>();
-  for (const pkg of list) {
-    if (seen.has(pkg)) {
-      throw new Error(
-        `[ioc-config] ${sourceLabel} composedManifests contains duplicate entry ${JSON.stringify(pkg)}`,
-      );
-    }
-    seen.add(pkg);
-  }
-  return list;
-};
-
-const validateAppLibraryModeExclusivity = (
-  raw: Record<string, unknown>,
-  sourceLabel: string,
-  composedManifests: string[] | undefined,
-): void => {
-  const inAppMode =
-    composedManifests !== undefined && composedManifests.length > 0;
-  if (inAppMode && raw.manifestExportPath !== undefined) {
-    throw new Error(
-      `[ioc-config] ${sourceLabel} manifestExportPath is only valid in library mode; remove it or remove composedManifests for app mode`,
-    );
-  }
-};
-
 const validateComposedManifestsSelfReference = (
   composedManifests: readonly string[],
   localPackageName: string | undefined,
@@ -340,163 +113,12 @@ const validateComposedManifestsSelfReference = (
   }
 };
 
-const validateRegistrationsSourceOverrides = (
-  registrations: Record<string, unknown> | undefined,
-  sourceLabel: string,
-  composedManifests: readonly string[] | undefined,
-  inAppMode: boolean,
-): void => {
-  if (registrations === undefined) {
-    return;
-  }
-
-  const composedSet =
-    composedManifests !== undefined
-      ? new Set(composedManifests)
-      : new Set<string>();
-
-  for (const [contractName, perImplementation] of Object.entries(
-    registrations,
-  )) {
-    if (!isRecord(perImplementation)) {
-      continue;
-    }
-    for (const [implementationName, override] of Object.entries(
-      perImplementation,
-    )) {
-      if (implementationName === IOC_CONTRACT_CONFIG_KEY) {
-        continue;
-      }
-      if (!isRecord(override) || !("source" in override)) {
-        continue;
-      }
-
-      const path = `${sourceLabel} registrations[${JSON.stringify(contractName)}][${JSON.stringify(implementationName)}].source`;
-
-      if (!inAppMode) {
-        throw new Error(
-          `[ioc-config] ${path} is only valid when composedManifests is set (app mode)`,
-        );
-      }
-
-      const source = override.source;
-      if (typeof source !== "string" || source.length === 0) {
-        throw new Error(
-          `[ioc-config] ${path} must be "local" or a package name listed in composedManifests when set`,
-        );
-      }
-
-      if (source === "local") {
-        continue;
-      }
-
-      if (!composedSet.has(source)) {
-        throw new Error(
-          `[ioc-config] ${path} references ${JSON.stringify(source)}, which is not listed in composedManifests`,
-        );
-      }
-    }
-  }
-};
-
-const validateRegistrationsShape = (
-  registrations: unknown,
-  sourceLabel: string,
-): void => {
-  if (registrations === undefined) {
-    return;
-  }
-
-  if (!isRecord(registrations)) {
-    throw new Error(
-      `[ioc-config] ${sourceLabel} registrations must be an object`,
-    );
-  }
-
-  for (const [contractName, perImplementation] of Object.entries(
-    registrations,
-  )) {
-    if (!isRecord(perImplementation)) {
-      throw new Error(
-        `[ioc-config] ${sourceLabel} registrations["${contractName}"] must be an object`,
-      );
-    }
-
-    for (const [implementationName, override] of Object.entries(
-      perImplementation,
-    )) {
-      if (!isRecord(override)) {
-        throw new Error(
-          `[ioc-config] ${sourceLabel} registrations["${contractName}"]["${implementationName}"] must be an object`,
-        );
-      }
-
-      if (implementationName === IOC_CONTRACT_CONFIG_KEY) {
-        parseContractLevelConfig(
-          override,
-          `${sourceLabel} registrations["${contractName}"]["${implementationName}"]`,
-        );
-        continue;
-      }
-
-      assertOnlyKeys(
-        override,
-        IMPL_OVERRIDE_KEYS,
-        `${sourceLabel} registrations["${contractName}"]["${implementationName}"]`,
-      );
-
-      if (override.name !== undefined) {
-        if (typeof override.name !== "string" || override.name.length === 0) {
-          throw new Error(
-            `[ioc-config] ${sourceLabel} registrations["${contractName}"]["${implementationName}"].name must be a non-empty string when set`,
-          );
-        }
-      }
-
-      if (
-        override.lifetime !== undefined &&
-        !isIocLifetime(override.lifetime)
-      ) {
-        throw new Error(
-          `[ioc-config] ${sourceLabel} registrations["${contractName}"]["${implementationName}"].lifetime must be singleton | scoped | transient when set`,
-        );
-      }
-
-      if (
-        override.default !== undefined &&
-        typeof override.default !== "boolean"
-      ) {
-        throw new Error(
-          `[ioc-config] ${sourceLabel} registrations["${contractName}"]["${implementationName}"].default must be a boolean when set`,
-        );
-      }
-
-      if (override.source !== undefined) {
-        if (typeof override.source !== "string" || override.source.length === 0) {
-          throw new Error(
-            `[ioc-config] ${sourceLabel} registrations["${contractName}"]["${implementationName}"].source must be a non-empty string when set`,
-          );
-        }
-      }
-
-      if (override.allowLifetimeInversion !== undefined) {
-        const allow = override.allowLifetimeInversion;
-        const isValid =
-          typeof allow === "boolean" ||
-          (Array.isArray(allow) &&
-            allow.every(
-              (key) => typeof key === "string" && key.length > 0,
-            ));
-        if (!isValid) {
-          throw new Error(
-            `[ioc-config] ${sourceLabel} registrations["${contractName}"]["${implementationName}"].allowLifetimeInversion must be a boolean or a non-empty string[] when set`,
-          );
-        }
-      }
-    }
-  }
-};
-
+/**
+ * Validates the raw config against {@link iocConfigSchema} (the single strict-schema artifact for
+ * key sets, shapes, and I/O-free cross-field rules), then runs the checks that need the
+ * filesystem: self-composition detection via the local package name, and composed-package
+ * identifier collisions.
+ */
 const validateIocConfig = async (
   raw: unknown,
   sourceLabel: string,
@@ -505,107 +127,15 @@ const validateIocConfig = async (
     throw new Error(`[ioc-config] ${sourceLabel} must export an object`);
   }
 
-  assertOnlyKeys(raw, TOP_LEVEL_KEYS, sourceLabel);
-
-  validateOptionalNonEmptyString(
-    raw.packageName,
-    `${sourceLabel} packageName`,
-  );
-  validateOptionalNonEmptyString(
-    raw.manifestExportPath,
-    `${sourceLabel} manifestExportPath`,
-  );
-
-  const composedManifests = validateComposedManifestsField(
-    raw.composedManifests,
-    sourceLabel,
-  );
-  validateAppLibraryModeExclusivity(raw, sourceLabel, composedManifests);
-
-  const discovery = raw.discovery;
-  if (!isRecord(discovery)) {
-    throw new Error(`[ioc-config] ${sourceLabel} is missing discovery`);
-  }
-
-  if ("workspacePackageImportBases" in discovery) {
-    throw new Error(
-      `[ioc-config] ${sourceLabel} discovery.workspacePackageImportBases was removed in v2; use composedManifests instead.`,
-    );
-  }
-
-  assertOnlyKeys(discovery, DISCOVERY_KEYS, `${sourceLabel} discovery`);
-
-  parseDiscoveryScanDirs(
-    discovery.scanDirs,
-    `${sourceLabel} discovery.scanDirs`,
-  );
-
-  if (discovery.includes !== undefined) {
-    validateStringArray(
-      discovery.includes,
-      `${sourceLabel} discovery.includes`,
-    );
-  }
-
-  if (discovery.excludes !== undefined) {
-    validateStringArray(
-      discovery.excludes,
-      `${sourceLabel} discovery.excludes`,
-    );
-  }
-
-  validateOptionalNonEmptyString(
-    discovery.factoryPrefix,
-    `${sourceLabel} discovery.factoryPrefix`,
-  );
-  validateOptionalNonEmptyString(
-    discovery.generatedDir,
-    `${sourceLabel} discovery.generatedDir`,
-  );
-
-  validateRegistrationsShape(raw.registrations, sourceLabel);
-
-  const inAppMode =
-    composedManifests !== undefined && composedManifests.length > 0;
-  validateRegistrationsSourceOverrides(
-    isRecord(raw.registrations) ? raw.registrations : undefined,
-    sourceLabel,
-    composedManifests,
-    inAppMode,
-  );
-
-  if (raw.groups !== undefined) {
-    validateGroupsShape(raw.groups, `${sourceLabel} groups`);
-  }
-
-  if (raw.groupBaseTypeAliases !== undefined) {
-    if (!inAppMode) {
-      throw new Error(
-        `[ioc-config] ${sourceLabel} groupBaseTypeAliases is only valid in app mode (when composedManifests is set)`,
-      );
-    }
-    validateGroupBaseTypeAliasesShape(
-      raw.groupBaseTypeAliases,
-      `${sourceLabel} groupBaseTypeAliases`,
-    );
-  }
-
-  if (raw.lifetimeMarkers !== undefined) {
-    validateLifetimeMarkersShape(
-      raw.lifetimeMarkers,
-      `${sourceLabel} lifetimeMarkers`,
-    );
-  }
-
-  if (raw.scopeProvided !== undefined) {
-    validateScopeProvidedShape(
-      raw.scopeProvided,
-      `${sourceLabel} scopeProvided`,
-    );
+  const parsed = iocConfigSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new Error(formatIocConfigIssues(parsed.error, sourceLabel));
   }
 
   const config = raw as IocConfig;
+  warnIocConfigAdvisories(config, sourceLabel);
 
+  const composedManifests = config.composedManifests;
   if (composedManifests !== undefined && composedManifests.length > 0) {
     const projectRoot = resolveProjectRootFromIocConfigPath(sourceLabel);
     const localPackageName = await resolveLocalPackageName(raw, projectRoot);

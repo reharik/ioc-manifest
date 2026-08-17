@@ -284,6 +284,96 @@ describe("loadIocConfig", () => {
     });
   });
 
+  // REGRESSION (2.2.1 / 2.3.6 / allowEmpty): three config keys shipped while omitted from a
+  // hand-maintained whitelist — `baseTypeArg` was rejected by the loader (2.2.1),
+  // `allowLifetimeInversion` was rejected by the loader (2.3.6), and `groups.<name>.allowEmpty`
+  // (added 2.5.0) was still rejected until the strict-schema swap. Validation is now a single
+  // strict zod schema: a key either exists in the schema (accepted and shape-checked) or it fails
+  // loudly as an unknown property — silent-by-omission is impossible by construction.
+  describe("Whitelist-omission regressions (strict schema)", () => {
+    it("accepts baseTypeArg and loudly rejects a key absent from the group schema (2.2.1)", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-schema-basetypearg-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" }, groups: {
+          strategies: { kind: "collection", baseType: "Strategy", baseTypeArg: "SharedEventName" }
+        } };`,
+      );
+      const c = await loadIocConfig(cfg);
+      assert.equal(c.groups?.strategies?.baseTypeArg, "SharedEventName");
+
+      // Distinct file: tsImport caches modules by path, so re-writing cfg would reload stale.
+      const cfgTypo = path.join(root, "ioc.config.typo.ts");
+      writeFileSync(
+        cfgTypo,
+        `export default { discovery: { scanDirs: "src" }, groups: {
+          strategies: { kind: "collection", baseType: "Strategy", baseTypeArgs: "SharedEventName" }
+        } };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfgTypo),
+        /groups\."strategies" has unknown property "baseTypeArgs"/,
+      );
+    });
+
+    it("accepts allowLifetimeInversion and loudly rejects a key absent from the override schema (2.3.6)", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-schema-inversion-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" }, registrations: {
+          Foo: { bar: { allowLifetimeInversion: ["connectionFactory"] } }
+        } };`,
+      );
+      const c = await loadIocConfig(cfg);
+      assert.deepEqual(
+        (c.registrations?.Foo as Record<string, { allowLifetimeInversion?: unknown }>)
+          .bar.allowLifetimeInversion,
+        ["connectionFactory"],
+      );
+
+      // Distinct file: tsImport caches modules by path, so re-writing cfg would reload stale.
+      const cfgTypo = path.join(root, "ioc.config.typo.ts");
+      writeFileSync(
+        cfgTypo,
+        `export default { discovery: { scanDirs: "src" }, registrations: {
+          Foo: { bar: { allowLifetimeInversions: true } }
+        } };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfgTypo),
+        /registrations\["Foo"\]\["bar"\] has unknown property "allowLifetimeInversions"/,
+      );
+    });
+
+    it("accepts groups.<name>.allowEmpty (2.5.0 key the old whitelist rejected)", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-schema-allowempty-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" }, groups: {
+          workerTasks: { kind: "collection", baseType: "WorkerTask", allowEmpty: true }
+        } };`,
+      );
+      const c = await loadIocConfig(cfg);
+      assert.equal(c.groups?.workerTasks?.allowEmpty, true);
+    });
+
+    it("loudly rejects an unknown top-level key (strictness at the root level)", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-schema-toplevel-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default { discovery: { scanDirs: "src" }, scopeProvidedKeys: ["viewerId"] };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /has unknown property "scopeProvidedKeys"/,
+      );
+    });
+  });
+
   describe("When a group omits baseTypeArg", () => {
     it("should still load (baseTypeArg is optional)", async () => {
       const root = mkdtempSync(path.join(tmpdir(), "ioc-groupnoarg-"));

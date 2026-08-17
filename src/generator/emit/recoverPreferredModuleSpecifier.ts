@@ -150,14 +150,24 @@ const recoverFromFactoryBareImports = (
     ?.moduleSpecifier;
 
 /**
+ * Slice of the emission context needed by specifier recovery: the factory source file whose
+ * imports are inspected. Structurally satisfied by the full
+ * {@link import("./emitTypeReference.js").EmitTypeReferenceContext}.
+ */
+export type PreferredSpecifierContext = {
+  contextSourceFile: ts.SourceFile;
+};
+
+/**
  * Recovers the module specifier a factory already uses for a type: same-file import re-exports,
  * then any bare-specifier import in the factory file that resolves to the same symbol.
  */
 export const tryRecoverPreferredModuleSpecifier = (
   checker: ts.TypeChecker,
   type: ts.Type,
-  factorySourceFile: ts.SourceFile,
+  ctx: PreferredSpecifierContext,
 ): string | undefined => {
+  const factorySourceFile = ctx.contextSourceFile;
   const t = checker.getApparentType(type);
   if (t.isUnion() || t.isIntersection()) {
     return undefined;
@@ -214,9 +224,9 @@ const findFactoryBareImportForType = (
 export const factoryImportsTypeAsDefaultBareImport = (
   checker: ts.TypeChecker,
   type: ts.Type,
-  factorySourceFile: ts.SourceFile,
+  ctx: PreferredSpecifierContext,
 ): boolean =>
-  findFactoryBareImportForType(checker, type, factorySourceFile)
+  findFactoryBareImportForType(checker, type, ctx.contextSourceFile)
     ?.useDefaultImport === true;
 
 /**
@@ -226,6 +236,7 @@ export const factoryImportsTypeAsDefaultBareImport = (
 export const factoryBareImportLocalBindingName = (
   checker: ts.TypeChecker,
   type: ts.Type,
-  factorySourceFile: ts.SourceFile,
+  ctx: PreferredSpecifierContext,
 ): string | undefined =>
-  findFactoryBareImportForType(checker, type, factorySourceFile)?.localBindingName;
+  findFactoryBareImportForType(checker, type, ctx.contextSourceFile)
+    ?.localBindingName;

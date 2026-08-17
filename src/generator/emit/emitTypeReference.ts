@@ -1,6 +1,6 @@
-import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
+import { canonicalPath } from "../generatedRegistrySpecifier.js";
 import {
   computeManifestModuleSpecifier,
   registryTypesFilePath,
@@ -10,7 +10,7 @@ import {
   factoryBareImportLocalBindingName,
   factoryImportsTypeAsDefaultBareImport,
   tryRecoverPreferredModuleSpecifier,
-} from "../recoverPreferredModuleSpecifier.js";
+} from "./recoverPreferredModuleSpecifier.js";
 import { cradleTypeImportUsesDefaultExport } from "../contractTypeSourceFile.js";
 import type { EmittedTypeReference, TypeImportSpec } from "./types.js";
 
@@ -27,23 +27,6 @@ export class EmitTypeReferenceError extends Error {
 
 const formatType = (checker: ts.TypeChecker, type: ts.Type): string =>
   checker.typeToString(type, undefined, NO_TRUNCATION);
-
-/**
- * Canonical absolute path for cross-comparison. `declSource.fileName` is TS's absolute
- * realpath, but `generatedDir` can be project-relative in a composed run, so both sides
- * must be resolved to the same shape. Resolve against cwd (matching how `generatedDir` is
- * used elsewhere — `fs.mkdir(generatedDir)`, `path.relative`), then `realpath` to reconcile
- * monorepo/pnpm symlinks. Falls back to the resolved (non-realpath) path when the target
- * file does not exist yet (the generated file may not be on disk during the first run).
- */
-const canonicalPath = (p: string): string => {
-  const abs = path.resolve(p);
-  try {
-    return fs.realpathSync.native(abs);
-  } catch {
-    return abs;
-  }
-};
 
 /** Primitive `object` (not the lib `Object` interface). */
 const isPrimitiveObjectType = (type: ts.Type): boolean =>
@@ -454,11 +437,7 @@ const emitNamedTypeImport = (
   const typeDisplay = formatType(checker, apparent);
   let importName = importSymbolNameFromType(checker, apparent);
   if (importName === "default") {
-    const localName = factoryBareImportLocalBindingName(
-      checker,
-      apparent,
-      ctx.contextSourceFile,
-    );
+    const localName = factoryBareImportLocalBindingName(checker, apparent, ctx);
     if (localName !== undefined) {
       importName = localName;
     }
@@ -512,7 +491,7 @@ const emitNamedTypeImport = (
       preferredModuleSpecifier: tryRecoverPreferredModuleSpecifier(
         checker,
         apparent,
-        ctx.contextSourceFile,
+        ctx,
       ),
       projectRoot: ctx.projectRoot,
     },
@@ -521,11 +500,7 @@ const emitNamedTypeImport = (
   assertNotTypescriptPackageImport(importName, relImport, declSource.fileName);
 
   const useDefaultImport =
-    factoryImportsTypeAsDefaultBareImport(
-      checker,
-      apparent,
-      ctx.contextSourceFile,
-    ) ||
+    factoryImportsTypeAsDefaultBareImport(checker, apparent, ctx) ||
     (cradleTypeImportUsesDefaultExport(declSource, importName) ?? false);
 
   const base: EmitInnerResult = {

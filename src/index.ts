@@ -1,20 +1,22 @@
 /**
  * Public API for **ioc-manifest**: contract-first factory discovery, generated Awilix manifests,
- * runtime registration, grouped injections, and inspection helpers.
+ * and runtime registration.
  *
  * Typical flow: define IoC config (`defineIocConfig` / `ioc.config.ts`), run
- * `generateManifest()` (or the `gen:manifest` script), import the emitted manifest module,
+ * `generateManifest()` (or the `ioc generate` CLI), import the emitted manifest module,
  * then call `registerIocFromManifest(container, [iocManifest])` from the runtime entry.
+ *
+ * This barrel is deliberately the ESSENTIAL surface only: config authoring types, the runtime
+ * registration entry point and its option/override types, the resolution-error family, the
+ * manifest types referenced by generated output, and the programmatic codegen entry point.
+ * Internal plumbing (manifest path helpers, group-plan builders, report formatters, discovery
+ * internals) is importable within the package but no longer exported here.
  */
-export * from "./core/index.js";
 
+// Config authoring surface.
 export {
   defineIocConfig,
-  getContractLevelConfig,
-  getImplOverrideForImplementation,
   IOC_CONTRACT_CONFIG_KEY,
-  isIocImplementationOverride,
-  parseContractLevelConfig,
   type IocConfig,
   type IocContractMetadata,
   type IocDiscoveryScanDirs,
@@ -24,92 +26,35 @@ export {
   type IocScanDirSpec,
 } from "./config/iocConfig.js";
 
-export {
-  DEFAULT_MANIFEST_EXPORT_PATH,
-  isAppMode,
-  isLibraryMode,
-  resolveManifestExportPath,
-} from "./config/iocMode.js";
+// Group config types referenced from `IocConfig.groups`.
+export type {
+  IocGroupDefinition,
+  IocGroupKind,
+  IocGroupsConfig,
+} from "./groups/resolveGroupPlan.js";
 
-export {
-  packageNameToIdentifier,
-  LOCAL_PACKAGE_IDENTIFIER,
-} from "./config/packageIdentifier.js";
-
+// Runtime registration entry point and its override types.
+export { registerIocFromManifest } from "./runtime/bootstrap.js";
 export type {
   ComposedContractOverride,
   ComposedRegistrationOverrides,
 } from "./runtime/composedOverrides.js";
 
-export { parseDiscoveryScanDirs } from "./config/parseDiscoveryScanDirs.js";
+// Manifest types referenced by generated output (`ioc-manifest.ts` / `ioc-composed.ts`).
+export type {
+  IocGeneratedContainerManifest,
+  IocModuleNamespace,
+  IocRegisterableManifest,
+} from "./core/manifest.js";
 
+// Runtime resolution-error family.
 export {
-  loadIocConfig,
-  resolveIocConfigPath,
-  resolveProjectRootFromIocConfigPath,
-  tryLoadIocConfig,
-} from "./config/loadIocConfig.js";
+  IocResolutionError,
+  isIocResolutionError,
+  type IocResolutionFailureType,
+  type ResolutionFrame,
+} from "./runtime/iocResolutionError.js";
 
-export * from "./runtime/index.js";
-
+// Programmatic codegen entry point (equivalent of the `ioc generate` CLI).
 export { generateManifest } from "./generator/generateManifest.js";
 export type { ManifestOptions } from "./generator/manifestOptions.js";
-export {
-  DEFAULT_MANIFEST_OPTIONS,
-  defaultManifestPathsFromProjectRoot,
-  mergeManifestOptionsWithIocConfig,
-  resolveManifestOptions,
-} from "./generator/manifestOptions.js";
-
-export {
-  computeManifestModuleSpecifier,
-  emitBarePackageSpecifierFromNodeModulesPath,
-  findResolvedScanDirForFile,
-  generatedExcludePatternForScanRoot,
-  mapTypesPackageToRuntimePackage,
-  normalizeEmittedModuleSpecifier,
-  resolveScanDirEntries,
-  type ComputeManifestModuleSpecifierOptions,
-  type ManifestRuntimePaths,
-  type ResolvedScanDir,
-} from "./generator/manifestPaths.js";
-
-export {
-  analyzeGroupPlan,
-  buildGroupPlan,
-  formatGroupPlanIssue,
-  formatGroupPlanIssues,
-  groupPlanToManifestNode,
-  type GroupDiscoveryBuildContext,
-  type GroupPlan,
-  type GroupPlanAnalysis,
-  type GroupPlanIssue,
-  type GroupPlanResult,
-  type IocGroupDefinition,
-  type IocGroupKind,
-  type IocGroupsConfig,
-} from "./groups/resolveGroupPlan.js";
-
-export type {
-  AssignableImplementationMember,
-  ContractDefaultGroupMember,
-} from "./groups/baseTypeAssignability.js";
-
-export { shouldIncludeImplInCollectionGroup } from "./groups/baseTypeAssignability.js";
-
-export {
-  buildDiscoveryReport,
-  buildInspectionReport,
-  formatDiscoveryReport,
-  formatInspectionReport,
-  resolveDiscoveryManifestContext,
-  runDiscoveryAnalysis,
-  validateManifest,
-  type DiscoveryAnalysisResult,
-  type DiscoveryManifestResolution,
-  type DiscoveryReport,
-  type DiscoveryReportInput,
-  type FormatDiscoveryReportOptions,
-  type InspectionReport,
-  type ManifestValidationIssue,
-} from "./inspection/index.js";

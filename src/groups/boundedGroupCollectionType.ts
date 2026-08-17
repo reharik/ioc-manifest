@@ -9,7 +9,7 @@ import type { IocGroupsManifest } from "../core/manifest.js";
 import {
   emitTypeReference,
   type EmitTypeReferenceContext,
-} from "../generator/analyzeDemandSupply/emitTypeReference.js";
+} from "../generator/emit/index.js";
 import type { EmittedTypeReference } from "../generator/analyzeDemandSupply/types.js";
 import type { ResolvedScanDir } from "../generator/manifestPaths.js";
 import { resolveDeclaredBaseType } from "./baseTypeAssignability.js";

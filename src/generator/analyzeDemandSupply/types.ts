@@ -1,27 +1,12 @@
-export type FactorySourceLocation = {
-  exportName: string;
-  modulePath: string;
-  line: number;
-};
+// These types now live with the emission seam; re-exported here so existing import paths keep
+// working for demand/supply consumers.
+import type { EmittedTypeReference } from "../emit/index.js";
 
-/** Import spec collected for generated `ioc-registry.types.ts`. */
-export type TypeImportSpec = {
-  typeName: string;
-  relImport: string;
-  useDefaultImport: boolean;
-  /**
-   * Factory whose type resolution pulled this import in. Carried for provenance in the
-   * escape-root warning; optional because specs for internal/lib paths are built without it.
-   */
-  sourceFactory?: FactorySourceLocation;
-};
-
-/** Resolved type reference for emission in `ioc-registry.types.ts`. */
-export type EmittedTypeReference = {
-  /** Full property type text (may be compound, e.g. `string | Foo`). */
-  typeName: string;
-  imports: readonly TypeImportSpec[];
-};
+export type {
+  EmittedTypeReference,
+  FactorySourceLocation,
+  TypeImportSpec,
+} from "../emit/index.js";
 
 export type DemandSupplyCradleEntry = {
   key: string;

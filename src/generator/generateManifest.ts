@@ -53,6 +53,7 @@ import { resolveLifetimeMarkersForFactories } from "./resolveLifetimeMarkers.js"
 import { validateScopeProvidedAtCodegen } from "./validateScopeProvidedAtCodegen.js";
 import { validateLifetimeInversionsAtCodegen } from "./validateLifetimeInversionsAtCodegen.js";
 import { validateDivergentNamesAtCodegen } from "./validateDivergentNamesAtCodegen.js";
+import { validateGeneratedReferencesAtCodegen } from "./validateGeneratedReferencesAtCodegen.js";
 import { validateNonEmptyGroupsAtCodegen } from "./validateNonEmptyGroupsAtCodegen.js";
 import { warnUnusableFactoryExports } from "./warnUnusableFactoryExports.js";
 
@@ -154,6 +155,14 @@ export const generateManifest = async (
   const program = createIocProgramForDiscovery(projectRoot, files, tsconfigContext);
 
   try {
+  // Must run before any type-sensitive pass: an unintercepted reference form (re-export or
+  // import() type targeting the generated file) fails the run before it can poison demand
+  // analysis with types resolved from prior generated output.
+  validateGeneratedReferencesAtCodegen(files, program, {
+    projectRoot,
+    generatedDir,
+  });
+
   const { contractMap, acceptedFactories, discoveryFiles } = discoverFactories(
     files,
     program,

@@ -1,20 +1,12 @@
-import path from "node:path";
 import ts from "typescript";
 import type { IocGroupsManifest } from "../../core/manifest.js";
-import { IOC_REGISTRY_TYPES_BASENAME } from "../manifestPaths.js";
+import {
+  moduleSpecifierBasenameStem,
+  REGISTRY_TYPES_BASENAME_STEM,
+} from "../generatedRegistrySpecifier.js";
 import { groupKeyToTypeAliasName } from "../naming.js";
 
 const IOC_GENERATED_CRADLE_NAME = "IocGeneratedCradle";
-
-/** Basename of the generated registry-types file with its extension dropped (`ioc-registry.types`),
- * so a `.js` import specifier and the `.ts` source file compare equal. */
-const REGISTRY_TYPES_BASENAME_STEM = IOC_REGISTRY_TYPES_BASENAME.replace(
-  /\.(?:m|c)?[jt]sx?$/,
-  "",
-);
-
-const moduleSpecifierBasenameStem = (specifier: string): string =>
-  path.basename(specifier).replace(/\.(?:m|c)?[jt]sx?$/, "");
 
 const propertyNameText = (name: ts.PropertyName): string | undefined => {
   if (ts.isIdentifier(name)) {

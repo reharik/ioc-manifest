@@ -5,7 +5,7 @@ import { describe, it } from "node:test";
 import ts from "typescript";
 import { buildManifestArtifactSources } from "../writeManifest.js";
 import { analyzeDemandSupply } from "./index.js";
-import { emitTypeReference } from "./emitTypeReference.js";
+import { emitTypeReference } from "../emit/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixtureRoot = path.join(__dirname, "../test-fixtures/cross-package-bare");

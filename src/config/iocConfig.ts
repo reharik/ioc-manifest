@@ -1,9 +1,13 @@
 import type { IocGroupsConfig } from "../groups/resolveGroupPlan.js";
+import {
+  contractMetadataSchema,
+  formatContractMetadataIssues,
+  IOC_CONTRACT_CONFIG_KEY,
+} from "./iocConfigSchema.js";
+
+export { IOC_CONTRACT_CONFIG_KEY } from "./iocConfigSchema.js";
 
 export type IocLifetime = "singleton" | "scoped" | "transient";
-
-/** Reserved key under `registrations[ContractName]` for contract-level metadata (not an implementation). */
-export const IOC_CONTRACT_CONFIG_KEY = "$contract" as const;
 
 /**
  * Contract-level options under `registrations[ContractName][IOC_CONTRACT_CONFIG_KEY]`.
@@ -55,45 +59,18 @@ export const parseContractLevelConfig = (
   if (entry === undefined) {
     return {};
   }
-  if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
-    throw new Error(`[ioc-config] ${pathForError} must be an object`);
-  }
-  const rec = entry as Record<string, unknown>;
-  for (const k of Object.keys(rec)) {
-    if (k !== "accessKey" && k !== "allowDivergentName") {
-      throw new Error(
-        `[ioc-config] ${pathForError} has unknown property ${JSON.stringify(k)} (only accessKey and allowDivergentName are allowed)`,
-      );
-    }
+  const parsed = contractMetadataSchema.safeParse(entry);
+  if (!parsed.success) {
+    throw new Error(formatContractMetadataIssues(parsed.error, pathForError));
   }
 
   const out: IocContractMetadata = {};
-
-  const accessKey = rec.accessKey;
-  if (accessKey !== undefined) {
-    if (typeof accessKey !== "string" || accessKey.length === 0) {
-      throw new Error(
-        `[ioc-config] ${pathForError}.accessKey must be a non-empty string when set`,
-      );
-    }
-    if (accessKey === IOC_CONTRACT_CONFIG_KEY) {
-      throw new Error(
-        `[ioc-config] ${pathForError}.accessKey cannot be ${JSON.stringify(IOC_CONTRACT_CONFIG_KEY)} (reserved)`,
-      );
-    }
-    out.accessKey = accessKey;
+  if (parsed.data.accessKey !== undefined) {
+    out.accessKey = parsed.data.accessKey;
   }
-
-  const allowDivergentName = rec.allowDivergentName;
-  if (allowDivergentName !== undefined) {
-    if (typeof allowDivergentName !== "boolean") {
-      throw new Error(
-        `[ioc-config] ${pathForError}.allowDivergentName must be a boolean when set`,
-      );
-    }
-    out.allowDivergentName = allowDivergentName;
+  if (parsed.data.allowDivergentName !== undefined) {
+    out.allowDivergentName = parsed.data.allowDivergentName;
   }
-
   return out;
 };
 

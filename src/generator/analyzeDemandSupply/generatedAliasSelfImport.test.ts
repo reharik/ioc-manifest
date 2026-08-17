@@ -10,7 +10,7 @@ import { buildManifestArtifactSources } from "../writeManifest.js";
 import { buildGroupPlan, type IocGroupsConfig } from "../../groups/resolveGroupPlan.js";
 import { buildBoundedGroupCollectionTypeRefs } from "../../groups/boundedGroupCollectionType.js";
 import { analyzeDemandSupply } from "./index.js";
-import { emitTypeReference } from "./emitTypeReference.js";
+import { emitTypeReference } from "../emit/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixtureDir = path.join(

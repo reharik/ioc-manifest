@@ -5,6 +5,44 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0]
+
+### Fixed
+
+Two previously unintercepted ways of referencing the generated registry file from scanned
+source are now hard codegen errors. Re-exporting generated names through a barrel
+(`export type { Channels } from "./generated/ioc-registry.types.js"`, including
+`export * from …`) and `typeof import(…)` / `import(…).X` references to the generated file
+both bypassed syntactic interception and fell back to type resolution, which can poison
+demand analysis on cold start. Both forms now fail generation with an error naming the
+offending file and the supported alternative: import generated types directly.
+
+```ts
+// Both of these now fail generation with a pointed error:
+export type { Channels } from "./generated/ioc-registry.types.js";
+type Cradle = import("./generated/ioc-registry.types.js").IocGeneratedCradle;
+
+// Supported: import generated types directly where they are consumed.
+import type { Channels } from "./generated/ioc-registry.types.js";
+```
+
+`groups.<name>.allowEmpty` (added in 2.5.0) was rejected by the config loader — the same
+hand-maintained-whitelist omission previously behind the `baseTypeArg` (2.2.1) and
+`allowLifetimeInversion` (2.3.6) bugs. The key is accepted again; the strict-schema swap
+below removes this failure mode by construction.
+
+### Changed
+
+Config validation is now backed by a strict schema: unknown keys and malformed values are
+rejected in a single validation artifact, so a config key can no longer be silently ignored
+by omission from a hand-maintained whitelist.
+
+### Removed
+
+The public barrel now exports only the essential API surface (config types, runtime
+registration, error types, composition entry points). Internal plumbing exports have been
+removed from the package entry point.
+
 ## [2.5.0]
 
 ### Added

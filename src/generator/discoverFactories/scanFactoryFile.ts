@@ -11,7 +11,7 @@ import {
   computeDiscoveryModulePath,
   computeManifestModuleSpecifier,
 } from "../manifestPaths.js";
-import { tryRecoverPreferredModuleSpecifier } from "../recoverPreferredModuleSpecifier.js";
+import { tryRecoverPreferredModuleSpecifier } from "../emit/index.js";
 import type {
   DiscoveredFactory,
   FactoryDiscoveryFileContext,
@@ -401,7 +401,7 @@ export const scanFactoryFile = (
         preferredModuleSpecifier: tryRecoverPreferredModuleSpecifier(
           checker,
           unwrapPromiseType(checker, returnType),
-          sourceFile,
+          { contextSourceFile: sourceFile },
         ),
         projectRoot: context.projectRoot,
       },

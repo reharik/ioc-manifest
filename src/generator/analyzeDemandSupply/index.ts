@@ -13,7 +13,7 @@ import {
   isUnresolvableDepsPropertyType,
   tryEmitTypeReference,
   type EmitTypeReferenceContext,
-} from "./emitTypeReference.js";
+} from "../emit/index.js";
 import { validateNamedDepsType } from "./enforceNamedDepsType.js";
 import {
   depsPropertyTypeNodeByName,
