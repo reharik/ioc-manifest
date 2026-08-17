@@ -89,7 +89,12 @@ const parseAliasKey = (
     checker,
     depsParamType(program, filePath, exportName),
   );
-  return tryParseConsumedGroupAliasKey(checker, nodes.get(propName), manifest);
+  return tryParseConsumedGroupAliasKey(
+    checker,
+    nodes.get(propName),
+    manifest,
+    generatedDir,
+  );
 };
 
 const channelFactories: DiscoveredFactory[] = [

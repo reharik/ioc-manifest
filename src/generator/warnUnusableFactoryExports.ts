@@ -58,7 +58,7 @@ const collectUnusableExports = (
 const formatUnusableExportLine = (entry: UnusableExport): string => {
   const hint =
     entry.skipReason === IocDiscoverySkipReason.CONTRACT_NOT_RESOLVED
-      ? " — a bare union return annotation is the common cause; give each implementation its own contract interface extending its union arm"
+      ? " — the return annotation must be a single named type (interface or type alias); primitives, arrays, and inline types cannot be contracts"
       : "";
   return `  - ${entry.modulePath} export "${entry.exportName}": ${entry.skipReason}${hint}`;
 };

@@ -41,7 +41,8 @@ export const buildSweepReport = ({
 });
 
 // Imports a non-group-alias name (`IocGeneratedCradle`) from the registry file → not a group alias,
-// so the parser leaves it alone (falls through to normal resolution).
+// so the group-alias parser leaves it alone. Nothing claims it, so in a real run the deps-position
+// backstop rejects this factory; the tests here only exercise the parser's decision, not the run.
 type NonAliasDeps = { cradle: IocGeneratedCradle };
 export const buildNonAlias = ({
   cradle,

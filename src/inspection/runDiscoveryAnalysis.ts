@@ -91,7 +91,9 @@ const runDiscoveryFromResolution = async (
         factoryExportPrefix,
         { projectRoot, scanDirs, generatedDir },
         config ?? undefined,
-        { collectFileRecords: true },
+        // tolerateInvalidAnnotations: the discovery report must list every offender (missing /
+        // invalid return annotations) instead of dying on the aggregated generation error.
+        { collectFileRecords: true, tolerateInvalidAnnotations: true },
       );
 
     const markerLifetimesByFactoryKey = resolveLifetimeMarkersForFactories(

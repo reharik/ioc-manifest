@@ -11,6 +11,12 @@ export const IocDiscoverySkipReason = {
   CONTRACT_NOT_RESOLVED: "contract_not_resolved",
   EXCLUDED_BY_CONFIG: "excluded_by_config",
   UNSUPPORTED_PATTERN: "unsupported_pattern",
+  /** v3: prefix-matched factory export without an explicit return type annotation (hard error at generation). */
+  MISSING_RETURN_TYPE_ANNOTATION: "missing_return_type_annotation",
+  /** v3: return annotation is an inline object literal — a contract must be a named type (hard error at generation). */
+  CONTRACT_ANNOTATION_INLINE_OBJECT: "contract_annotation_inline_object",
+  /** v3: return annotation is an inline/anonymous union — name it with a type alias (hard error at generation). */
+  CONTRACT_ANNOTATION_ANONYMOUS_UNION: "contract_annotation_anonymous_union",
 } as const;
 
 export type IocDiscoverySkipReason =

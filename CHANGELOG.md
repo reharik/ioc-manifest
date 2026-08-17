@@ -5,6 +5,124 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - Unreleased
+
+### Fixed
+
+Every syntactic form by which scanned source can reach a type in the generated registry file
+is now either resolved against the in-memory manifest or rejected with a pointed error. The
+enumeration is explicit in the source (`generatedReferenceForms.ts`), and the detection logic
+and the tests both key off it. The audit behind this found fifteen forms that reached
+TypeScript's own type resolution instead — a silent-wrong-output bug rather than a crash,
+because on a warm run the checker reads the *previous* generated file and bakes stale types
+into the new one, while on a cold run the same reference resolves to `any`.
+
+Two of the fifteen are now **resolved**, because they are reasonable ways to consume the
+registry. A namespace import resolves exactly like a named one:
+
+```ts
+import type * as Ioc from "./generated/ioc-registry.types.js";
+
+type UploadDeps = {
+  storage: Ioc.IocGeneratedCradle["storage"]; // resolved (was: stale type / cold-start abort)
+  channels: Ioc.Channels;                     // resolved (was: cold-start abort)
+};
+```
+
+And a type alias standing between the deps property and the reference now resolves through
+the intermediate module, not just within one file:
+
+```ts
+// deps-aliases.ts — this module, not the factory, imports the generated file
+import type { Channels, IocGeneratedCradle } from "./generated/ioc-registry.types.js";
+export type SharedChannels = Channels;
+export type SharedStorage = IocGeneratedCradle["storage"];
+
+// uploadService.ts
+import type { SharedChannels, SharedStorage } from "./deps-aliases.js";
+type UploadDeps = { storage: SharedStorage; channels: SharedChannels };
+```
+
+The other thirteen are rejected — see **Changed** below.
+
+### Changed
+
+Twelve reference forms that previously fell through to type resolution now fail generation
+wherever they appear in scanned source. Each error names the file, the line, the offending
+form, and the supported replacement, and all offenders in a run are aggregated into one
+error. The forms are: `keyof` on a generated
+type; `typeof` on a generated binding; chained (`Cradle["a"]["b"]`), computed
+(`Cradle["a" | "b"]`) and type-argument-bearing (`Cradle<T>["a"]`) indexed access; indexing
+anything other than `IocGeneratedCradle`; `extends`/`implements` on a generated type;
+`import … = require(…)` / `export =` / default imports of the generated file; and
+`/// <reference path=… />` directives naming it.
+
+The two that most often appear in real code:
+
+```ts
+// Rejected: `keyof` bakes a snapshot of the PREVIOUS cradle's keys into the new output.
+import type { IocGeneratedCradle } from "./generated/ioc-registry.types.js";
+export type CradleKey = keyof IocGeneratedCradle;
+
+// Rejected: extending the cradle absorbs every member of the PREVIOUS registry into the
+// deps type, so the whole stale registry is re-demanded on the next run.
+interface UploadDeps extends IocGeneratedCradle {}
+
+// Supported: demand the keys the factory actually needs.
+type UploadDeps = { storage: IocGeneratedCradle["storage"] };
+```
+
+Separately, a generated type reaching a factory **deps type or return type** in any form other
+than the two claimed ones is now rejected there, by a structural backstop that runs
+immediately before demand analysis would hand the type to the checker. This covers shapes that
+are legal elsewhere but not here — `{ cradle: IocGeneratedCradle }`,
+`{ chans: ReadonlyArray<Channels> }`, `Pick<IocGeneratedCradle, "storage">`,
+`type Deps = IocGeneratedCradle & { … }`. `ReadonlyArray<Channels>` and
+`Pick<IocGeneratedCradle, …>` are the only two of these that used to produce output; both
+produced it by reading the previous generated file.
+
+Naming a generated type is unaffected — the documented composition-root pattern
+(`createContainer<IocGeneratedCradle>()`) is still legal, because the name is only ever
+printed back and never read into.
+
+Contract identity is now the factory's written return type annotation — declared at the
+site, resolved syntactically to the declaration it names. The checker no longer infers or
+normalizes the contract from the return type: `Promise<T>` and parentheses are unwrapped
+syntactically, the remaining annotation must be a single named type reference, and the
+contract is that reference's declaration (import aliases are followed, so
+`import { Foo as Bar }` annotated as `Bar` is the contract `Foo`; type-level aliases are
+never followed). Canonical identity is the pair (declaration file, declared name) — two
+different declarations sharing a name now fail generation with an error naming both
+declaration sites instead of merging under one manifest key.
+
+**Explicit return type annotations are now required.** A prefix-matched factory export
+without one fails generation with a single aggregated error listing every offender
+(file and export name) — that list is the migration worklist. `ioc inspect --discovery`
+reports the same offenders under `missing_return_type_annotation`. Inline object-literal
+annotations and anonymous unions are also errors, with guidance to name the type.
+
+Because identity is what was written, plain type aliases and named union aliases are now
+first-class contracts. The empty-extends interface dance — and the lint-autofix trap where
+converting `interface Foo extends Base {}` to `type Foo = Base` silently broke discovery —
+are gone:
+
+```ts
+// v2: a plain alias collapsed into its target, so a distinct contract required
+// an empty interface extension.
+export interface QueueTask extends WorkerTaskBase {}
+
+// v3: the alias IS the contract — distinct from WorkerTaskBase, and still a member
+// of WorkerTaskBase groups/markers via the alias-target heritage chain.
+export type QueueTask = WorkerTaskBase;
+
+export const buildQueueTask = (deps: QueueTaskDeps): QueueTask => ({ ... });
+```
+
+Group and lifetime-marker membership keep the nominal heritage walk (`extends` chains,
+intersection members, import-alias following); the walk now enters at the annotation's
+resolved declaration, and alias-target steps count as heritage — consistent with how
+`type Foo = Bar & Marker` already behaved.
+
 ## [2.6.0]
 
 ### Fixed

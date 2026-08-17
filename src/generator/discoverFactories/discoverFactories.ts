@@ -10,9 +10,11 @@ import {
   resolveFactorySourceAbsPath,
   type FactoryDiscoveryPaths,
 } from "../manifestPaths.js";
-import type {
-  IocDiscoveryAnalysisFiles,
-  IocDiscoveryFileRecord,
+import {
+  IocDiscoverySkipReason,
+  IocDiscoveryStatus,
+  type IocDiscoveryAnalysisFiles,
+  type IocDiscoveryFileRecord,
 } from "./discoveryOutcomeTypes.js";
 import { collectFileAnalysisForFactoryDiscovery } from "./scanFactoryFile.js";
 import { scanFactoryFile } from "./scanFactoryFile.js";
@@ -33,6 +35,72 @@ const buildSourceFileIndex = (
 export type FactoryDiscoveryRunOptions = {
   /** When true, collect per-file outcomes for on-demand discovery reports (not written to manifest). */
   collectFileRecords?: boolean;
+  /**
+   * When true, invalid-annotation outcomes (missing annotation, inline object literal, anonymous
+   * union) are recorded as categorized outcomes but do not throw — used by `ioc inspect
+   * --discovery` so the report can list every offender. Generation keeps the default (throw).
+   */
+  tolerateInvalidAnnotations?: boolean;
+};
+
+type InvalidAnnotationOffender = {
+  modulePath: string;
+  exportName: string;
+  skipReason: IocDiscoverySkipReason;
+};
+
+const INVALID_ANNOTATION_SKIP_REASONS: ReadonlySet<IocDiscoverySkipReason> =
+  new Set([
+    IocDiscoverySkipReason.MISSING_RETURN_TYPE_ANNOTATION,
+    IocDiscoverySkipReason.CONTRACT_ANNOTATION_INLINE_OBJECT,
+    IocDiscoverySkipReason.CONTRACT_ANNOTATION_ANONYMOUS_UNION,
+  ]);
+
+const invalidAnnotationGuidance = (reason: IocDiscoverySkipReason): string => {
+  switch (reason) {
+    case IocDiscoverySkipReason.MISSING_RETURN_TYPE_ANNOTATION:
+      return "missing return type annotation — add an explicit return type naming the contract";
+    case IocDiscoverySkipReason.CONTRACT_ANNOTATION_INLINE_OBJECT:
+      return "inline object literal annotation — a contract must be a named type; declare an interface or type alias and use it as the return annotation";
+    case IocDiscoverySkipReason.CONTRACT_ANNOTATION_ANONYMOUS_UNION:
+      return "anonymous union annotation — name the union with a type alias (e.g. `type Task = EmailTask | SmsTask`) and annotate the factory with the alias";
+    default:
+      return reason;
+  }
+};
+
+const formatInvalidAnnotationError = (
+  offenders: readonly InvalidAnnotationOffender[],
+): string =>
+  [
+    `[ioc] ${offenders.length} factory export(s) have missing or invalid return type annotations. v3 requires every factory to declare an explicit return type annotation naming its contract:`,
+    ...offenders.map(
+      (o) =>
+        `  - ${o.modulePath} export "${o.exportName}": ${invalidAnnotationGuidance(o.skipReason)}`,
+    ),
+  ].join("\n");
+
+type ContractDeclSite = {
+  declAbsPath: string;
+  modulePath: string;
+  exportName: string;
+};
+
+const formatContractNameCollisionError = (
+  collisions: ReadonlyMap<string, readonly ContractDeclSite[]>,
+): string => {
+  const lines: string[] = [
+    `[ioc] Contract name collision: the same contract name is declared in multiple files. Contracts are identified by (declaration file, name); two different declarations cannot share one manifest key. Rename one of the types:`,
+  ];
+  for (const [contractName, sites] of collisions) {
+    lines.push(`  Contract "${contractName}":`);
+    for (const site of sites) {
+      lines.push(
+        `    - declared in "${site.declAbsPath}" (via factory "${site.exportName}" in "${site.modulePath}")`,
+      );
+    }
+  }
+  return lines.join("\n");
 };
 
 const enrichDependencyContracts = (
@@ -104,6 +172,9 @@ export const discoverFactories = (
   const acceptedFactories: DiscoveredFactory[] = [];
   const collectRecords = runOptions?.collectFileRecords === true;
   const discoveryFiles: IocDiscoveryFileRecord[] = [];
+  const invalidAnnotationOffenders: InvalidAnnotationOffender[] = [];
+  /** contractName → declaration sites seen (first factory per declaring file). */
+  const contractDeclSites = new Map<string, ContractDeclSite[]>();
 
   for (const abs of files.sort((a, b) => a.localeCompare(b))) {
     const sourceFile = sourceFileByPath.get(normalizePath(abs));
@@ -133,7 +204,32 @@ export const discoverFactories = (
       });
     }
 
+    for (const outcome of scan.outcomes) {
+      if (
+        outcome.scope === "export" &&
+        outcome.status === IocDiscoveryStatus.SKIPPED &&
+        INVALID_ANNOTATION_SKIP_REASONS.has(outcome.skipReason)
+      ) {
+        invalidAnnotationOffenders.push({
+          modulePath: scan.modulePath,
+          exportName: outcome.exportName,
+          skipReason: outcome.skipReason,
+        });
+      }
+    }
+
     for (const f of scan.discovered) {
+      if (f.contractDeclAbsPath !== undefined) {
+        const sites = contractDeclSites.get(f.contractName) ?? [];
+        if (!sites.some((s) => s.declAbsPath === f.contractDeclAbsPath)) {
+          sites.push({
+            declAbsPath: f.contractDeclAbsPath,
+            modulePath: f.modulePath,
+            exportName: f.exportName,
+          });
+          contractDeclSites.set(f.contractName, sites);
+        }
+      }
       const existingOwner = registrationKeyOwner.get(f.registrationKey);
       if (existingOwner !== undefined) {
         throw new Error(
@@ -158,6 +254,31 @@ export const discoverFactories = (
       });
       acceptedFactories.push(f);
     }
+  }
+
+  const aggregatedErrors: string[] = [];
+
+  if (
+    invalidAnnotationOffenders.length > 0 &&
+    runOptions?.tolerateInvalidAnnotations !== true
+  ) {
+    aggregatedErrors.push(
+      formatInvalidAnnotationError(invalidAnnotationOffenders),
+    );
+  }
+
+  const collisions = new Map<string, readonly ContractDeclSite[]>();
+  for (const [contractName, sites] of contractDeclSites) {
+    if (sites.length > 1) {
+      collisions.set(contractName, sites);
+    }
+  }
+  if (collisions.size > 0) {
+    aggregatedErrors.push(formatContractNameCollisionError(collisions));
+  }
+
+  if (aggregatedErrors.length > 0) {
+    throw new Error(aggregatedErrors.join("\n"));
   }
 
   const knownContracts = new Set(contractMap.keys());

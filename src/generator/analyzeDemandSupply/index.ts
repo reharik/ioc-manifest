@@ -14,6 +14,7 @@ import {
   tryEmitTypeReference,
   type EmitTypeReferenceContext,
 } from "../emit/index.js";
+import { assertGeneratedReferenceClaimed } from "./assertGeneratedReferenceClaimed.js";
 import { validateNamedDepsType } from "./enforceNamedDepsType.js";
 import {
   depsPropertyTypeNodeByName,
@@ -294,6 +295,15 @@ export const analyzeDemandSupply = (
       contextSourceFile: sourceFile,
     };
 
+    // BACKSTOP (see assertGeneratedReferenceClaimed): the return annotation feeds the cradle's
+    // supply type, so a generated reference there would be resolved out of prior output.
+    assertGeneratedReferenceClaimed(
+      factoryDecl.type,
+      checker,
+      { projectRoot, generatedDir },
+      `factory ${JSON.stringify(factory.exportName)} return type`,
+    );
+
     const signature = checker.getSignatureFromDeclaration(factoryDecl);
     if (signature !== undefined) {
       const supplyRef = stampSourceFactory(
@@ -323,6 +333,16 @@ export const analyzeDemandSupply = (
       throw new Error(named.message);
     }
 
+    // BACKSTOP: the deps type's own SHAPE (an intersection or alias chain reaching the generated
+    // file) absorbs the previous cradle's members wholesale. Its individual properties are checked
+    // one by one below, after the claim parsers have had their turn at each.
+    assertGeneratedReferenceClaimed(
+      factoryDecl.parameters[0]?.type,
+      checker,
+      { projectRoot, generatedDir },
+      `factory ${JSON.stringify(factory.exportName)} deps type`,
+    );
+
     const propTypeNodes = depsPropertyTypeNodeByName(checker, named.depsType);
     const props = collectDepsProperties(checker, named.depsType);
     for (const { name: propName, type: propType } of props) {
@@ -330,12 +350,25 @@ export const analyzeDemandSupply = (
         tryParseIocGeneratedCradleIndexedAccessKey(
           checker,
           propTypeNodes.get(propName),
+          generatedDir,
         ) ??
         tryParseConsumedGroupAliasKey(
           checker,
           propTypeNodes.get(propName),
           groupsManifest,
+          generatedDir,
         );
+
+      if (consumedCradleKey === undefined) {
+        // BACKSTOP: both claim parsers declined, so this property is about to be handed to the
+        // checker. If it still reaches the generated file, resolving it would read prior output.
+        assertGeneratedReferenceClaimed(
+          propTypeNodes.get(propName),
+          checker,
+          { projectRoot, generatedDir },
+          `factory ${JSON.stringify(factory.exportName)} deps property ${JSON.stringify(propName)}`,
+        );
+      }
 
       if (consumedCradleKey !== undefined) {
         if (groupsManifest?.[consumedCradleKey] !== undefined) {

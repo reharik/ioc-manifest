@@ -10,6 +10,13 @@ import type { FactoryDiscoveryPaths } from "./manifestPaths.js";
 export type DiscoveredFactory = {
   contractName: string;
   /**
+   * Absolute (normalized) path of the file declaring the contract type. Always set by discovery
+   * (optional only for hand-built test rows). Canonical contract identity is the pair
+   * (contractDeclAbsPath, contractName); discovery fails hard when two different declarations
+   * would otherwise merge under one manifest key.
+   */
+  contractDeclAbsPath?: string;
+  /**
    * Module specifier for generated type-only imports: relative to the generated dir, a bare
    * package name (e.g. `knex`), or a workspace alias — not a path through `node_modules`.
    */

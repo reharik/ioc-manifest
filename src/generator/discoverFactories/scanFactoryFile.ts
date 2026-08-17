@@ -11,7 +11,6 @@ import {
   computeDiscoveryModulePath,
   computeManifestModuleSpecifier,
 } from "../manifestPaths.js";
-import { tryRecoverPreferredModuleSpecifier } from "../emit/index.js";
 import type {
   DiscoveredFactory,
   FactoryDiscoveryFileContext,
@@ -23,32 +22,6 @@ export type FileAnalysis = {
   localTypes: Set<string>;
   importedIds: Set<string>;
   factoryDeclByExport: Map<string, ts.FunctionLike>;
-};
-
-const intrinsicNames = new Set([
-  "string",
-  "number",
-  "boolean",
-  "void",
-  "undefined",
-  "null",
-  "never",
-  "unknown",
-  "any",
-  "bigint",
-  "symbol",
-]);
-
-const unwrapPromiseType = (checker: ts.TypeChecker, t: ts.Type): ts.Type => {
-  const sym = t.getSymbol();
-  const symName = sym?.getName();
-  if (symName === "Promise") {
-    const args = checker.getTypeArguments(t as ts.TypeReference);
-    if (args.length > 0) {
-      return unwrapPromiseType(checker, args[0]);
-    }
-  }
-  return t;
 };
 
 const implementationNameFromFactoryExport = (
@@ -67,59 +40,145 @@ const implementationNameFromFactoryExport = (
   return rest.charAt(0).toLowerCase() + rest.slice(1);
 };
 
-const contractNameFromReturnType = (
-  checker: ts.TypeChecker,
-  returnType: ts.Type,
-): string | undefined => {
-  const t0 = unwrapPromiseType(checker, returnType);
-  const t = checker.getApparentType(t0);
-
-  if (t.isUnion()) {
-    return undefined;
+/**
+ * Syntactically unwraps a factory return annotation to the contract reference: strips
+ * parentheses and `Promise<T>` wrappers (by written name, no checker). The result is what the
+ * author wrote — type-level aliases are never followed.
+ */
+export const unwrapReturnTypeAnnotation = (node: ts.TypeNode): ts.TypeNode => {
+  if (ts.isParenthesizedTypeNode(node)) {
+    return unwrapReturnTypeAnnotation(node.type);
   }
-
-  const symbol = t.aliasSymbol ?? t.getSymbol();
-  if (!symbol) {
-    return undefined;
+  if (
+    ts.isTypeReferenceNode(node) &&
+    ts.isIdentifier(node.typeName) &&
+    node.typeName.text === "Promise" &&
+    node.typeArguments !== undefined &&
+    node.typeArguments.length > 0
+  ) {
+    return unwrapReturnTypeAnnotation(node.typeArguments[0]);
   }
-
-  const name = symbol.getName();
-  if (!name || intrinsicNames.has(name)) {
-    return undefined;
-  }
-
-  return name;
+  return node;
 };
 
+const leftmostIdentifier = (name: ts.EntityName): ts.Identifier =>
+  ts.isQualifiedName(name) ? leftmostIdentifier(name.left) : name;
+
 /**
- * Source file where the contract type symbol is declared (follows aliases/imports via the checker).
+ * Contract identity resolved from a factory's written return type annotation.
+ *
+ * Identity is syntactic: the annotation must be a single named type reference (possibly with
+ * type arguments) after unwrapping `Promise<T>` and parentheses. Import aliases are followed
+ * (an aliased import names the same declaration; the contract name is the declared name), but
+ * type-level aliases are NOT — `type QueueTask = WorkerTaskBase` used as an annotation is the
+ * distinct contract `QueueTask`.
  */
-const getContractTypeDeclarationSourceFile = (
+type AnnotationContractResolution =
+  | {
+      kind: "resolved";
+      /** Declared exported name at the declaration site (import aliases unwrapped). */
+      contractName: string;
+      /** Leftmost identifier as written in the factory file (for the local-scope check). */
+      writtenName: string;
+      declSourceFile: ts.SourceFile;
+    }
+  | { kind: "missing_annotation" }
+  | { kind: "inline_object" }
+  | { kind: "anonymous_union" }
+  /** Keyword/array/inline-intersection/other non-reference forms — skipped, not hard errors. */
+  | { kind: "unsupported" }
+  | { kind: "unresolved"; writtenName: string };
+
+/**
+ * Resolves the annotation's type reference to its declaration.
+ *
+ * The checker is used ONLY as a declaration locator (`getSymbolAtLocation` on the written name,
+ * plus `getAliasedSymbol` to unwrap import aliases). No type normalization
+ * (`getApparentType` / `getReturnTypeOfSignature`) participates in identity.
+ */
+const resolveAnnotationContract = (
   checker: ts.TypeChecker,
-  returnType: ts.Type,
-): ts.SourceFile | undefined => {
-  const t0 = unwrapPromiseType(checker, returnType);
-  const t = checker.getApparentType(t0);
-
-  if (t.isUnion()) {
-    return undefined;
+  factoryDecl: ts.FunctionLike,
+): AnnotationContractResolution => {
+  const annotation = factoryDecl.type;
+  if (annotation === undefined) {
+    return { kind: "missing_annotation" };
   }
 
-  let symbol = t.aliasSymbol ?? t.getSymbol();
-  if (!symbol) {
-    return undefined;
+  const unwrapped = unwrapReturnTypeAnnotation(annotation);
+
+  if (ts.isTypeLiteralNode(unwrapped)) {
+    return { kind: "inline_object" };
+  }
+  if (ts.isUnionTypeNode(unwrapped)) {
+    return { kind: "anonymous_union" };
+  }
+  if (!ts.isTypeReferenceNode(unwrapped)) {
+    return { kind: "unsupported" };
   }
 
-  if (symbol.flags & ts.SymbolFlags.Alias) {
-    symbol = checker.getAliasedSymbol(symbol);
+  const writtenName = leftmostIdentifier(unwrapped.typeName).text;
+
+  let symbol = checker.getSymbolAtLocation(unwrapped.typeName);
+  if (symbol === undefined) {
+    return { kind: "unresolved", writtenName };
+  }
+
+  while ((symbol.flags & ts.SymbolFlags.Alias) !== 0) {
+    const aliased = checker.getAliasedSymbol(symbol);
+    if (aliased === symbol) {
+      break;
+    }
+    symbol = aliased;
   }
 
   const decl = symbol.declarations?.[0];
-  if (!decl) {
-    return undefined;
+  if (decl === undefined) {
+    return { kind: "unresolved", writtenName };
+  }
+  if (ts.isTypeParameterDeclaration(decl)) {
+    return { kind: "unsupported" };
   }
 
-  return decl.getSourceFile();
+  return {
+    kind: "resolved",
+    contractName: symbol.getName(),
+    writtenName,
+    declSourceFile: decl.getSourceFile(),
+  };
+};
+
+/**
+ * Module specifier the factory file already uses to import the annotation's written name, read
+ * from the import declaration AST. Consumed by {@link computeManifestModuleSpecifier}, which only
+ * honors it when it is a bare package specifier.
+ */
+const annotationImportModuleSpecifier = (
+  checker: ts.TypeChecker,
+  annotationTypeName: ts.EntityName,
+  factorySourceFile: ts.SourceFile,
+): string | undefined => {
+  const local = checker.getSymbolAtLocation(
+    leftmostIdentifier(annotationTypeName),
+  );
+  if (local === undefined) {
+    return undefined;
+  }
+  for (const decl of local.declarations ?? []) {
+    if (decl.getSourceFile() !== factorySourceFile) {
+      continue;
+    }
+    let node: ts.Node | undefined = decl;
+    while (node !== undefined) {
+      if (ts.isImportDeclaration(node)) {
+        return ts.isStringLiteralLike(node.moduleSpecifier)
+          ? node.moduleSpecifier.text
+          : undefined;
+      }
+      node = node.parent;
+    }
+  }
+  return undefined;
 };
 
 const relProjectPath = (projectRoot: string, absPath: string): string =>
@@ -354,21 +413,36 @@ export const scanFactoryFile = (
       continue;
     }
 
-    const signature = checker.getSignatureFromDeclaration(factoryDecl);
-    if (!signature) {
+    const resolution = resolveAnnotationContract(checker, factoryDecl);
+
+    if (resolution.kind === "missing_annotation") {
       outcomes.push({
         scope: "export",
         exportName,
         status: IocDiscoveryStatus.SKIPPED,
-        skipReason: IocDiscoverySkipReason.INVALID_FACTORY_SIGNATURE,
+        skipReason: IocDiscoverySkipReason.MISSING_RETURN_TYPE_ANNOTATION,
       });
       continue;
     }
-
-    const returnType = checker.getReturnTypeOfSignature(signature);
-    const contractName = contractNameFromReturnType(checker, returnType);
-
-    if (!contractName) {
+    if (resolution.kind === "inline_object") {
+      outcomes.push({
+        scope: "export",
+        exportName,
+        status: IocDiscoveryStatus.SKIPPED,
+        skipReason: IocDiscoverySkipReason.CONTRACT_ANNOTATION_INLINE_OBJECT,
+      });
+      continue;
+    }
+    if (resolution.kind === "anonymous_union") {
+      outcomes.push({
+        scope: "export",
+        exportName,
+        status: IocDiscoveryStatus.SKIPPED,
+        skipReason: IocDiscoverySkipReason.CONTRACT_ANNOTATION_ANONYMOUS_UNION,
+      });
+      continue;
+    }
+    if (resolution.kind === "unsupported") {
       outcomes.push({
         scope: "export",
         exportName,
@@ -377,37 +451,22 @@ export const scanFactoryFile = (
       });
       continue;
     }
-
-    const contractDeclSource = getContractTypeDeclarationSourceFile(
-      checker,
-      returnType,
-    );
-    if (!contractDeclSource) {
+    if (resolution.kind === "unresolved") {
       outcomes.push({
         scope: "export",
         exportName,
         status: IocDiscoveryStatus.SKIPPED,
         skipReason: IocDiscoverySkipReason.CONTRACT_NOT_FOUND,
-        contractName,
+        contractName: resolution.writtenName,
       });
       continue;
     }
 
-    const contractTypeRelImport = computeManifestModuleSpecifier(
-      contractDeclSource.fileName,
-      generatedDir,
-      scanDirs,
-      {
-        preferredModuleSpecifier: tryRecoverPreferredModuleSpecifier(
-          checker,
-          unwrapPromiseType(checker, returnType),
-          { contextSourceFile: sourceFile },
-        ),
-        projectRoot: context.projectRoot,
-      },
-    );
+    const { contractName, writtenName, declSourceFile } = resolution;
 
-    if (!isContractInScope(contractName)) {
+    // The written name (not the declared name) must be locally declared or imported: this keeps
+    // globals/lib types undiscoverable and makes aliased imports work naturally.
+    if (!isContractInScope(writtenName)) {
       outcomes.push({
         scope: "export",
         exportName,
@@ -417,6 +476,23 @@ export const scanFactoryFile = (
       });
       continue;
     }
+
+    const annotationTypeNode = unwrapReturnTypeAnnotation(factoryDecl.type!);
+    const contractTypeRelImport = computeManifestModuleSpecifier(
+      declSourceFile.fileName,
+      generatedDir,
+      scanDirs,
+      {
+        preferredModuleSpecifier: ts.isTypeReferenceNode(annotationTypeNode)
+          ? annotationImportModuleSpecifier(
+              checker,
+              annotationTypeNode.typeName,
+              sourceFile,
+            )
+          : undefined,
+        projectRoot: context.projectRoot,
+      },
+    );
 
     const configRegistrationName = getImplOverrideForImplementation(
       iocConfig?.registrations?.[contractName],
@@ -449,6 +525,7 @@ export const scanFactoryFile = (
 
     discovered.push({
       contractName,
+      contractDeclAbsPath: path.normalize(declSourceFile.fileName),
       contractTypeRelImport,
       implementationName,
       exportName,

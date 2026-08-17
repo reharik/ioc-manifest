@@ -159,8 +159,38 @@ describe("discoverFactories", () => {
     });
   });
 
-  describe("When factories fail contract/return-type validation", () => {
-    it("should skip the export with contract_not_resolved and omit it from accepted factories", () => {
+  describe("When a factory annotation is an anonymous union", () => {
+    it("should throw the aggregated invalid-annotation error naming the offender", () => {
+      const program = makeProgram();
+      const invalidFile = path.join(fixtureDir, "invalid-factory.ts");
+
+      assert.throws(
+        () =>
+          discoverFactories(
+            [invalidFile],
+            program,
+            projectRoot,
+            "build",
+            {
+              projectRoot,
+              scanDirs: [{ absPath: srcDir }],
+              generatedDir,
+            },
+            undefined,
+            { collectFileRecords: true },
+          ),
+        (error: unknown) => {
+          assert.ok(error instanceof Error);
+          assert.match(error.message, /invalid return type annotations/);
+          assert.match(error.message, /"buildInvalid"/);
+          assert.match(error.message, /anonymous union annotation/);
+          assert.match(error.message, /name the union with a type alias/);
+          return true;
+        },
+      );
+    });
+
+    it("should record the categorized outcome without throwing when tolerated (inspect --discovery)", () => {
       const program = makeProgram();
       const invalidFile = path.join(fixtureDir, "invalid-factory.ts");
 
@@ -175,7 +205,7 @@ describe("discoverFactories", () => {
           generatedDir,
         },
         undefined,
-        { collectFileRecords: true },
+        { collectFileRecords: true, tolerateInvalidAnnotations: true },
       );
 
       assert.strictEqual(acceptedFactories.length, 0);
@@ -191,14 +221,14 @@ describe("discoverFactories", () => {
         assert.strictEqual(exportOutcome.status, IocDiscoveryStatus.SKIPPED);
         assert.strictEqual(
           exportOutcome.skipReason,
-          IocDiscoverySkipReason.CONTRACT_NOT_RESOLVED,
+          IocDiscoverySkipReason.CONTRACT_ANNOTATION_ANONYMOUS_UNION,
         );
       }
     });
   });
 
-  describe("When a factory returns a bare union alias", () => {
-    it("should warn during generation with the export, contract_not_resolved, and the union hint", () => {
+  describe("When a factory returns a named union alias", () => {
+    it("should discover it as a first-class contract and emit no unusable-export warning", () => {
       const program = makeProgram();
       const unionFile = path.join(fixtureDir, "union-alias-factory.ts");
 
@@ -216,7 +246,14 @@ describe("discoverFactories", () => {
         { collectFileRecords: true },
       );
 
-      assert.strictEqual(acceptedFactories.length, 0);
+      assert.strictEqual(acceptedFactories.length, 1);
+      const f = expectFactory(acceptedFactories, "buildUnionTask");
+      assert.strictEqual(f.contractName, "TaskOutcome");
+      assert.strictEqual(f.implementationName, "unionTask");
+      assert.ok(
+        f.contractDeclAbsPath?.endsWith("union-alias-factory.ts"),
+        "contract identity should point at the alias declaration file",
+      );
 
       const warnings: string[] = [];
       const prevWarn = console.warn;
@@ -229,18 +266,7 @@ describe("discoverFactories", () => {
         console.warn = prevWarn;
       }
 
-      assert.strictEqual(warnings.length, 1);
-      const warning = warnings[0]!;
-      assert.match(warning, /1 export\(s\) matched the factory prefix/);
-      assert.match(warning, /union-alias-factory\.ts/);
-      assert.match(warning, /"buildUnionTask"/);
-      assert.match(warning, /contract_not_resolved/);
-      assert.match(warning, /bare union return annotation is the common cause/);
-      assert.match(
-        warning,
-        /contract interface extending its union arm/,
-      );
-      assert.match(warning, /ioc --discovery/);
+      assert.deepStrictEqual(warnings, []);
     });
 
     it("should not warn for file-scoped or benign skip reasons", () => {

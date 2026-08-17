@@ -10,7 +10,10 @@ import {
   isNominallyAssignable,
   resolveDeclaredBaseType,
 } from "../groups/baseTypeAssignability.js";
-import { collectFileAnalysisForFactoryDiscovery } from "./discoverFactories/scanFactoryFile.js";
+import {
+  collectFileAnalysisForFactoryDiscovery,
+  unwrapReturnTypeAnnotation,
+} from "./discoverFactories/scanFactoryFile.js";
 import {
   resolveFactorySourceAbsPath,
   type FactoryDiscoveryPaths,
@@ -158,13 +161,14 @@ const getFactoryReturnType = (
     return undefined;
   }
 
-  const checker = program.getTypeChecker();
-  const signature = checker.getSignatureFromDeclaration(factoryDecl);
-  if (signature === undefined) {
+  // v3: the marker walk enters at the written return annotation (Promise/parens unwrapped
+  // syntactically), not the checker-inferred return type — same entry as contract identity.
+  if (factoryDecl.type === undefined) {
     return undefined;
   }
 
-  return checker.getReturnTypeOfSignature(signature);
+  const checker = program.getTypeChecker();
+  return checker.getTypeFromTypeNode(unwrapReturnTypeAnnotation(factoryDecl.type));
 };
 
 export type ResolveLifetimeMarkersForFactoriesOptions = {
