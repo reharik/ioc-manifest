@@ -17,6 +17,7 @@
 export {
   defineIocConfig,
   IOC_CONTRACT_CONFIG_KEY,
+  type IocClassConfig,
   type IocConfig,
   type IocContractMetadata,
   type IocDiscoveryScanDirs,
@@ -45,6 +46,7 @@ export type {
   IocGeneratedContainerManifest,
   IocModuleNamespace,
   IocRegisterableManifest,
+  IocUnitKind,
 } from "./core/manifest.js";
 
 // Runtime resolution-error family.

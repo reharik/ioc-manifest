@@ -17,7 +17,7 @@ type IocManifestGroupRoots = {
   readonly loggers: {
     readonly kind: "collection";
     readonly baseType: "LoggingService";
-    readonly baseTypeId: "/home/reharik/Development/ioc-manifest/examples/multi-package/packages/lib-contracts/src/types/LoggingService.ts:LoggingService";
+    readonly baseTypeId: "@example/lib-contracts/src/types/LoggingService.ts:LoggingService";
     readonly members: readonly [
       {
         readonly contractName: "RequestTracingLogger";
@@ -28,7 +28,7 @@ type IocManifestGroupRoots = {
 };
 
 export const iocManifest = {
-  manifestSchemaVersion: 2,
+  manifestSchemaVersion: 3,
 
   moduleImports: [
     ioc_buildConfigProbe,
@@ -105,7 +105,7 @@ export const iocManifest = {
         relImport: "../factories/buildViewerReadService.js",
         contractName: "ViewerReadService",
         implementationName: "viewerReadService",
-        lifetime: "singleton",
+        lifetime: "scoped",
         moduleIndex: 4,
         default: true,
         discoveredBy: "naming",
@@ -117,7 +117,7 @@ export const iocManifest = {
     kind: "collection",
     baseType: "LoggingService",
     baseTypeId:
-      "/home/reharik/Development/ioc-manifest/examples/multi-package/packages/lib-contracts/src/types/LoggingService.ts:LoggingService",
+      "@example/lib-contracts/src/types/LoggingService.ts:LoggingService",
     members: [
       {
         contractName: "RequestTracingLogger",

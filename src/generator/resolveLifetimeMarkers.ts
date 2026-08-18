@@ -10,10 +10,13 @@ import {
   isNominallyAssignable,
   resolveDeclaredBaseType,
 } from "../groups/baseTypeAssignability.js";
+import { collectFileAnalysisForFactoryDiscovery } from "./discoverFactories/scanFactoryFile.js";
 import {
-  collectFileAnalysisForFactoryDiscovery,
+  unitContractSiteTypeNode,
+  unitDeclNode,
+  unitDepsSignatureDecl,
   unwrapReturnTypeAnnotation,
-} from "./discoverFactories/scanFactoryFile.js";
+} from "./discoverFactories/contractSite.js";
 import {
   resolveFactorySourceAbsPath,
   type FactoryDiscoveryPaths,
@@ -48,12 +51,13 @@ export const factoryLifetimeMarkerKey = (
 
 const formatFactoryLocation = (
   factory: DiscoveredFactory,
-  factoryDecl: ts.FunctionLike,
+  unitNode: ts.Node,
+  depsDecl: ts.FunctionLike | undefined,
   sourceFile: ts.SourceFile,
   projectRoot: string,
 ): string => {
   const pos =
-    factoryDecl.parameters[0]?.getStart() ?? factoryDecl.getStart();
+    depsDecl?.parameters[0]?.getStart() ?? unitNode.getStart();
   const { line } = sourceFile.getLineAndCharacterOfPosition(pos);
   const abs = path.join(projectRoot, factory.modulePath);
   const rel = path.relative(projectRoot, abs).replace(/\\/g, "/");
@@ -156,19 +160,26 @@ const getFactoryReturnType = (
   }
 
   const analysis = collectFileAnalysisForFactoryDiscovery(sourceFile);
-  const factoryDecl = analysis.factoryDeclByExport.get(factory.exportName);
-  if (factoryDecl === undefined) {
-    return undefined;
-  }
-
-  // v3: the marker walk enters at the written return annotation (Promise/parens unwrapped
-  // syntactically), not the checker-inferred return type — same entry as contract identity.
-  if (factoryDecl.type === undefined) {
+  const unit = analysis.unitDeclByExport.get(factory.exportName);
+  if (unit === undefined) {
     return undefined;
   }
 
   const checker = program.getTypeChecker();
-  return checker.getTypeFromTypeNode(unwrapReturnTypeAnnotation(factoryDecl.type));
+
+  // v3: the marker walk enters at the written CONTRACT SITE (Promise/parens unwrapped
+  // syntactically), not the checker-inferred return type — same entry as contract identity, and
+  // the same for both unit kinds: a factory's return annotation, a class's `implements` entry.
+  const contractSite = unitContractSiteTypeNode(
+    checker,
+    unit,
+    factory.contractName,
+  );
+  if (contractSite === undefined) {
+    return undefined;
+  }
+
+  return checker.getTypeFromTypeNode(unwrapReturnTypeAnnotation(contractSite));
 };
 
 export type ResolveLifetimeMarkersForFactoriesOptions = {
@@ -243,10 +254,16 @@ export const resolveLifetimeMarkersForFactories = (
         sourceFile !== undefined
           ? collectFileAnalysisForFactoryDiscovery(sourceFile)
           : undefined;
-      const factoryDecl = analysis?.factoryDeclByExport.get(factory.exportName);
+      const unit = analysis?.unitDeclByExport.get(factory.exportName);
       const location =
-        sourceFile !== undefined && factoryDecl !== undefined
-          ? formatFactoryLocation(factory, factoryDecl, sourceFile, projectRoot)
+        sourceFile !== undefined && unit !== undefined
+          ? formatFactoryLocation(
+              factory,
+              unitDeclNode(unit),
+              unitDepsSignatureDecl(unit),
+              sourceFile,
+              projectRoot,
+            )
           : factory.modulePath;
       throw new Error(
         formatMultipleLifetimeMarkersError(factory, location, matches),

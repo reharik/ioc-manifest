@@ -12,13 +12,18 @@ import * as ioc_examples_b_multiple_implementations from "../examples/b-multiple
 import * as ioc_examples_c_default_selection from "../examples/c-default-selection.js";
 import * as ioc_examples_d_grouping from "../examples/d-grouping.js";
 import * as ioc_examples_f_dependency_injection from "../examples/f-dependency-injection.js";
+import * as ioc_examples_g_class_registration from "../examples/g-class-registration.js";
 
 type IocManifestGroupRoots = {
   readonly mediaStoragesGroup: {
     readonly kind: "collection";
     readonly baseType: "MediaStorage";
-    readonly baseTypeId: "/home/reharik/Development/ioc-manifest/src/examples/b-multiple-implementations.ts:MediaStorage";
+    readonly baseTypeId: "ioc-manifest/src/examples/b-multiple-implementations.ts:MediaStorage";
     readonly members: readonly [
+      {
+        readonly contractName: "MediaStorage";
+        readonly registrationKey: "archiveMediaStorage";
+      },
       {
         readonly contractName: "MediaStorage";
         readonly registrationKey: "localMediaStorage";
@@ -32,7 +37,7 @@ type IocManifestGroupRoots = {
 };
 
 export const iocManifest = {
-  manifestSchemaVersion: 2,
+  manifestSchemaVersion: 3,
 
   moduleImports: [
     ioc_examples_a_single_implementation,
@@ -40,6 +45,7 @@ export const iocManifest = {
     ioc_examples_c_default_selection,
     ioc_examples_d_grouping,
     ioc_examples_f_dependency_injection,
+    ioc_examples_g_class_registration,
   ] as const satisfies readonly IocModuleNamespace[],
 
   contracts: {
@@ -88,6 +94,19 @@ export const iocManifest = {
       },
     },
     MediaStorage: {
+      archiveMediaStorage: {
+        kind: "class",
+        exportName: "ArchiveMediaStorage",
+        registrationKey: "archiveMediaStorage",
+        modulePath: "examples/g-class-registration.ts",
+        relImport: "../examples/g-class-registration.js",
+        contractName: "MediaStorage",
+        implementationName: "archiveMediaStorage",
+        lifetime: "singleton",
+        moduleIndex: 5,
+        discoveredBy: "implements",
+        dependencyContractNames: ["MediaStorage"],
+      },
       localMediaStorage: {
         exportName: "buildLocalMediaStorage",
         registrationKey: "localMediaStorage",
@@ -156,8 +175,12 @@ export const iocManifest = {
     kind: "collection",
     baseType: "MediaStorage",
     baseTypeId:
-      "/home/reharik/Development/ioc-manifest/src/examples/b-multiple-implementations.ts:MediaStorage",
+      "ioc-manifest/src/examples/b-multiple-implementations.ts:MediaStorage",
     members: [
+      {
+        contractName: "MediaStorage",
+        registrationKey: "archiveMediaStorage",
+      },
       {
         contractName: "MediaStorage",
         registrationKey: "localMediaStorage",

@@ -7,6 +7,7 @@ import type { IocGroupsManifest } from "../core/manifest.js";
 import type { DemandSupplyAnalysisResult } from "./analyzeDemandSupply/index.js";
 import type { DiscoveredFactory } from "./types.js";
 import type { ResolvedContractRegistration } from "./resolveRegistrationPlan.js";
+import { MANIFEST_SCHEMA_VERSION } from "../schemaVersion.js";
 import {
   buildManifestArtifactSources,
   importResolvesToRegistryFile,
@@ -724,7 +725,10 @@ describe("writeManifest", () => {
         mainSource,
         /IocGeneratedContainerManifest<\s*IocManifestGroupRoots\s*>/,
       );
-      assert.match(mainSource, /\bmanifestSchemaVersion:\s*2\b/);
+      assert.match(
+        mainSource,
+        new RegExp(`\\bmanifestSchemaVersion:\\s*${MANIFEST_SCHEMA_VERSION}\\b`),
+      );
     });
 
     it("should skip a group type alias that would collide with an imported contract type and warn", async () => {
@@ -891,6 +895,71 @@ describe("writeManifest", () => {
       assert.doesNotMatch(typesSource, /import type \{\s*\} from/);
     });
   });
+
+  describe("When an implementation is a class registration unit", () => {
+    it("should emit kind: \"class\" for it and omit kind for factories", () => {
+      const plans = [
+        mkPlan({
+          contractName: "Svc",
+          contractTypeRelImport: "../fixtures/contracts.js",
+          contractKey: "svc",
+          defaultImplementationName: "classSvc",
+          implementations: [
+            {
+              unitKind: "class",
+              implementationName: "classSvc",
+              exportName: "ClassSvc",
+              registrationKey: "classSvc",
+              modulePath: "fixtures/ClassSvc.ts",
+              relImport: "../fixtures/ClassSvc.js",
+              lifetime: "singleton",
+              discoveredBy: "implements",
+            },
+            {
+              implementationName: "factorySvc",
+              exportName: "buildFactorySvc",
+              registrationKey: "factorySvc",
+              modulePath: "fixtures/impl.ts",
+              relImport: "../fixtures/impl.js",
+              lifetime: "singleton",
+              discoveredBy: "naming",
+            },
+          ],
+        }),
+      ];
+
+      const { mainSource } = buildManifestArtifactSources(
+        [
+          mkFactory({
+            contractName: "Svc",
+            implementationName: "classSvc",
+            unitKind: "class",
+            exportName: "ClassSvc",
+            modulePath: "fixtures/ClassSvc.ts",
+            relImport: "../fixtures/ClassSvc.js",
+          }),
+          mkFactory({
+            contractName: "Svc",
+            implementationName: "factorySvc",
+            exportName: "buildFactorySvc",
+          }),
+        ],
+        plans,
+        undefined,
+        "/tmp/ioc-manifest.ts",
+        "ioc-manifest",
+        { demandSupply: mkDemandSupplyFromPlans(plans) },
+      );
+
+      assert.match(mainSource, /"classSvc": \{\s*\n\s*kind: "class",/);
+      const factoryBlock = mainSource.slice(mainSource.indexOf("factorySvc: {"));
+      assert.ok(
+        !factoryBlock.slice(0, factoryBlock.indexOf("},")).includes("kind:"),
+        "factory units must not restate the default kind",
+      );
+    });
+  });
+
 });
 
 describe("importResolvesToRegistryFile", () => {

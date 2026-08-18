@@ -1,5 +1,7 @@
 import ts from "typescript";
 import type { IocConfig, IocLifetime } from "../config/iocConfig.js";
+import type { IocUnitKind } from "../core/manifest.js";
+import type { IocDiscoveryStrategy } from "./discoverFactories/discoveryOutcomeTypes.js";
 import type { FactoryDiscoveryPaths } from "./manifestPaths.js";
 
 /**
@@ -8,6 +10,11 @@ import type { FactoryDiscoveryPaths } from "./manifestPaths.js";
  * (from the TypeScript checker), used for generated type-only imports — independent of default selection.
  */
 export type DiscoveredFactory = {
+  /**
+   * Which registration unit kind this row came from. Absent reads as `"factory"` (the historical
+   * and overwhelmingly common case); `"class"` for an exported class discovered via `implements`.
+   */
+  unitKind?: IocUnitKind;
   contractName: string;
   /**
    * Absolute (normalized) path of the file declaring the contract type. Always set by discovery
@@ -29,7 +36,7 @@ export type DiscoveredFactory = {
   default?: boolean;
   lifetime?: IocLifetime;
   /** Set when the export matched a discovery strategy. */
-  discoveredBy?: "naming";
+  discoveredBy?: IocDiscoveryStrategy;
   /** Contract types inferred from the factory deps parameter (see manifest metadata). */
   dependencyContractNames?: string[];
   /** Cradle keys demanded by this factory's deps destructuring (gen-time edge for

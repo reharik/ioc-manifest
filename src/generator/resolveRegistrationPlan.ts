@@ -13,7 +13,8 @@ import {
   type IocRegistrationsPerContract,
   isIocImplementationOverride,
 } from "../config/iocConfig.js";
-import type { IocConfigOverrideField } from "../core/manifest.js";
+import type { IocConfigOverrideField, IocUnitKind } from "../core/manifest.js";
+import type { IocDiscoveryStrategy } from "./discoverFactories/discoveryOutcomeTypes.js";
 import type { ComposedManifestContractNames } from "./loadComposedManifestContracts.js";
 import {
   resolveDiscoveryRootDefaultLifetime,
@@ -41,6 +42,8 @@ export type RegistrationPlanLifetimeContext = {
 };
 
 export type ResolvedImplementationEntry = {
+  /** Registration unit kind. Absent reads as `"factory"`. */
+  unitKind?: IocUnitKind;
   /** Stable implementation id from discovery (factory export / resolver map key). */
   implementationName: string;
   /** Awilix/container registration name (respects resolver `key` / `name`). */
@@ -51,7 +54,7 @@ export type ResolvedImplementationEntry = {
   lifetime: IocLifetime;
   /** Present when {@link buildRegistrationPlan} received a lifetime context (e.g. codegen / inspect --discovery). */
   lifetimeSource?: IocRegistrationLifetimeSource;
-  discoveredBy?: "naming";
+  discoveredBy?: IocDiscoveryStrategy;
   /** Fields present on the matching `ioc.config` registration override for this implementation. */
   configOverridesApplied?: readonly IocConfigOverrideField[];
   dependencyContractNames?: readonly string[];
@@ -754,6 +757,9 @@ export const buildRegistrationPlan = (
         );
 
         return {
+          ...(factory.unitKind !== undefined && factory.unitKind !== "factory"
+            ? { unitKind: factory.unitKind }
+            : {}),
           implementationName,
           exportName: factory.exportName,
           modulePath: factory.modulePath,

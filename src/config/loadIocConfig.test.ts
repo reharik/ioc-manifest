@@ -463,6 +463,60 @@ describe("resolveIocConfigPath", () => {
     });
   });
 
+  describe("When classes declares per-class policy", () => {
+    it("should accept contract selection and the file-name divergence suppression", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-classes-ok-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default {
+          discovery: { scanDirs: "src" },
+          classes: {
+            DualUnit: { contract: "Auditor" },
+            LocalMediaStorage: { allowDivergentFileName: true },
+          },
+        };`,
+      );
+      const loaded = await loadIocConfig(cfg);
+      assert.deepEqual(loaded?.classes, {
+        DualUnit: { contract: "Auditor" },
+        LocalMediaStorage: { allowDivergentFileName: true },
+      });
+    });
+
+    it("should reject an unknown per-class key", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-classes-bad-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default {
+          discovery: { scanDirs: "src" },
+          classes: { DualUnit: { contarct: "Auditor" } },
+        };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /classes\."DualUnit" has unknown property "contarct" \(only contract and allowDivergentFileName are allowed\)/,
+      );
+    });
+
+    it("should reject a non-string contract", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-classes-type-"));
+      const cfg = path.join(root, "ioc.config.ts");
+      writeFileSync(
+        cfg,
+        `export default {
+          discovery: { scanDirs: "src" },
+          classes: { DualUnit: { contract: 3 } },
+        };`,
+      );
+      await assert.rejects(
+        () => loadIocConfig(cfg),
+        /classes\."DualUnit"\.contract must be a non-empty string when set/,
+      );
+    });
+  });
+
   describe("When groupBaseTypeAliases is set in library mode", () => {
     it("should reject the field", async () => {
       const root = mkdtempSync(path.join(tmpdir(), "ioc-alias-lib-"));

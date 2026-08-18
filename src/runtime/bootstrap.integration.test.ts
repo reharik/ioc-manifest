@@ -31,6 +31,21 @@ describe("registerIocFromManifest", () => {
     });
   });
 
+  describe("When resolving a class registration unit from the dogfood manifest", () => {
+    it("should construct the class with PROXY injection and wire its constructor dependency", async () => {
+      const container = createContainer<IocGeneratedCradle>();
+      registerIocFromManifest(container, [iocManifest]);
+
+      const archive = container.resolve("archiveMediaStorage") as MediaStorage;
+      assert.strictEqual(archive.label, "archive");
+      assert.strictEqual(
+        Object.getPrototypeOf(archive).constructor.name,
+        "ArchiveMediaStorage",
+      );
+      await archive.put("k");
+    });
+  });
+
   describe("When resolving generated groups", () => {
     it("should register group roots and resolve collection members from the cradle", () => {
       const container = createContainer<IocGeneratedCradle>();
@@ -38,9 +53,9 @@ describe("registerIocFromManifest", () => {
 
       const mediaGroup = container.resolve("mediaStoragesGroup") as MediaStorage[];
       assert.ok(Array.isArray(mediaGroup));
-      assert.strictEqual(mediaGroup.length, 2);
+      assert.strictEqual(mediaGroup.length, 3);
       const labels = mediaGroup.map((m) => m.label).sort();
-      assert.deepStrictEqual(labels, ["local", "s3"]);
+      assert.deepStrictEqual(labels, ["archive", "local", "s3"]);
       assert.ok(
         new Set(mediaGroup.map((m) => m.label)).size === mediaGroup.length,
         "collection group should not duplicate implementations",

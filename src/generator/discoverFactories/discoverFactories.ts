@@ -16,8 +16,12 @@ import {
   type IocDiscoveryAnalysisFiles,
   type IocDiscoveryFileRecord,
 } from "./discoveryOutcomeTypes.js";
-import { collectFileAnalysisForFactoryDiscovery } from "./scanFactoryFile.js";
-import { scanFactoryFile } from "./scanFactoryFile.js";
+import {
+  classImplementsContractNames,
+  collectFileAnalysisForFactoryDiscovery,
+  scanFactoryFile,
+} from "./scanFactoryFile.js";
+import { unitDepsSignatureDecl } from "./contractSite.js";
 import { inferFactoryDependencies } from "./inferFactoryDependencyContracts.js";
 
 const normalizePath = (p: string): string => path.normalize(p);
@@ -36,9 +40,11 @@ export type FactoryDiscoveryRunOptions = {
   /** When true, collect per-file outcomes for on-demand discovery reports (not written to manifest). */
   collectFileRecords?: boolean;
   /**
-   * When true, invalid-annotation outcomes (missing annotation, inline object literal, anonymous
-   * union) are recorded as categorized outcomes but do not throw — used by `ioc inspect
-   * --discovery` so the report can list every offender. Generation keeps the default (throw).
+   * When true, unregisterable-unit outcomes (missing annotation, inline object literal, anonymous
+   * union, and the class-unit failures: multiple `implements`, unimplemented configured contract,
+   * non-injectable constructor) are recorded as categorized outcomes but do not throw — used by
+   * `ioc inspect --discovery` so the report can list every offender. Generation keeps the default
+   * (throw).
    */
   tolerateInvalidAnnotations?: boolean;
 };
@@ -77,6 +83,77 @@ const formatInvalidAnnotationError = (
     ...offenders.map(
       (o) =>
         `  - ${o.modulePath} export "${o.exportName}": ${invalidAnnotationGuidance(o.skipReason)}`,
+    ),
+  ].join("\n");
+
+/** Class-unit skips that mean "matched the trigger, cannot be registered" — never silent. */
+const CLASS_HARD_ERROR_SKIP_REASONS: ReadonlySet<IocDiscoverySkipReason> =
+  new Set([
+    IocDiscoverySkipReason.CLASS_MULTIPLE_IMPLEMENTS,
+    IocDiscoverySkipReason.CLASS_CONFIGURED_CONTRACT_NOT_IMPLEMENTED,
+    IocDiscoverySkipReason.CLASS_INVALID_CONSTRUCTOR_SHAPE,
+  ]);
+
+type ClassUnitOffender = {
+  modulePath: string;
+  exportName: string;
+  skipReason: IocDiscoverySkipReason;
+  detail: string;
+};
+
+const classOffenderDetail = (
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+  exportName: string,
+  skipReason: IocDiscoverySkipReason,
+  configuredContract: string | undefined,
+): string => {
+  switch (skipReason) {
+    case IocDiscoverySkipReason.CLASS_MULTIPLE_IMPLEMENTS: {
+      const contracts = implementsNamesForExport(
+        checker,
+        sourceFile,
+        exportName,
+      );
+      const list = contracts.map((c) => JSON.stringify(c)).join(" and ");
+      return `implements ${contracts.length} contracts (${list}) — a registration unit has exactly one contract. Pick the intended one with classes[${JSON.stringify(exportName)}].contract in ioc.config.ts, or drop the extra \`implements\` entry.`;
+    }
+    case IocDiscoverySkipReason.CLASS_CONFIGURED_CONTRACT_NOT_IMPLEMENTED: {
+      const contracts = implementsNamesForExport(
+        checker,
+        sourceFile,
+        exportName,
+      );
+      const list = contracts.map((c) => JSON.stringify(c)).join(", ");
+      return `classes[${JSON.stringify(exportName)}].contract is ${JSON.stringify(configuredContract ?? "")}, which the class does not implement. Implemented contracts: ${list.length > 0 ? list : "(none)"}.`;
+    }
+    case IocDiscoverySkipReason.CLASS_INVALID_CONSTRUCTOR_SHAPE:
+      return "constructor is not injectable — PROXY-mode injection passes the cradle as one object argument, so a class unit takes either no constructor, a zero-parameter constructor, or exactly one destructured object parameter typed with a named deps type (e.g. `constructor({ logger }: MyDeps)`). Multiple parameters, rest parameters, parameter properties, and primitive/array/function parameter types are CLASSIC-mode injection, which is not supported.";
+    default:
+      return skipReason;
+  }
+};
+
+const implementsNamesForExport = (
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+  exportName: string,
+): readonly string[] => {
+  const analysis = collectFileAnalysisForFactoryDiscovery(sourceFile);
+  const unit = analysis.unitDeclByExport.get(exportName);
+  if (unit === undefined || unit.unitKind !== "class") {
+    return [];
+  }
+  return classImplementsContractNames(checker, unit.decl);
+};
+
+const formatClassUnitError = (
+  offenders: readonly ClassUnitOffender[],
+): string =>
+  [
+    `[ioc] ${offenders.length} exported class(es) match the class registration trigger (an \`implements\` clause) but cannot be registered:`,
+    ...offenders.map(
+      (o) => `  - ${o.modulePath} class "${o.exportName}": ${o.detail}`,
     ),
   ].join("\n");
 
@@ -129,7 +206,13 @@ const enrichDependencyContracts = (
       continue;
     }
     const analysis = collectFileAnalysisForFactoryDiscovery(sourceFile);
-    const decl = analysis.factoryDeclByExport.get(f.exportName);
+    const unit = analysis.unitDeclByExport.get(f.exportName);
+    if (!unit) {
+      continue;
+    }
+    // Same deps path for both unit kinds: a class's constructor is a `ts.FunctionLike`, so the
+    // factory-parameter analyzer reads it unchanged.
+    const decl = unitDepsSignatureDecl(unit);
     if (!decl) {
       continue;
     }
@@ -173,6 +256,7 @@ export const discoverFactories = (
   const collectRecords = runOptions?.collectFileRecords === true;
   const discoveryFiles: IocDiscoveryFileRecord[] = [];
   const invalidAnnotationOffenders: InvalidAnnotationOffender[] = [];
+  const classUnitOffenders: ClassUnitOffender[] = [];
   /** contractName → declaration sites seen (first factory per declaring file). */
   const contractDeclSites = new Map<string, ContractDeclSite[]>();
 
@@ -206,14 +290,31 @@ export const discoverFactories = (
 
     for (const outcome of scan.outcomes) {
       if (
-        outcome.scope === "export" &&
-        outcome.status === IocDiscoveryStatus.SKIPPED &&
-        INVALID_ANNOTATION_SKIP_REASONS.has(outcome.skipReason)
+        outcome.scope !== "export" ||
+        outcome.status !== IocDiscoveryStatus.SKIPPED
       ) {
+        continue;
+      }
+      if (INVALID_ANNOTATION_SKIP_REASONS.has(outcome.skipReason)) {
         invalidAnnotationOffenders.push({
           modulePath: scan.modulePath,
           exportName: outcome.exportName,
           skipReason: outcome.skipReason,
+        });
+        continue;
+      }
+      if (CLASS_HARD_ERROR_SKIP_REASONS.has(outcome.skipReason)) {
+        classUnitOffenders.push({
+          modulePath: scan.modulePath,
+          exportName: outcome.exportName,
+          skipReason: outcome.skipReason,
+          detail: classOffenderDetail(
+            checker,
+            sourceFile,
+            outcome.exportName,
+            outcome.skipReason,
+            outcome.contractName,
+          ),
         });
       }
     }
@@ -265,6 +366,13 @@ export const discoverFactories = (
     aggregatedErrors.push(
       formatInvalidAnnotationError(invalidAnnotationOffenders),
     );
+  }
+
+  if (
+    classUnitOffenders.length > 0 &&
+    runOptions?.tolerateInvalidAnnotations !== true
+  ) {
+    aggregatedErrors.push(formatClassUnitError(classUnitOffenders));
   }
 
   const collisions = new Map<string, readonly ContractDeclSite[]>();

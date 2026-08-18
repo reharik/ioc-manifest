@@ -56,6 +56,7 @@ import { validateDivergentNamesAtCodegen } from "./validateDivergentNamesAtCodeg
 import { validateGeneratedReferencesAtCodegen } from "./validateGeneratedReferencesAtCodegen.js";
 import { validateNonEmptyGroupsAtCodegen } from "./validateNonEmptyGroupsAtCodegen.js";
 import { warnUnusableFactoryExports } from "./warnUnusableFactoryExports.js";
+import { warnDivergentClassFileNames } from "./warnDivergentClassFileNames.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../../package.json") as { name?: unknown };
@@ -174,6 +175,7 @@ export const generateManifest = async (
   );
 
   warnUnusableFactoryExports(discoveryFiles);
+  warnDivergentClassFileNames(acceptedFactories, config);
 
   const composedContractNames =
     config !== undefined && isAppMode(config)

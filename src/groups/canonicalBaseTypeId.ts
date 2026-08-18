@@ -1,21 +1,33 @@
 /**
  * @fileoverview Opaque canonical identifiers for group base types (§8.1).
  *
- * Format: `<normalized-absolute-declaration-path>:<TypeName>` — internal only; appears in
- * composition errors and `groupBaseTypeAliases` config. Users copy values from errors without
- * needing to understand how paths are chosen.
+ * Format (schema v3): `<packageName>/<path within that package>:<TypeName>` — e.g.
+ * `@acme/contracts/src/types/Storage.ts:Storage`. Internal only; appears in composition errors and
+ * `groupBaseTypeAliases` config, where users copy values from errors without needing to understand
+ * how they are chosen. Schema v2 used the absolute declaration path, which made generated output
+ * machine-specific; see {@link packageRelativeDeclarationPath}.
+ *
+ * The absolute declaration path is still needed to load the type back out of the program, so it
+ * travels alongside the id inside the generator rather than being parsed out of it.
  */
 import path from "node:path";
 import ts from "typescript";
 import { resolveContractTypeSourceFile } from "../generator/contractTypeSourceFile.js";
 import type { ResolvedScanDir } from "../generator/manifestPaths.js";
+import { packageRelativeDeclarationPath } from "./packageRelativeDeclarationPath.js";
 import {
   resolveDeclaredBaseType,
   type BaseTypeResolution,
 } from "./baseTypeAssignability.js";
 
 export type CanonicalBaseTypeIdResolution =
-  | { ok: true; baseTypeId: string }
+  | {
+      ok: true;
+      /** Package-relative, machine-independent id emitted into the manifest. */
+      baseTypeId: string;
+      /** Absolute path of the declaring file (generator-internal; never emitted). */
+      declarationFile: string;
+    }
   | { ok: false; message: string };
 
 const getTopLevelTypeDeclaration = (
@@ -37,11 +49,23 @@ const getTopLevelTypeDeclaration = (
   return undefined;
 };
 
-/** Builds the opaque canonical identifier from a resolved declaration file and type name. */
+/**
+ * Builds the opaque canonical identifier from a resolved declaration file and type name.
+ * The path component is package-relative, so the value is stable across machines and checkouts.
+ */
 export const formatCanonicalBaseTypeId = (
   declarationFile: string,
   typeName: string,
-): string => `${path.normalize(declarationFile)}:${typeName}`;
+): string => `${packageRelativeDeclarationPath(declarationFile)}:${typeName}`;
+
+const okResolution = (
+  declarationFile: string,
+  typeName: string,
+): CanonicalBaseTypeIdResolution => ({
+  ok: true,
+  baseTypeId: formatCanonicalBaseTypeId(declarationFile, typeName),
+  declarationFile: path.normalize(declarationFile),
+});
 
 const declarationFileFromLocalBaseType = (
   program: ts.Program,
@@ -202,10 +226,7 @@ export const resolveCanonicalBaseTypeId = (
     typeName,
   );
   if (localFile !== undefined) {
-    return {
-      ok: true,
-      baseTypeId: formatCanonicalBaseTypeId(localFile, typeName),
-    };
+    return okResolution(localFile, typeName);
   }
 
   const localResolution = resolveDeclaredBaseType(
@@ -224,10 +245,7 @@ export const resolveCanonicalBaseTypeId = (
     context.scanDirs,
   );
   if (importFile !== undefined) {
-    return {
-      ok: true,
-      baseTypeId: formatCanonicalBaseTypeId(importFile, typeName),
-    };
+    return okResolution(importFile, typeName);
   }
 
   if (!localResolution.ok) {
@@ -239,10 +257,7 @@ export const resolveCanonicalBaseTypeId = (
     typeName,
   );
   if (fallbackFile !== undefined) {
-    return {
-      ok: true,
-      baseTypeId: formatCanonicalBaseTypeId(fallbackFile, typeName),
-    };
+    return okResolution(fallbackFile, typeName);
   }
 
   return {
@@ -259,43 +274,32 @@ export const resolveDeclaredBaseTypeForGroup = (
 ): BaseTypeResolution =>
   resolveDeclaredBaseType(program, checker, typeName);
 
-const parseCanonicalBaseTypeId = (
-  baseTypeId: string,
-): { fileName: string; typeName: string } | undefined => {
-  const colon = baseTypeId.lastIndexOf(":");
-  if (colon <= 0 || colon >= baseTypeId.length - 1) {
-    return undefined;
-  }
-  return {
-    fileName: baseTypeId.slice(0, colon),
-    typeName: baseTypeId.slice(colon + 1),
-  };
-};
-
-/** Loads the `ts.Type` for a resolved canonical id (e.g. when the declaration lives under node_modules). */
-export const resolveBaseTypeFromCanonicalId = (
+/**
+ * Loads the `ts.Type` for a resolved base type from its ABSOLUTE declaration path (e.g. when the
+ * declaration lives under `node_modules` and `resolveDeclaredBaseType` cannot see it).
+ *
+ * Takes the path and type name directly rather than parsing them back out of the canonical id:
+ * since schema v3 that id is package-relative and no longer addresses a file on this machine.
+ */
+export const resolveBaseTypeFromDeclarationFile = (
   program: ts.Program,
   checker: ts.TypeChecker,
-  baseTypeId: string,
+  declarationFile: string,
+  typeName: string,
 ): BaseTypeResolution => {
-  const parsed = parseCanonicalBaseTypeId(baseTypeId);
-  if (parsed === undefined) {
-    return { ok: false, message: "internal error: invalid canonical base type id" };
-  }
-
-  const sf = program.getSourceFile(parsed.fileName);
+  const sf = program.getSourceFile(declarationFile);
   if (sf === undefined) {
     return {
       ok: false,
-      message: `declaration file ${JSON.stringify(parsed.fileName)} is not in the TypeScript program`,
+      message: `declaration file ${JSON.stringify(declarationFile)} is not in the TypeScript program`,
     };
   }
 
-  const decl = getTopLevelTypeDeclaration(sf, parsed.typeName);
+  const decl = getTopLevelTypeDeclaration(sf, typeName);
   if (decl === undefined) {
     return {
       ok: false,
-      message: `no interface or type alias ${JSON.stringify(parsed.typeName)} in ${JSON.stringify(parsed.fileName)}`,
+      message: `no interface or type alias ${JSON.stringify(typeName)} in ${JSON.stringify(declarationFile)}`,
     };
   }
 

@@ -5,6 +5,7 @@ import type {
   IocContractManifest,
   IocModuleNamespace,
   IocRegisterableManifest,
+  IocUnitKind,
 } from "../core/manifest.js";
 import { MANIFEST_SCHEMA_VERSION } from "../schemaVersion.js";
 import type { ComposedRegistrationOverrides } from "../runtime/composedOverrides.js";
@@ -18,8 +19,10 @@ export const implMeta = (
     registrationKey?: string;
     moduleIndex?: number;
     default?: boolean;
+    kind?: IocUnitKind;
   },
 ): IocContractManifest[string][string] => ({
+  ...(partial.kind !== undefined ? { kind: partial.kind } : {}),
   exportName:
     partial.exportName ??
     `build${partial.implementationName.charAt(0).toUpperCase()}${partial.implementationName.slice(1)}`,

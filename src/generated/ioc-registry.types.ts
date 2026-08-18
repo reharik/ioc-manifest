@@ -9,6 +9,7 @@ import type { AlbumService } from "../examples/f-dependency-injection.js";
 
 export interface IocGeneratedCradle {
   albumService: AlbumService;
+  archiveMediaStorage: MediaStorage;
   cacheClient: CacheClient;
   consoleLogger: Logger;
   localMediaStorage: MediaStorage;

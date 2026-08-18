@@ -18,6 +18,8 @@ export interface IocGeneratedCradle {
   viewerReadService: ViewerReadService;
 }
 
+export type Loggers = ReadonlyArray<RequestTracingLogger>;
+
 export interface IocExternals {
   config: AppConfigSlice;
   logger: Logger;

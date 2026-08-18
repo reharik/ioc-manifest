@@ -8,7 +8,7 @@ import type {
 } from "ioc-manifest";
 
 export const iocManifest = {
-  manifestSchemaVersion: 2,
+  manifestSchemaVersion: 3,
 
   moduleImports: [] as const satisfies readonly IocModuleNamespace[],
 

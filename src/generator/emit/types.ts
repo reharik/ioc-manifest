@@ -3,6 +3,11 @@ export type FactorySourceLocation = {
   exportName: string;
   modulePath: string;
   line: number;
+  /**
+   * Which registration unit kind this location refers to. Absent reads as `"factory"`; used only
+   * so diagnostics say "class" and show a constructor-shaped hint for class units.
+   */
+  unitKind?: "class" | "factory";
 };
 
 /** Import spec collected for generated `ioc-registry.types.ts`. */

@@ -21,7 +21,7 @@ import {
   type IocGroupsManifest,
 } from "../core/manifest.js";
 import {
-  resolveBaseTypeFromCanonicalId,
+  resolveBaseTypeFromDeclarationFile,
   resolveCanonicalBaseTypeId,
 } from "./canonicalBaseTypeId.js";
 import type { ResolvedScanDir } from "../generator/manifestPaths.js";
@@ -377,10 +377,11 @@ const runGroupPlan = (
     );
     const resolvedBase = declaredBase.ok
       ? declaredBase
-      : resolveBaseTypeFromCanonicalId(
+      : resolveBaseTypeFromDeclarationFile(
           discovery.program,
           checker,
-          canonical.baseTypeId,
+          canonical.declarationFile,
+          entry.baseType,
         );
 
     if (!resolvedBase.ok) {

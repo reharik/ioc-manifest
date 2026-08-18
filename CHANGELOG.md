@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.0.0] - Unreleased
 
+### Added
+
+**Class-based registration units.** An exported class with an `implements` clause is a
+registration unit. The `implements` clause is its contract site — the same declared, syntactic
+position a factory's return type annotation occupies, read by the same resolver, producing the
+same (declaration file, declared name) identity. One identity rule, two unit kinds.
+
+```ts
+// Factory unit — the contract is the return type annotation.
+import type { MediaStorage } from "./contracts.js";
+
+type S3MediaStorageDeps = { logger: Logger };
+
+export const buildS3MediaStorage = ({ logger }: S3MediaStorageDeps): MediaStorage => ({
+  label: "s3",
+  put: async (key) => logger.log(`stored ${key}`),
+});
+
+// Class unit — the contract is the `implements` clause. Registration key `s3MediaStorage`,
+// dependencies from the constructor's single destructured object parameter.
+import type { MediaStorage } from "./contracts.js";
+
+type S3MediaStorageDeps = { logger: Logger };
+
+export class S3MediaStorage implements MediaStorage {
+  label = "s3";
+  readonly #logger: Logger;
+
+  constructor({ logger }: S3MediaStorageDeps) {
+    this.#logger = logger;
+  }
+
+  async put(key: string): Promise<void> {
+    this.#logger.log(`stored ${key}`);
+  }
+}
+```
+
+Everything downstream is unchanged: registration keys, default election, group and marker
+membership, demand analysis, lifetime checks, composition. A class and a factory implementing
+the same contract compete for the default exactly as two factories do, and a class joins a
+group on the same assignability rule.
+
+Specifics:
+
+- **Trigger.** An exported class with `implements` in a scanned directory. A class without
+  `implements` is ordinary code — ignored silently, never reported as a failed registration.
+- **Registration key.** camelCase of the class name, using Awilix's own
+  `formatName: "camelCase"` algorithm, so a codebase migrating off `loadModules` keeps its
+  container keys. `S3MediaStorage` → `s3MediaStorage`; `APIClient` → `apiClient` (the acronym
+  run splits as `API|Client`). All existing key policy — config `name` overrides,
+  `$contract.accessKey`, divergent-name warnings — applies unchanged.
+- **Dependencies.** The constructor's single destructured object parameter, analyzed by the
+  same path as a factory's deps parameter (named local deps type required). No constructor or a
+  zero-parameter constructor means no dependencies. Several parameters, a rest parameter, a
+  parameter property, or a primitive/array/function parameter type is a hard error explaining
+  that PROXY-mode injection needs one object parameter — CLASSIC-mode parameter-name injection
+  is out of scope.
+- **Lifetimes.** Markers resolve from the `implements` contract exactly as from a return
+  annotation.
+- **Several `implements` entries** is a hard error naming the class and every contract,
+  resolvable with the new `classes` config surface:
+  `classes: { DualUnit: { contract: "Auditor" } }`.
+- **Abstract classes** are never registration units. One carrying `implements` is skipped with
+  a warning rather than silently, since that is also what someone who meant to register it
+  would have written.
+- **Migration warning.** When a class's file name would have produced a different key under
+  Awilix `loadModules` (which keys on the file name, not the class name), generation says so —
+  `storage.ts` exporting `S3MediaStorage` registers as `s3MediaStorage`, not `storage`. Kebab
+  and snake file names that camelCase to the same key are silent. Suppress per class with
+  `classes: { S3MediaStorage: { allowDivergentFileName: true } }`.
+- Classes that match the trigger but cannot be registered get categorized skip reasons in the
+  same aggregated reporting as factories and appear in `ioc inspect --discovery`.
+
 ### Fixed
 
 Every syntactic form by which scanned source can reach a type in the generated registry file
@@ -46,6 +120,39 @@ type UploadDeps = { storage: SharedStorage; channels: SharedChannels };
 The other thirteen are rejected — see **Changed** below.
 
 ### Changed
+
+**Manifest schema version 3.** Two changes ride the bump. Composition refuses a v2 manifest
+outright, as it always has across versions — regenerate every package with the same
+ioc-manifest version.
+
+Implementation metadata gains `kind: "class"`. It is emitted only for class units: absent
+reads as `"factory"`, matching how every other conventional value in this metadata (`default`,
+`accessKey`, `discoveredBy`) stays out of generated output rather than being restated on every
+entry. Since schema v3 refuses v2 manifests there is no cross-version reader to consider, so
+the choice is purely ergonomic, and the smaller diff wins.
+
+`baseTypeId` — the opaque canonical identifier for a group's base type — is now
+**package-relative** instead of an absolute path:
+
+```ts
+// v2 — machine-specific; two developers regenerating the same package got different bytes.
+baseTypeId: "/home/alice/work/monorepo/packages/contracts/src/types/Storage.ts:Storage";
+
+// v3 — `<packageName>/<path within that package>:<TypeName>`.
+baseTypeId: "@acme/contracts/src/types/Storage.ts:Storage";
+```
+
+The package name comes from the nearest enclosing `package.json`; the path is POSIX-relative to
+that manifest's directory. The value is identical on every machine and checkout, and stays
+unambiguous between two packages that declare the same type name at the same inner path. This
+is the main reason `groupBaseTypeAliases` existed: diamond hoisting used to change the absolute
+path and so the id. `groupBaseTypeAliases` is unchanged and still needed where the same logical
+type is reached through genuinely different package layouts (a workspace `src/Storage.ts` build
+versus a published `dist/Storage.d.ts` one) — the escape hatch is narrower now, not gone.
+
+**Regenerate after upgrading**: `baseTypeId` values change in every generated manifest that
+declares a group, and any `groupBaseTypeAliases` entries must be updated to the new form (the
+composition error prints the values to copy).
 
 Twelve reference forms that previously fell through to type resolution now fail generation
 wherever they appear in scanned source. Each error names the file, the line, the offending

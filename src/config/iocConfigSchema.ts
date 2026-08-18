@@ -234,6 +234,28 @@ const registrationsSchema = z
   });
 
 // ---------------------------------------------------------------------------------------------
+// classes
+// ---------------------------------------------------------------------------------------------
+
+export const CLASS_ENTRY_ALLOWED_KEYS = [
+  "contract",
+  "allowDivergentFileName",
+] as const;
+
+const classEntrySchema = z
+  .object({
+    contract: nonEmptyString("must be a non-empty string when set").optional(),
+    allowDivergentFileName: z
+      .boolean({ error: "must be a boolean when set" })
+      .optional(),
+  })
+  .strict();
+
+const classesSchema = z.record(z.string(), classEntrySchema, {
+  error: "must be an object when set",
+});
+
+// ---------------------------------------------------------------------------------------------
 // groups / groupBaseTypeAliases / lifetimeMarkers / scopeProvided / composedManifests
 // ---------------------------------------------------------------------------------------------
 
@@ -324,6 +346,7 @@ export const iocConfigSchema = z
     manifestExportPath: nonEmptyString("must be a non-empty string when set").optional(),
     packageName: nonEmptyString("must be a non-empty string when set").optional(),
     registrations: registrationsSchema.optional(),
+    classes: classesSchema.optional(),
     groups: groupsSchema.optional(),
     groupBaseTypeAliases: groupBaseTypeAliasesSchema.optional(),
     lifetimeMarkers: lifetimeMarkersSchema.optional(),
@@ -424,6 +447,7 @@ const renderConfigPath = (path: readonly PropertyKey[]): string => {
       out += `[${JSON.stringify(seg)}]`;
     } else if (
       (first === "groups" ||
+        first === "classes" ||
         first === "lifetimeMarkers" ||
         first === "groupBaseTypeAliases") &&
       i === 1
@@ -437,6 +461,8 @@ const renderConfigPath = (path: readonly PropertyKey[]): string => {
 };
 
 const GROUP_ENTRY_UNKNOWN_KEY_SUFFIX = ` (only ${GROUP_ENTRY_ALLOWED_KEYS.slice(0, -1).join(", ")} and ${GROUP_ENTRY_ALLOWED_KEYS.at(-1)} are allowed)`;
+
+const CLASS_ENTRY_UNKNOWN_KEY_SUFFIX = ` (only ${CLASS_ENTRY_ALLOWED_KEYS.slice(0, -1).join(", ")} and ${CLASS_ENTRY_ALLOWED_KEYS.at(-1)} are allowed)`;
 
 const formatIocConfigIssue = (
   issue: z.core.$ZodIssue,
@@ -454,7 +480,9 @@ const formatIocConfigIssue = (
       const suffix =
         issue.path.length === 2 && issue.path[0] === "groups"
           ? GROUP_ENTRY_UNKNOWN_KEY_SUFFIX
-          : "";
+          : issue.path.length === 2 && issue.path[0] === "classes"
+            ? CLASS_ENTRY_UNKNOWN_KEY_SUFFIX
+            : "";
       const prefix =
         issue.path.length === 0 ? "" : `${renderConfigPath(issue.path)} `;
       return `[ioc-config] ${sourceLabel} ${prefix}has unknown property ${JSON.stringify(key)}${suffix}`;

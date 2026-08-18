@@ -177,6 +177,11 @@ const plansToIocContractManifest = (
         plan.accessKey !== plan.contractKey;
 
       implementations[impl.implementationName] = {
+        // Omitted for factories: absent reads as "factory" (see `iocUnitKindOf`), matching how
+        // every other conventional value in this metadata stays out of generated output.
+        ...(impl.unitKind !== undefined && impl.unitKind !== "factory"
+          ? { kind: impl.unitKind }
+          : {}),
         exportName: impl.exportName,
         registrationKey: impl.registrationKey,
         modulePath: impl.modulePath,
@@ -336,6 +341,7 @@ const serializeMetadataBlock = (
   meta: ModuleFactoryManifestMetadata,
 ): string => {
   const lines = [
+    ...(meta.kind !== undefined ? [`      kind: ${JSON.stringify(meta.kind)},`] : []),
     `      exportName: ${JSON.stringify(meta.exportName)},`,
     `      registrationKey: ${JSON.stringify(meta.registrationKey)},`,
     `      modulePath: ${JSON.stringify(meta.modulePath)},`,

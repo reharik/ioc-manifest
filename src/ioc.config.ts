@@ -27,6 +27,14 @@ export default defineIocConfig({
       consoleLogger: { default: true },
     },
   },
+  classes: {
+    /**
+     * The example files are named by lesson (`g-class-registration.ts`), not by class, so the
+     * `loadModules` migration warning would fire on every run. The key change is understood and
+     * intentional here.
+     */
+    ArchiveMediaStorage: { allowDivergentFileName: true },
+  },
   groups: {
     /** All implementations whose contract is assignable to MediaStorage. */
     mediaStoragesGroup: {

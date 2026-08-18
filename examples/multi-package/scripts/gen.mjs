@@ -1,5 +1,5 @@
 import { existsSync, globSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -36,7 +36,10 @@ if (packages.length === 0) {
 for (const name of packages) {
   const cwd = path.join(exampleRoot, "packages", name);
   console.log(`[example] generating manifest for ${name}...`);
-  execSync(process.execPath, [iocCli, "generate"], {
+  // execFileSync, not execSync: execSync takes (command, options), so passing an args array as the
+  // second argument silently dropped both the args and the cwd — `npm run gen` spawned a bare
+  // `node` in the repo root and regenerated nothing.
+  execFileSync(process.execPath, [iocCli, "generate"], {
     cwd,
     stdio: "inherit",
     env: process.env,

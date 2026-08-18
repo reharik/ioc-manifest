@@ -11,7 +11,7 @@ import * as ioc_buildConfig from "../factories/buildConfig.js";
 import * as ioc_buildConsoleLogger from "../factories/buildConsoleLogger.js";
 
 export const iocManifest = {
-  manifestSchemaVersion: 2,
+  manifestSchemaVersion: 3,
 
   moduleImports: [
     ioc_buildConfig,

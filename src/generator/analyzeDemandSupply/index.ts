@@ -3,6 +3,12 @@ import ts from "typescript";
 import type { IocGroupsManifest } from "../../core/manifest.js";
 import { collectFileAnalysisForFactoryDiscovery } from "../discoverFactories/scanFactoryFile.js";
 import {
+  unitContractSiteTypeNode,
+  unitDeclNode,
+  unitDepsSignatureDecl,
+  type DiscoveredUnitDecl,
+} from "../discoverFactories/contractSite.js";
+import {
   resolveFactorySourceAbsPath,
   type FactoryDiscoveryPaths,
 } from "../manifestPaths.js";
@@ -55,18 +61,17 @@ const collectLocalSupplierKeys = (
   return keys;
 };
 
-const factoryLocation = (
-  factory: DiscoveredFactory,
-  factoryDecl: ts.FunctionLike,
-  sourceFile: ts.SourceFile,
+const unitLocation = (
+  unit: ResolvedUnitContext,
 ): FactorySourceLocation => {
   const pos =
-    factoryDecl.parameters[0]?.getStart() ?? factoryDecl.getStart();
-  const { line } = sourceFile.getLineAndCharacterOfPosition(pos);
+    unit.depsDecl?.parameters[0]?.getStart() ?? unitDeclNode(unit.decl).getStart();
+  const { line } = unit.sourceFile.getLineAndCharacterOfPosition(pos);
   return {
-    exportName: factory.exportName,
-    modulePath: factory.modulePath,
+    exportName: unit.factory.exportName,
+    modulePath: unit.factory.modulePath,
     line: line + 1,
+    unitKind: unit.factory.unitKind ?? "factory",
   };
 };
 
@@ -128,18 +133,29 @@ const formatUnknownConsumedCradleKeyError = (
   return `[ioc] Factory ${JSON.stringify(loc.exportName)} at ${rel}:${loc.line} references consumed cradle key ${JSON.stringify(key)} on property ${JSON.stringify(propName)} that is not a known registration or group`;
 };
 
-type ResolvedFactoryContext = {
+/**
+ * One registration unit resolved back to its AST, for both kinds.
+ *
+ * `decl` is the unit declaration (factory function / class); `depsDecl` is the signature whose
+ * first parameter carries dependencies (the factory itself / the class constructor), undefined for
+ * a class with no constructor; `contractSite` is the declared contract position (return annotation
+ * / `implements` entry).
+ */
+type ResolvedUnitContext = {
   factory: DiscoveredFactory;
-  factoryDecl: ts.FunctionLike;
+  decl: DiscoveredUnitDecl;
+  depsDecl: ts.FunctionLike | undefined;
+  contractSite: ts.TypeNode | undefined;
   sourceFile: ts.SourceFile;
 };
 
-const resolveFactoryContext = (
+const resolveUnitContext = (
+  checker: ts.TypeChecker,
   factory: DiscoveredFactory,
   sourceFileByPath: Map<string, ts.SourceFile>,
   projectRoot: string,
   scanDirs: FactoryDiscoveryPaths["scanDirs"],
-): ResolvedFactoryContext | undefined => {
+): ResolvedUnitContext | undefined => {
   const absPath = normalizePath(
     resolveFactorySourceAbsPath(factory.modulePath, projectRoot, scanDirs),
   );
@@ -148,44 +164,66 @@ const resolveFactoryContext = (
     return undefined;
   }
   const analysis = collectFileAnalysisForFactoryDiscovery(sourceFile);
-  const factoryDecl = analysis.factoryDeclByExport.get(factory.exportName);
-  if (factoryDecl === undefined) {
+  const decl = analysis.unitDeclByExport.get(factory.exportName);
+  if (decl === undefined) {
     return undefined;
   }
-  return { factory, factoryDecl, sourceFile };
+  return {
+    factory,
+    decl,
+    depsDecl: unitDepsSignatureDecl(decl),
+    contractSite: unitContractSiteTypeNode(checker, decl, factory.contractName),
+    sourceFile,
+  };
 };
 
-const supplyTypeRefForFactory = (
-  checker: ts.TypeChecker,
+const contractFallbackTypeRef = (
   factory: DiscoveredFactory,
-  factoryDecl: ts.FunctionLike,
+): EmittedTypeReference => ({
+  typeName: factory.contractName,
+  imports: [
+    {
+      typeName: factory.contractName,
+      relImport: factory.contractTypeRelImport,
+      useDefaultImport: false,
+    },
+  ],
+});
+
+/**
+ * The type a unit supplies to the cradle.
+ *
+ * Factories keep the checker-resolved return type of their signature (so `Promise<T>` and inferred
+ * widening behave exactly as before). A class has no return signature; its supply type is the
+ * declared contract site itself, which is the same thing the `implements` clause asserts.
+ */
+const supplyTypeForUnit = (
+  checker: ts.TypeChecker,
+  unit: ResolvedUnitContext,
+): ts.Type | undefined => {
+  if (unit.decl.unitKind === "class") {
+    return unit.contractSite !== undefined
+      ? checker.getTypeFromTypeNode(unit.contractSite)
+      : undefined;
+  }
+  const signature = checker.getSignatureFromDeclaration(unit.decl.decl);
+  return signature !== undefined
+    ? checker.getReturnTypeOfSignature(signature)
+    : undefined;
+};
+
+const supplyTypeRefForUnit = (
+  checker: ts.TypeChecker,
+  unit: ResolvedUnitContext,
   emitCtx: EmitTypeReferenceContext,
 ): EmittedTypeReference => {
-  const signature = checker.getSignatureFromDeclaration(factoryDecl);
-  if (!signature) {
-    return {
-      typeName: factory.contractName,
-      imports: [
-        {
-          typeName: factory.contractName,
-          relImport: factory.contractTypeRelImport,
-          useDefaultImport: false,
-        },
-      ],
-    };
+  const supplyType = supplyTypeForUnit(checker, unit);
+  if (supplyType === undefined) {
+    return contractFallbackTypeRef(unit.factory);
   }
-  const returnType = checker.getReturnTypeOfSignature(signature);
   return (
-    emitTypeReference(checker, returnType, emitCtx) ?? {
-      typeName: factory.contractName,
-      imports: [
-        {
-          typeName: factory.contractName,
-          relImport: factory.contractTypeRelImport,
-          useDefaultImport: false,
-        },
-      ],
-    }
+    emitTypeReference(checker, supplyType, emitCtx) ??
+    contractFallbackTypeRef(unit.factory)
   );
 };
 
@@ -258,35 +296,28 @@ export const analyzeDemandSupply = (
 
   const cradleMap = new Map<string, DemandSupplyCradleEntry>();
 
-  const factoryByRegistrationKey = new Map<string, ResolvedFactoryContext>();
+  const unitByRegistrationKey = new Map<string, ResolvedUnitContext>();
   for (const factory of factories) {
-    const ctx = resolveFactoryContext(
+    const ctx = resolveUnitContext(
+      checker,
       factory,
       sourceFileByPath,
       projectRoot,
       scanDirs,
     );
     if (ctx !== undefined) {
-      factoryByRegistrationKey.set(factory.registrationKey, ctx);
+      unitByRegistrationKey.set(factory.registrationKey, ctx);
     }
   }
 
   for (const factory of factories) {
-    const absPath = normalizePath(
-      resolveFactorySourceAbsPath(factory.modulePath, projectRoot, scanDirs),
-    );
-    const sourceFile = sourceFileByPath.get(absPath);
-    if (!sourceFile) {
+    const unit = unitByRegistrationKey.get(factory.registrationKey);
+    if (unit === undefined || unit.factory !== factory) {
       continue;
     }
+    const { sourceFile, depsDecl } = unit;
 
-    const analysis = collectFileAnalysisForFactoryDiscovery(sourceFile);
-    const factoryDecl = analysis.factoryDeclByExport.get(factory.exportName);
-    if (!factoryDecl) {
-      continue;
-    }
-
-    const loc = factoryLocation(factory, factoryDecl, sourceFile);
+    const loc = unitLocation(unit);
     const emitCtx: EmitTypeReferenceContext = {
       program,
       projectRoot,
@@ -295,19 +326,18 @@ export const analyzeDemandSupply = (
       contextSourceFile: sourceFile,
     };
 
-    // BACKSTOP (see assertGeneratedReferenceClaimed): the return annotation feeds the cradle's
+    // BACKSTOP (see assertGeneratedReferenceClaimed): the contract site feeds the cradle's
     // supply type, so a generated reference there would be resolved out of prior output.
     assertGeneratedReferenceClaimed(
-      factoryDecl.type,
+      unit.contractSite,
       checker,
       { projectRoot, generatedDir },
-      `factory ${JSON.stringify(factory.exportName)} return type`,
+      `${unit.decl.unitKind} ${JSON.stringify(factory.exportName)} contract site`,
     );
 
-    const signature = checker.getSignatureFromDeclaration(factoryDecl);
-    if (signature !== undefined) {
+    if (supplyTypeForUnit(checker, unit) !== undefined) {
       const supplyRef = stampSourceFactory(
-        supplyTypeRefForFactory(checker, factory, factoryDecl, emitCtx),
+        supplyTypeRefForUnit(checker, unit, emitCtx),
         loc,
       );
 
@@ -319,13 +349,13 @@ export const analyzeDemandSupply = (
       );
     }
 
-    if (factoryDecl.parameters.length === 0) {
+    if (depsDecl === undefined || depsDecl.parameters.length === 0) {
       continue;
     }
 
     const named = validateNamedDepsType(
       checker,
-      factoryDecl,
+      depsDecl,
       projectRoot,
       loc,
     );
@@ -337,10 +367,10 @@ export const analyzeDemandSupply = (
     // file) absorbs the previous cradle's members wholesale. Its individual properties are checked
     // one by one below, after the claim parsers have had their turn at each.
     assertGeneratedReferenceClaimed(
-      factoryDecl.parameters[0]?.type,
+      depsDecl.parameters[0]?.type,
       checker,
       { projectRoot, generatedDir },
-      `factory ${JSON.stringify(factory.exportName)} deps type`,
+      `${unit.decl.unitKind} ${JSON.stringify(factory.exportName)} deps type`,
     );
 
     const propTypeNodes = depsPropertyTypeNodeByName(checker, named.depsType);
@@ -366,7 +396,7 @@ export const analyzeDemandSupply = (
           propTypeNodes.get(propName),
           checker,
           { projectRoot, generatedDir },
-          `factory ${JSON.stringify(factory.exportName)} deps property ${JSON.stringify(propName)}`,
+          `${unit.decl.unitKind} ${JSON.stringify(factory.exportName)} deps property ${JSON.stringify(propName)}`,
         );
       }
 
@@ -375,7 +405,7 @@ export const analyzeDemandSupply = (
           continue;
         }
 
-        const supplier = factoryByRegistrationKey.get(consumedCradleKey);
+        const supplier = unitByRegistrationKey.get(consumedCradleKey);
         if (supplier === undefined) {
           // Hard-abort: one factory with an invalid consumed cradle key blocks the entire gen
           // run (same policy as unresolvable deps and type conflicts in this pass).
@@ -396,25 +426,11 @@ export const analyzeDemandSupply = (
           generatedDir,
           contextSourceFile: supplier.sourceFile,
         };
-        const supplierSignature = checker.getSignatureFromDeclaration(
-          supplier.factoryDecl,
-        );
         const supplierReturnType =
-          supplierSignature !== undefined
-            ? checker.getReturnTypeOfSignature(supplierSignature)
-            : propType;
-        const supplierLoc = factoryLocation(
-          supplier.factory,
-          supplier.factoryDecl,
-          supplier.sourceFile,
-        );
+          supplyTypeForUnit(checker, supplier) ?? propType;
+        const supplierLoc = unitLocation(supplier);
         const resolvedTypeRef = stampSourceFactory(
-          supplyTypeRefForFactory(
-            checker,
-            supplier.factory,
-            supplier.factoryDecl,
-            supplierEmitCtx,
-          ),
+          supplyTypeRefForUnit(checker, supplier, supplierEmitCtx),
           supplierLoc,
         );
 

@@ -5,6 +5,19 @@ export type IocModuleNamespace = Record<string, unknown>;
 /** Lifetime values stored in generated manifests (lowercase; maps to Awilix `Lifetime`). */
 export type IocImplementationLifetime = "singleton" | "scoped" | "transient";
 
+/**
+ * Registration unit kind (schema v3). `factory` — an exported function whose return type
+ * annotation is the contract site; `class` — an exported class whose `implements` clause is.
+ *
+ * Emitted only for `"class"`: absent means `"factory"`, matching how every other conventional
+ * value in this metadata (`default`, `accessKey`, …) is omitted rather than restated.
+ */
+export type IocUnitKind = "class" | "factory";
+
+/** Normalizes the optional manifest `kind` field to its effective value. */
+export const iocUnitKindOf = (kind: IocUnitKind | undefined): IocUnitKind =>
+  kind ?? "factory";
+
 export type IocConfigOverrideField =
   | "name"
   | "lifetime"
@@ -16,7 +29,13 @@ export type IocConfigOverrideField =
  * module factories (inner keys are implementation names from discovery).
  */
 export type ModuleFactoryManifestMetadata = {
-  /** Exported factory identifier, e.g. `buildLocalMediaStorage`. */
+  /**
+   * Registration unit kind (schema v3). Omitted for factories — absent reads as `"factory"`
+   * (see {@link iocUnitKindOf}); present as `"class"` when the export is a class, which the
+   * runtime constructs with the cradle as its single argument (Awilix PROXY injection).
+   */
+  kind?: IocUnitKind;
+  /** Exported factory or class identifier, e.g. `buildLocalMediaStorage` / `S3MediaStorage`. */
   exportName: string;
   /** IoC registration key (from resolver metadata or derived module name). */
   registrationKey: string;
@@ -36,7 +55,7 @@ export type ModuleFactoryManifestMetadata = {
   /** True when this implementation is the resolved default for the contract (config + discovery). */
   default?: boolean;
   /** How the export was matched during discovery. */
-  discoveredBy?: "naming";
+  discoveredBy?: "naming" | "implements";
   /** Which `ioc.config` registration fields were applied for this implementation after merge. */
   configOverridesApplied?: readonly IocConfigOverrideField[];
   /**
@@ -115,7 +134,8 @@ export type IocGroupNodeManifest =
 export type IocGroupKind = "collection" | "object";
 
 /**
- * Generated top-level group root (schema v2). Carries composition metadata plus member leaves.
+ * Generated top-level group root. Carries composition metadata plus member leaves. `baseTypeId`
+ * is package-relative since schema v3 (see `packageRelativeDeclarationPath`).
  */
 export type IocGroupRootManifest = {
   readonly kind: IocGroupKind;

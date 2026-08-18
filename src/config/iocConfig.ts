@@ -110,6 +110,12 @@ export const isIocImplementationOverride = (
   return true;
 };
 
+/** Per-class config for a class name, or undefined when none is declared. */
+export const getClassConfig = (
+  config: IocConfig | undefined,
+  className: string,
+): IocClassConfig | undefined => config?.classes?.[className];
+
 export const getImplOverrideForImplementation = (
   perContract: IocRegistrationsPerContract | undefined,
   implementationName: string,
@@ -125,6 +131,25 @@ export const getImplOverrideForImplementation = (
     return undefined;
   }
   return raw;
+};
+
+/**
+ * Per-class policy in `ioc.config`, keyed by class name. Only needed for the two cases a class
+ * cannot express at its declaration site.
+ */
+export type IocClassConfig = {
+  /**
+   * Selects the contract when the class carries more than one `implements` entry. Must name one of
+   * them (declared name or the name as written); discovery fails otherwise.
+   */
+  contract?: string;
+  /**
+   * Suppresses the migration warning emitted when the file stem differs from the class name.
+   * Awilix's `loadModules` keys such a class on the filename while ioc-manifest keys on the class
+   * name, so the warning exists to surface the key change before runtime. Set `true` once the
+   * difference is known and intended.
+   */
+  allowDivergentFileName?: boolean;
 };
 
 /**
@@ -169,6 +194,12 @@ export type IocConfig = {
    */
   packageName?: string;
   registrations?: Record<string, IocRegistrationsPerContract>;
+  /**
+   * Per-class policy for class registration units, keyed by class name. See {@link IocClassConfig}.
+   * Registration keys, lifetimes, and defaults for classes live in `registrations` exactly as they
+   * do for factories — this covers only what a class declaration cannot express.
+   */
+  classes?: Record<string, IocClassConfig>;
   /**
    * Group registrations by assignability to a named `baseType` (interface or type alias in the program).
    * See {@link IocGroupsConfig}.

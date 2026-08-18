@@ -17,6 +17,15 @@ export const IocDiscoverySkipReason = {
   CONTRACT_ANNOTATION_INLINE_OBJECT: "contract_annotation_inline_object",
   /** v3: return annotation is an inline/anonymous union — name it with a type alias (hard error at generation). */
   CONTRACT_ANNOTATION_ANONYMOUS_UNION: "contract_annotation_anonymous_union",
+  /** v3: exported class lists more than one `implements` contract (hard error at generation). */
+  CLASS_MULTIPLE_IMPLEMENTS: "class_multiple_implements",
+  /** v3: `classes[Class].contract` names a type the class does not implement (hard error at generation). */
+  CLASS_CONFIGURED_CONTRACT_NOT_IMPLEMENTED:
+    "class_configured_contract_not_implemented",
+  /** v3: abstract class carrying `implements` — skipped, warned (likely an unintended base class). */
+  CLASS_ABSTRACT: "class_abstract",
+  /** v3: constructor is not the single destructured object parameter PROXY injection needs (hard error). */
+  CLASS_INVALID_CONSTRUCTOR_SHAPE: "class_invalid_constructor_shape",
 } as const;
 
 export type IocDiscoverySkipReason =
@@ -29,6 +38,12 @@ export const IocDiscoveryStatus = {
 
 export type IocDiscoveryStatus =
   (typeof IocDiscoveryStatus)[keyof typeof IocDiscoveryStatus];
+
+/**
+ * How an export was matched. `naming` = factory-prefix export with a return annotation;
+ * `implements` = exported class whose `implements` clause is the contract site.
+ */
+export type IocDiscoveryStrategy = "naming" | "implements";
 
 export type IocDiscoveryOutcome =
   | {
@@ -43,7 +58,7 @@ export type IocDiscoveryOutcome =
       contractName: string;
       implementationName: string;
       registrationKey: string;
-      discoveredBy: "naming";
+      discoveredBy: IocDiscoveryStrategy;
     }
   | {
       scope: "export";

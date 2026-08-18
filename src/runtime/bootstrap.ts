@@ -12,6 +12,7 @@ import {
 } from "awilix";
 import {
   IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS,
+  iocUnitKindOf,
   type IocContractManifest,
   type IocGroupNodeManifest,
   type IocGroupRootManifest,
@@ -57,7 +58,7 @@ const extractGroupRootsFromContainerManifest = (
       continue;
     }
 
-    /* Schema v2: top-level group roots are `IocGroupRootManifest` wrappers. */
+    /* Since schema v2: top-level group roots are `IocGroupRootManifest` wrappers. */
     out[key] = value as IocGroupRootManifest;
   }
 
@@ -93,14 +94,32 @@ const isFactoryFunction = (
   value: unknown,
 ): value is (...args: unknown[]) => unknown => typeof value === "function";
 
-const invokeResolvedFactory = <TCradle extends object>(
-  factory: unknown,
-  cradle: TCradle,
+type UnitConstructor = new (cradle: unknown) => unknown;
+
+/**
+ * Produces one instance of a registration unit from the cradle.
+ *
+ * This is the ONLY place the unit kind is consulted at runtime: a factory is called, a class is
+ * constructed. Both receive the cradle as their single argument, which is precisely Awilix PROXY
+ * injection — `asClass(Ctor, { injectionMode: PROXY })` does `new Ctor(cradle)` and nothing else.
+ *
+ * Construction goes through the shared instrumented path below (rather than handing the class to
+ * `asClass` and letting Awilix construct it) so that the {@link IocResolutionError} machinery stays
+ * unit-kind agnostic: class units get the same manifest-aware resolution frames, headline, and
+ * chain rendering as factory units. Registering a class through `asClass` directly would leave the
+ * frame stack empty for that node and let a raw `AwilixResolutionError` escape a root resolve.
+ */
+const unitInstantiator = (
+  exportValue: unknown,
   meta: ModuleFactoryManifestMetadata,
-  keyIndex: RegistrationKeyIndex,
-): unknown => {
-  if (!isFactoryFunction(factory)) {
+): ((cradle: unknown) => unknown) => {
+  if (!isFactoryFunction(exportValue)) {
     throw new Error("[ioc] internal error: expected resolver factory function");
+  }
+
+  if (iocUnitKindOf(meta.kind) === "class") {
+    const Ctor = exportValue as unknown as UnitConstructor;
+    return (cradle) => new Ctor(cradle);
   }
 
   /**
@@ -112,9 +131,18 @@ const invokeResolvedFactory = <TCradle extends object>(
    * - relying on `factory.length` is fragile for signatures like `(deps = {}) => ...`,
    *   which report `.length === 0` even though they conceptually accept dependencies
    */
+  return (cradle) => exportValue(cradle);
+};
+
+const invokeResolvedUnit = <TCradle extends object>(
+  instantiate: (cradle: unknown) => unknown,
+  cradle: TCradle,
+  meta: ModuleFactoryManifestMetadata,
+  keyIndex: RegistrationKeyIndex,
+): unknown => {
   pushIocResolutionFrame(frameFromManifestMeta(meta));
   try {
-    return factory(cradle);
+    return instantiate(cradle);
   } catch (cause: unknown) {
     return propagateIocResolutionFailure({
       cause,
@@ -184,8 +212,8 @@ const registerImplementationFactories = <TCradle extends object>(
         );
       }
 
-      const factory = ns[meta.exportName];
-      if (typeof factory !== "function") {
+      const exported = ns[meta.exportName];
+      if (typeof exported !== "function") {
         throw new Error(
           formatMissingFactoryExportMessage({
             modulePath: meta.modulePath,
@@ -196,10 +224,12 @@ const registerImplementationFactories = <TCradle extends object>(
         );
       }
 
+      const instantiate = unitInstantiator(exported, meta);
+
       registerPair<TCradle>(container, {
         [meta.registrationKey]: asFunction(
           (cradle: TCradle) =>
-            invokeResolvedFactory(factory, cradle, meta, keyIndex),
+            invokeResolvedUnit(instantiate, cradle, meta, keyIndex),
           { lifetime: lifetimeToAwilix(meta.lifetime) },
         ),
       });

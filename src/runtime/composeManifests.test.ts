@@ -48,7 +48,10 @@ describe("composeManifests", () => {
         (err: unknown) => {
           assert.ok(err instanceof Error);
           assert.match(err.message, /Manifest schema version mismatch/);
-          assert.match(err.message, /Runtime expects: 2/);
+          assert.match(
+            err.message,
+            new RegExp(`Runtime expects: ${MANIFEST_SCHEMA_VERSION}`),
+          );
           assert.match(err.message, /Got: 1 from manifest at index 1/);
           assert.match(err.message, /Got: 1 from manifest at index 2/);
           assert.doesNotMatch(err.message, /index 0/);

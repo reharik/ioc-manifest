@@ -22,6 +22,20 @@ const main = (): void => {
     `Upload service resolved; using ${storage.label} storage; logger says ${result}`,
   );
 
+  // Class registration unit from @example/lib-storage: constructed with `new` under PROXY
+  // injection, resolved through the same cradle as every factory-built registration.
+  const archiveStorage = container.resolve("archiveStorage");
+  archiveStorage.put("photo.jpg");
+  console.log(`Class unit archiveStorage resolved; label ${archiveStorage.label}`);
+
+  const storages = container.resolve("storages");
+  console.log(
+    `Storages in group: ${storages
+      .map((s) => s.label)
+      .sort((a, b) => a.localeCompare(b))
+      .join(", ")}`,
+  );
+
   const loggers = container.resolve("loggers");
   const loggerIds = loggers
     .map((l) => l.id)

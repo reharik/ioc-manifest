@@ -415,7 +415,7 @@ const asGroupRootManifest = (value: unknown): IocGroupRootManifest => {
     !("members" in value)
   ) {
     throw new Error(
-      "[ioc] internal error: expected schema v2 group root (kind, baseType, baseTypeId, members)",
+      "[ioc] internal error: expected a schema v3 group root (kind, baseType, baseTypeId, members)",
     );
   }
   return value as IocGroupRootManifest;

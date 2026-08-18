@@ -16,23 +16,37 @@ const formatFactoryLocation = (
   return `${path.relative(projectRoot, abs).replace(/\\/g, "/")}:${line}`;
 };
 
-const depsTypeHintBlock = (exportName: string): string => {
+/** "Factory" / "Class", for diagnostics that name the offending unit. */
+const unitLabel = (loc: FactorySourceLocation): string =>
+  loc.unitKind === "class" ? "Class" : "Factory";
+
+const depsTypeHintBlock = (loc: FactorySourceLocation): string => {
+  const { exportName } = loc;
   const base = exportName.startsWith("build")
     ? exportName.slice("build".length)
     : exportName;
+
+  if (loc.unitKind === "class") {
+    const depsName = base.length > 0 ? `${base}Deps` : "ClassDeps";
+    return `  type ${depsName} = { foo: Foo; bar: Bar };
+  export class ${exportName} implements <Contract> {
+    constructor({ foo, bar }: ${depsName}) { ... }
+  }`;
+  }
+
   const depsName = base.length > 0 ? `${base}Deps` : "FactoryDeps";
   return `  type ${depsName} = { foo: Foo; bar: Bar };
   export const ${exportName} = ({ foo, bar }: ${depsName}): <ReturnType> => ({ ... });`;
 };
 
 const namedDepsBody = (
-  exportName: string,
+  loc: FactorySourceLocation,
   reasonLine: string,
 ): string =>
-  `[ioc] Factory ${JSON.stringify(exportName)} at ${reasonLine}
+  `[ioc] ${unitLabel(loc)} ${JSON.stringify(loc.exportName)} at ${reasonLine}
 Use a named local deps type instead:
 
-${depsTypeHintBlock(exportName)}
+${depsTypeHintBlock(loc)}
 
 See ${DOC_REF}.`;
 
@@ -41,7 +55,7 @@ export const formatIocGeneratedCradleDestructureError = (
   loc: FactorySourceLocation,
 ): string =>
   namedDepsBody(
-    loc.exportName,
+    loc,
     `${formatFactoryLocation(projectRoot, loc.modulePath, loc.line)} destructures its first parameter as IocGeneratedCradle.`,
   );
 
@@ -50,7 +64,7 @@ export const formatInlineDepsTypeError = (
   loc: FactorySourceLocation,
 ): string =>
   namedDepsBody(
-    loc.exportName,
+    loc,
     `${formatFactoryLocation(projectRoot, loc.modulePath, loc.line)} uses an inline object type as its first parameter.`,
   );
 
@@ -58,10 +72,10 @@ export const formatUnnamedDepsTypeError = (
   projectRoot: string,
   loc: FactorySourceLocation,
 ): string =>
-  `[ioc] Factory ${JSON.stringify(loc.exportName)} at ${formatFactoryLocation(projectRoot, loc.modulePath, loc.line)} must use a named local deps type (interface or type alias) for its first parameter.
+  `[ioc] ${unitLabel(loc)} ${JSON.stringify(loc.exportName)} at ${formatFactoryLocation(projectRoot, loc.modulePath, loc.line)} must use a named local deps type (interface or type alias) for its first parameter.
 Use a named local deps type instead:
 
-${depsTypeHintBlock(loc.exportName)}
+${depsTypeHintBlock(loc)}
 
 See ${DOC_REF}.`;
 
@@ -106,7 +120,9 @@ export type NamedDepsValidationResult =
   | { ok: false; message: string };
 
 /**
- * Validates the factory first parameter uses a named local deps type (not IocGeneratedCradle or inline literal).
+ * Validates the unit's first deps parameter uses a named local deps type (not IocGeneratedCradle or
+ * an inline literal). `depsDecl` is the factory function or the class constructor — both are
+ * `ts.FunctionLike`, so the rule and its diagnostics are shared.
  */
 export const validateNamedDepsType = (
   checker: ts.TypeChecker,
