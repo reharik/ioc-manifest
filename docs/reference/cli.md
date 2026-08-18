@@ -2,7 +2,7 @@
 
 ```bash
 npx ioc                       # prints help
-npx ioc generate              # discover factories, emit manifest + types (and ioc-composed.ts in app mode)
+npx ioc generate              # discover units, emit manifest + types (and ioc-composed.ts in app mode)
 npx ioc generate -c ./ioc.config.test.ts   # generate with a specific config
 npx ioc inspect               # loads the generated manifest and prints a summary
 npx ioc inspect --discovery   # re-runs discovery without reading the manifest
@@ -12,12 +12,14 @@ npx ioc validate --json       # machine-readable issue list
 
 | Flag                       | Purpose                                                                                 |
 | -------------------------- | --------------------------------------------------------------------------------------- |
-| `--discovery`              | (inspect only) Re-run factory discovery and planning; don't read the generated manifest |
+| `--discovery`              | (inspect only) Re-run discovery and planning; don't read the generated manifest         |
 | `--json`                   | (validate only) Emit issues as JSON                                                     |
 | `--config PATH`, `-c PATH` | Explicit path to `ioc.config.ts`                                                        |
 | `--project PATH`           | Project directory for config resolution (default: cwd)                                  |
 
 Set `IOC_DEBUG=1` for full stack traces on errors.
+
+`inspect --discovery` is the tool for "why isn't this registered?". It lists every scanned file with each export's outcome — discovered (with its contract and registration key) or skipped with a categorized reason, including the class-unit reasons such as `class_inherited_contract_not_declared` and `missing_return_type_annotation`. Unlike plain `inspect`, it re-runs discovery from source rather than reading the generated manifest, and it tolerates units that would abort a real generation so the report can list every offender at once.
 
 ## `ioc validate`
 

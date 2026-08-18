@@ -112,6 +112,129 @@ export const isAbstractClassDeclaration = (
     (m) => m.kind === ts.SyntaxKind.AbstractKeyword,
   );
 
+/** The `extends` heritage entry of a class declaration (a class has at most one). */
+export const classExtendsType = (
+  classDecl: ts.ClassDeclaration,
+): ts.ExpressionWithTypeArguments | undefined => {
+  for (const clause of classDecl.heritageClauses ?? []) {
+    if (clause.token === ts.SyntaxKind.ExtendsKeyword) {
+      return clause.types[0];
+    }
+  }
+  return undefined;
+};
+
+/**
+ * Resolves an `extends` heritage entry to the class declaration it names, following import aliases
+ * with the same checker-as-declaration-locator machinery contract sites use.
+ */
+const resolveBaseClassDeclaration = (
+  checker: ts.TypeChecker,
+  heritage: ts.ExpressionWithTypeArguments,
+): ts.ClassDeclaration | undefined => {
+  const leftmost = leftmostIdentifier(heritage.expression);
+  if (leftmost === undefined) {
+    return undefined;
+  }
+
+  let symbol =
+    checker.getSymbolAtLocation(heritage.expression) ??
+    checker.getSymbolAtLocation(leftmost);
+  if (symbol === undefined) {
+    return undefined;
+  }
+
+  while ((symbol.flags & ts.SymbolFlags.Alias) !== 0) {
+    const aliased = checker.getAliasedSymbol(symbol);
+    if (aliased === symbol) {
+      break;
+    }
+    symbol = aliased;
+  }
+
+  return symbol.declarations?.find(ts.isClassDeclaration);
+};
+
+/** A concrete class's inherited-but-undeclared contract, as reported by discovery diagnostics. */
+export type InheritedContractSite = {
+  /** The base named in this class's own `extends` clause, as written. */
+  immediateBaseName: string;
+  /** Nearest ancestor up the chain that declares `implements` — often the immediate base. */
+  ancestorClassName: string;
+  /** The single contract that ancestor declares. */
+  contractName: string;
+};
+
+/** Cycle guard is by visited set; this only bounds pathological synthetic chains. */
+const MAX_EXTENDS_CHAIN_DEPTH = 32;
+
+/**
+ * Walks a class's `extends` chain to the nearest ancestor carrying an `implements` clause.
+ *
+ * **Diagnostics only — this walk never registers anything.** Registration is triggered by the
+ * `implements` clause a class declares *itself*; inheriting a contract does not inherit
+ * registration, by decision. The trigger stays local and explicit so that whether a class is a
+ * registration unit is readable at the class, without following a heritage chain into other files.
+ * This walk exists purely so that `class Archive extends StorageBase {}`, where `StorageBase`
+ * declares `implements MediaStorage`, reports the near-miss instead of vanishing silently.
+ *
+ * Returns undefined when the chain has no `implements`-bearing ancestor, when the chain cannot be
+ * resolved syntactically, or when the ancestor declares more than one contract — a base declaring
+ * two contracts is outside the one-contract-per-unit model, and there is no single contract to tell
+ * the user to restate.
+ */
+export const nearestImplementsBearingAncestor = (
+  checker: ts.TypeChecker,
+  classDecl: ts.ClassDeclaration,
+): InheritedContractSite | undefined => {
+  const firstBase = classExtendsType(classDecl);
+  if (firstBase === undefined) {
+    return undefined;
+  }
+  const immediateBaseName = firstBase.expression.getText();
+
+  const visited = new Set<ts.ClassDeclaration>();
+  let heritage: ts.ExpressionWithTypeArguments | undefined = firstBase;
+
+  for (
+    let depth = 0;
+    heritage !== undefined && depth < MAX_EXTENDS_CHAIN_DEPTH;
+    depth += 1
+  ) {
+    const baseDecl = resolveBaseClassDeclaration(checker, heritage);
+    if (baseDecl === undefined || visited.has(baseDecl)) {
+      return undefined;
+    }
+    visited.add(baseDecl);
+
+    const implementsTypes = classImplementsTypes(baseDecl);
+    if (implementsTypes.length === 1) {
+      const resolution = resolveAnnotationContract(checker, implementsTypes[0]!);
+      const contractName =
+        resolution.kind === "resolved"
+          ? resolution.contractName
+          : resolution.kind === "unresolved"
+            ? resolution.writtenName
+            : undefined;
+      if (contractName === undefined) {
+        return undefined;
+      }
+      return {
+        immediateBaseName,
+        ancestorClassName: baseDecl.name?.text ?? immediateBaseName,
+        contractName,
+      };
+    }
+    if (implementsTypes.length > 1) {
+      return undefined;
+    }
+
+    heritage = classExtendsType(baseDecl);
+  }
+
+  return undefined;
+};
+
 /**
  * Syntactically unwraps a factory return annotation to the contract reference: strips
  * parentheses and `Promise<T>` wrappers (by written name, no checker). The result is what the

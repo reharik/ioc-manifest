@@ -17,6 +17,7 @@ import { buildGroupPlan } from "../../groups/resolveGroupPlan.js";
 import { resolveLifetimeMarkersForFactories } from "../resolveLifetimeMarkers.js";
 import { analyzeDemandSupply } from "../analyzeDemandSupply/index.js";
 import { warnDivergentClassFileNames } from "../warnDivergentClassFileNames.js";
+import { warnUnusableFactoryExports } from "../warnUnusableFactoryExports.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixtureDir = path.join(__dirname, "..", "test-fixtures", "class-units");
@@ -390,7 +391,7 @@ describe("class registration units (v3)", () => {
   });
 
   describe("When an abstract class carries an implements clause", () => {
-    it("should skip it and warn instead of registering it", () => {
+    it("should skip it, recording the contract it declares", () => {
       const { acceptedFactories, discoveryFiles } = discover([
         fixture("contracts.ts"),
         fixture("abstract-base.ts"),
@@ -406,6 +407,203 @@ describe("class registration units (v3)", () => {
         "skipReason" in outcome ? outcome.skipReason : undefined,
         "class_abstract",
       );
+      assert.strictEqual(
+        "contractName" in outcome ? outcome.contractName : undefined,
+        "MediaStorage",
+      );
+    });
+
+    it("should warn when no concrete class registers that contract", () => {
+      const { discoveryFiles } = discover([
+        fixture("contracts.ts"),
+        fixture("abstract-base.ts"),
+      ]);
+
+      const warnings = captureWarnings(() =>
+        warnUnusableFactoryExports(discoveryFiles),
+      );
+
+      assert.strictEqual(warnings.length, 1);
+      assert.match(warnings[0]!, /class "MediaStorageBase"/);
+      assert.match(
+        warnings[0]!,
+        /no concrete class in scan range registers MediaStorage/,
+      );
+    });
+
+    it("should stay silent when a concrete class restates the contract", () => {
+      // `abstract class Base implements Contract` with a registering subclass is the documented
+      // base-class pattern, not a problem — warning on it trains users to ignore the warning.
+      const { acceptedFactories, discoveryFiles } = discover([
+        fixture("contracts.ts"),
+        fixture("restated-contract.ts"),
+      ]);
+
+      assert.deepStrictEqual(
+        acceptedFactories.map((f) => f.registrationKey),
+        ["restatedStorage"],
+      );
+
+      const warnings = captureWarnings(() =>
+        warnUnusableFactoryExports(discoveryFiles),
+      );
+      assert.deepStrictEqual(warnings, []);
+    });
+
+    it("should stay silent for a base whose contract a concrete class registers from another file", () => {
+      const { discoveryFiles } = discover([
+        fixture("contracts.ts"),
+        fixture("abstract-base.ts"),
+        fixture("S3MediaStorage.ts"),
+      ]);
+
+      const warnings = captureWarnings(() =>
+        warnUnusableFactoryExports(discoveryFiles),
+      );
+      assert.deepStrictEqual(warnings, []);
+    });
+  });
+
+  describe("When a concrete class inherits a contract but declares no implements", () => {
+    it("should report a categorized skip naming the class, its base, and the contract", () => {
+      const { acceptedFactories, discoveryFiles } = discover([
+        fixture("contracts.ts"),
+        fixture("inherited-contract.ts"),
+      ]);
+
+      assert.deepStrictEqual(acceptedFactories, []);
+
+      const outcome = discoveryFiles
+        .flatMap((f) => f.outcomes)
+        .find(
+          (o) => o.scope === "export" && o.exportName === "InheritedOnlyStorage",
+        );
+      assert.ok(outcome);
+      assert.strictEqual(
+        "skipReason" in outcome ? outcome.skipReason : undefined,
+        "class_inherited_contract_not_declared",
+      );
+      assert.strictEqual(
+        "contractName" in outcome ? outcome.contractName : undefined,
+        "MediaStorage",
+      );
+      assert.strictEqual(
+        "baseClassName" in outcome ? outcome.baseClassName : undefined,
+        "InheritingStorageBase",
+      );
+    });
+
+    it("should walk the whole extends chain to the nearest implements-bearing ancestor", () => {
+      const { discoveryFiles } = discover([
+        fixture("contracts.ts"),
+        fixture("inherited-contract.ts"),
+      ]);
+
+      const outcome = discoveryFiles
+        .flatMap((f) => f.outcomes)
+        .find(
+          (o) => o.scope === "export" && o.exportName === "DeepInheritedStorage",
+        );
+      assert.ok(outcome);
+      assert.strictEqual(
+        "skipReason" in outcome ? outcome.skipReason : undefined,
+        "class_inherited_contract_not_declared",
+      );
+      assert.strictEqual(
+        "baseClassName" in outcome ? outcome.baseClassName : undefined,
+        "InheritingStorageBase",
+      );
+    });
+
+    it("should warn with the fix and never register anything from the walk", () => {
+      const { acceptedFactories, discoveryFiles } = discover([
+        fixture("contracts.ts"),
+        fixture("inherited-contract.ts"),
+      ]);
+
+      assert.deepStrictEqual(acceptedFactories, []);
+
+      const warnings = captureWarnings(() =>
+        warnUnusableFactoryExports(discoveryFiles),
+      );
+
+      const nearMiss = warnings.find((w) =>
+        w.includes("inherit a contract but declare no"),
+      );
+      assert.ok(nearMiss);
+      assert.match(nearMiss, /class "InheritedOnlyStorage" extends InheritingStorageBase/);
+      assert.match(nearMiss, /Add `implements MediaStorage` to InheritedOnlyStorage/);
+      // The design intent, so the diagnostic is not read as a half-built feature.
+      assert.match(nearMiss, /never one it inherits/);
+    });
+
+    it("should stay silent when the concrete class restates implements", () => {
+      const { discoveryFiles } = discover([
+        fixture("contracts.ts"),
+        fixture("restated-contract.ts"),
+      ]);
+
+      const nearMisses = discoveryFiles
+        .flatMap((f) => f.outcomes)
+        .filter(
+          (o) =>
+            o.scope === "export" &&
+            "skipReason" in o &&
+            o.skipReason === "class_inherited_contract_not_declared",
+        );
+      assert.deepStrictEqual(nearMisses, []);
+    });
+
+    it("should stay silent for an ordinary class whose base declares no contract", () => {
+      const { discoveryFiles } = discover([
+        fixture("contracts.ts"),
+        fixture("no-implements.ts"),
+      ]);
+
+      const exportOutcomes = discoveryFiles
+        .flatMap((f) => f.outcomes)
+        .filter((o) => o.scope === "export");
+      assert.deepStrictEqual(exportOutcomes, []);
+    });
+  });
+
+  describe("When an acronym-leading name is camelCased into a key", () => {
+    it("should give a factory export the same key the equivalent class would get", () => {
+      const { acceptedFactories } = discover([
+        fixture("contracts.ts"),
+        fixture("acronym-factories.ts"),
+      ]);
+
+      const keys = Object.fromEntries(
+        acceptedFactories.map((f) => [f.exportName, f.registrationKey]),
+      );
+      // v2 produced `aPIClient` / `hTTPSProxy` here — one lowercased character after the strip.
+      assert.deepStrictEqual(keys, {
+        buildAPIClient: "apiClient",
+        buildHTTPSProxy: "httpsProxy",
+        buildS3MediaStorage: "s3MediaStorage",
+      });
+      for (const f of acceptedFactories) {
+        assert.strictEqual(f.implementationName, f.registrationKey);
+      }
+    });
+
+    it("should give a class the same keys", () => {
+      const { acceptedFactories } = discover([
+        fixture("contracts.ts"),
+        fixture("APIClient.ts"),
+        fixture("HTTPSProxy.ts"),
+        fixture("S3MediaStorage.ts"),
+      ]);
+
+      const keys = Object.fromEntries(
+        acceptedFactories.map((f) => [f.exportName, f.registrationKey]),
+      );
+      assert.deepStrictEqual(keys, {
+        APIClient: "apiClient",
+        HTTPSProxy: "httpsProxy",
+        S3MediaStorage: "s3MediaStorage",
+      });
     });
   });
 

@@ -27,6 +27,7 @@ export default defineConfig({
         items: [
           { text: "CLI", link: "/reference/cli" },
           { text: "Error handling", link: "/reference/errors" },
+          { text: "Consuming generated types", link: "/reference/generated-types" },
           { text: "Pitfalls & troubleshooting", link: "/reference/pitfalls" },
         ],
       },
@@ -39,12 +40,17 @@ export default defineConfig({
           { text: "Introduction", link: "/guide/introduction" },
           { text: "Quick start", link: "/guide/quick-start" },
           { text: "What gets generated", link: "/guide/what-gets-generated" },
+          {
+            text: "Migrating from loadModules",
+            link: "/guide/migrating-from-loadmodules",
+          },
         ],
       },
       {
         text: "Core concepts",
         items: [
           { text: "How conventions work", link: "/concepts/conventions" },
+          { text: "Class registration", link: "/concepts/classes" },
           { text: "Lifetimes", link: "/concepts/lifetimes" },
           { text: "Groups", link: "/concepts/groups" },
         ],
@@ -73,6 +79,7 @@ export default defineConfig({
         items: [
           { text: "CLI", link: "/reference/cli" },
           { text: "Error handling", link: "/reference/errors" },
+          { text: "Consuming generated types", link: "/reference/generated-types" },
           { text: "Pitfalls & troubleshooting", link: "/reference/pitfalls" },
         ],
       },

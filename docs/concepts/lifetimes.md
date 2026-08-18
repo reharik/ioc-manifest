@@ -30,9 +30,9 @@ lifetimeMarkers: {
 
 Keys are interface or type-alias names visible in the package's TypeScript program at codegen. Values are `singleton`, `scoped`, or `transient`. An empty object `{}` skips marker analysis.
 
-### Attaching markers to factories
+### Attaching markers to units
 
-Three attachment points, in order of locality. The pattern that fits your code best is usually the right one.
+Three attachment points, in order of locality. The pattern that fits your code best is usually the right one. Markers resolve from a unit's contract site, so a class's `implements` contract carries them exactly as a factory's return annotation does.
 
 **Directly on the implementation type:**
 
@@ -63,16 +63,16 @@ Transitive inheritance does the rest. You attach the marker once on the right le
 
 ### Precedence
 
-For any factory, the lifetime resolves in this order (highest first):
+For any unit, the lifetime resolves in this order (highest first):
 
 1. `registrations[Contract][impl].lifetime` — explicit per-impl override
-2. Lifetime marker on the return type
+2. Lifetime marker on the contract (return annotation or `implements` clause)
 3. `discovery.scanDirs[].scope` — folder-scoped default
 4. Default: `singleton`
 
 ### Multiple markers is a hard error
 
-If a return type matches two markers, codegen errors and names both. Silent first-wins would create the worst kind of bug — a service's lifetime quietly differs from what the developer intended. Resolve by removing one marker from the inheritance chain or setting the lifetime explicitly via `registrations`.
+If a contract matches two markers, codegen errors and names both. Silent first-wins would create the worst kind of bug — a service's lifetime quietly differs from what the developer intended. Resolve by removing one marker from the inheritance chain or setting the lifetime explicitly via `registrations`.
 
 ### Cross-package behavior
 

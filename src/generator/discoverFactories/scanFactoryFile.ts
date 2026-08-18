@@ -5,6 +5,7 @@ import {
   getImplOverrideForImplementation,
 } from "../../config/iocConfig.js";
 import {
+  awilixCamelCase,
   resolveRegistrationKeyForClass,
   resolveRegistrationKeyForFactory,
 } from "../../core/resolver.js";
@@ -13,6 +14,7 @@ import {
   contractSiteImportModuleSpecifier,
   findClassConstructor,
   isAbstractClassDeclaration,
+  nearestImplementsBearingAncestor,
   resolveAnnotationContract,
   unwrapReturnTypeAnnotation,
   type AnnotationContractResolution,
@@ -44,6 +46,12 @@ export type FileAnalysis = {
   unitDeclByExport: Map<string, DiscoveredUnitDecl>;
 };
 
+/**
+ * A factory's implementation name: the export name past the prefix, camelCased with the one shared
+ * rule (see {@link awilixCamelCase}). Keeping this identical to the derived registration key is
+ * what lets `registrations[Contract][implementationName]` be looked up by the same string a user
+ * sees in the cradle.
+ */
 const implementationNameFromFactoryExport = (
   exportName: string,
   factoryPrefix: string,
@@ -57,7 +65,7 @@ const implementationNameFromFactoryExport = (
     return undefined;
   }
 
-  return rest.charAt(0).toLowerCase() + rest.slice(1);
+  return awilixCamelCase(rest);
 };
 
 const relProjectPath = (projectRoot: string, absPath: string): string =>
@@ -335,10 +343,14 @@ export const scanFactoryFile = (
   const outcomes: IocDiscoveryOutcome[] = [];
 
   const sourceText = sourceFile.getText();
-  // Cheap file-level prefilter: a file with neither the factory prefix nor an `implements` clause
-  // can hold no registration unit of either kind.
+  // Cheap file-level prefilter: a file with none of the factory prefix, an `implements` clause, or
+  // an `extends` clause can hold no registration unit of either kind — and no near-miss either.
+  // `extends` earns its place here only for the inherited-contract diagnostic below; it widens the
+  // set of files that get an AST walk, which is build-time cost paid for a silent-drop warning.
   const shouldScan =
-    sourceText.includes(factoryPrefix) || sourceText.includes("implements");
+    sourceText.includes(factoryPrefix) ||
+    sourceText.includes("implements") ||
+    sourceText.includes("extends");
   if (!shouldScan) {
     outcomes.push({
       scope: "file",
@@ -373,12 +385,44 @@ export const scanFactoryFile = (
       return matchesFactoryNaming(exportName, factoryPrefix);
     });
 
-  if (candidateExports.length === 0) {
+  /**
+   * Near-misses are collected separately from candidates, because they are not candidates: nothing
+   * here can ever register. A concrete class that inherits a contract but restates no `implements`
+   * is reported so the silent drop is visible — see {@link nearestImplementsBearingAncestor} for
+   * why inheriting a contract deliberately does not inherit registration.
+   */
+  for (const [exportName, unit] of [...analysis.unitDeclByExport].sort(
+    ([a], [b]) => a.localeCompare(b),
+  )) {
+    if (
+      unit.unitKind !== "class" ||
+      unit.implementsTypes.length > 0 ||
+      isAbstractClassDeclaration(unit.decl)
+    ) {
+      continue;
+    }
+    const inherited = nearestImplementsBearingAncestor(checker, unit.decl);
+    if (inherited === undefined) {
+      continue;
+    }
     outcomes.push({
-      scope: "file",
+      scope: "export",
+      exportName,
       status: IocDiscoveryStatus.SKIPPED,
-      skipReason: IocDiscoverySkipReason.NO_MATCHING_EXPORT,
+      skipReason: IocDiscoverySkipReason.CLASS_INHERITED_CONTRACT_NOT_DECLARED,
+      contractName: inherited.contractName,
+      baseClassName: inherited.ancestorClassName,
     });
+  }
+
+  if (candidateExports.length === 0) {
+    if (outcomes.length === 0) {
+      outcomes.push({
+        scope: "file",
+        status: IocDiscoveryStatus.SKIPPED,
+        skipReason: IocDiscoverySkipReason.NO_MATCHING_EXPORT,
+      });
+    }
     return { modulePath, outcomes, discovered };
   }
 
@@ -576,11 +620,20 @@ const acceptClassUnit = (args: {
 }): AcceptResult => {
   const { exportName, unit, checker, context, fileLabel, skip } = args;
 
-  // An abstract class carrying `implements` is almost always a shared base, not a registration
-  // unit — skip it, but say so: silently dropping it is how a user loses a registration they
-  // believed they had declared.
+  // An abstract class carrying `implements` is the normal shared-base pattern, not a registration
+  // unit. Skip it, recording the contract it declares: whether that skip is worth warning about
+  // depends on whether anything concrete registers the same contract, which only the aggregated
+  // reporting layer can see.
   if (isAbstractClassDeclaration(unit.decl)) {
-    skip(exportName, IocDiscoverySkipReason.CLASS_ABSTRACT);
+    const declared =
+      unit.implementsTypes.length === 1
+        ? resolveAnnotationContract(checker, unit.implementsTypes[0]!)
+        : undefined;
+    skip(
+      exportName,
+      IocDiscoverySkipReason.CLASS_ABSTRACT,
+      declared?.kind === "resolved" ? declared.contractName : undefined,
+    );
     return undefined;
   }
 

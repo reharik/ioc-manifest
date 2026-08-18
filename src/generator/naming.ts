@@ -1,10 +1,17 @@
+import { awilixCamelCase } from "../core/resolver.js";
+
 /**
- * `MediaStorage` → `mediaStorage`
+ * The contract's access key — the cradle property its elected default is reachable under.
+ * `MediaStorage` → `mediaStorage`; `APIClient` → `apiClient`.
+ *
+ * Same {@link awilixCamelCase} rule the two unit kinds use for their registration keys, and for
+ * the same reason: convention default election matches an implementation key against this key, so
+ * a contract and an implementation that camelCase differently would never convention-match and
+ * would emit two cradle spellings of one acronym.
  */
-export const contractNameToDefaultRegistrationKey = (contractName: string): string =>
-  contractName.length === 0
-    ? contractName
-    : contractName.charAt(0).toLowerCase() + contractName.slice(1);
+export const contractNameToDefaultRegistrationKey = (
+  contractName: string,
+): string => awilixCamelCase(contractName);
 
 /**
  * Group access keys are camelCase; the exported per-group type alias is the same key

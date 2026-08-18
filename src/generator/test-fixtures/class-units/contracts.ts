@@ -18,6 +18,10 @@ export type ApiClient = {
   call: () => string;
 };
 
+export type HttpsProxy = {
+  forward: () => string;
+};
+
 /** Collection-group base. */
 export type Channel = {
   readonly channelId: string;

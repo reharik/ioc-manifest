@@ -1,31 +1,13 @@
 /**
- * Derives a registration key from an export name when `key` is omitted (legacy / convenience).
- * `buildAlbumService` → `albumService`
- */
-export const keyFromExportName = (
-  exportName: string,
-  factoryPrefix = "build",
-): string => {
-  if (
-    factoryPrefix.length > 0 &&
-    exportName.startsWith(factoryPrefix) &&
-    exportName.length > factoryPrefix.length
-  ) {
-    const rest = exportName.slice(factoryPrefix.length);
-    return rest.charAt(0).toLowerCase() + rest.slice(1);
-  }
-
-  return exportName.charAt(0).toLowerCase() + exportName.slice(1);
-};
-
-/**
  * camelCase conversion matching Awilix's own `loadModules({ formatName: "camelCase" })`.
  *
- * Ported (not imported — Awilix does not export it) from `awilix/lib/camel-case`, so a class
- * migrating off `loadModules` keeps its container key. Words split on non-alphanumeric separators
- * and on case transitions (`fooBar` → `foo|Bar`, `HTMLParser` → `HTML|Parser`); the first word is
- * lowercased, later words are capitalized with the rest lowercased, and a later word starting with
- * a digit is prefixed with `_`.
+ * Ported (not imported — Awilix does not export it) from `awilix/lib/camel-case`. This is the
+ * single camelCase rule in the library: both unit kinds derive their key with it, and so does the
+ * contract access key. A codebase migrating off `loadModules` therefore keeps its container keys.
+ *
+ * Words split on non-alphanumeric separators and on case transitions (`fooBar` → `foo|Bar`,
+ * `HTMLParser` → `HTML|Parser`); the first word is lowercased, later words are capitalized with the
+ * rest lowercased, and a later word starting with a digit is prefixed with `_`.
  *
  * `S3MediaStorage` → `s3MediaStorage`; `APIClient` → `apiClient`; `HTTPSProxy` → `httpsProxy`.
  */
@@ -101,6 +83,29 @@ export const awilixCamelCase = (input: string): string => {
  */
 export const keyFromClassName = (className: string): string =>
   awilixCamelCase(className);
+
+/**
+ * Registration key for a factory registration unit: camelCase of the export name with the factory
+ * prefix stripped. `buildAlbumService` → `albumService`; `buildAPIClient` → `apiClient`.
+ *
+ * v3 unified this on {@link awilixCamelCase}. Through v2 the rule lowercased exactly one character
+ * after the strip, which produced `aPIClient` for `buildAPIClient` while the class rule produced
+ * `apiClient` for `APIClient` — the same acronym reaching the cradle under two spellings depending
+ * on which unit kind supplied it. One rule now covers both kinds.
+ */
+export const keyFromExportName = (
+  exportName: string,
+  factoryPrefix = "build",
+): string => {
+  const rest =
+    factoryPrefix.length > 0 &&
+    exportName.startsWith(factoryPrefix) &&
+    exportName.length > factoryPrefix.length
+      ? exportName.slice(factoryPrefix.length)
+      : exportName;
+
+  return awilixCamelCase(rest);
+};
 
 export type RegistrationKeyResolutionContext = {
   /** e.g. path relative to project root */

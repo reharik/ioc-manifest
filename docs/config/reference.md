@@ -31,7 +31,7 @@ export default defineIocConfig({
 | `scanDirs`      | **Required.** Directories to scan. String, string array, or array of `{ path, scope? }` objects. Paths must resolve within the package root. | —                                    |
 | `includes`      | Glob patterns for files to include.                                                                                                          | `["**/*.{ts,tsx,js,mjs,cjs}"]`       |
 | `excludes`      | Glob patterns for files to exclude.                                                                                                          | `["**/*.d.ts", "**/*.test.ts", ...]` |
-| `factoryPrefix` | Export name prefix for factory discovery.                                                                                                    | `"build"`                            |
+| `factoryPrefix` | Export name prefix for factory discovery. (Class units trigger on `implements`, not on a prefix.)                                            | `"build"`                            |
 | `generatedDir`  | Output directory for generated files.                                                                                                        | `"generated"`                        |
 
 ### `registrations`
@@ -51,7 +51,7 @@ registrations: {
 },
 ```
 
-Under each contract name, keys are implementation names from discovery (`buildFoo` → `foo`). The reserved `$contract` key holds contract-level options.
+Under each contract name, keys are implementation names from discovery — the camelCased export name past the prefix for a factory (`buildFoo` → `foo`), or the camelCased class name for a class unit (`S3MediaStorage` → `s3MediaStorage`). The reserved `$contract` key holds contract-level options.
 
 | Per-implementation field | Effect                                                                                                                             |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
@@ -65,6 +65,22 @@ Under each contract name, keys are implementation names from discovery (`buildFo
 | -------------------- | ----------------------------------------------------------------------------------------------- |
 | `accessKey`          | Overrides the cradle property name for the default slot (e.g. `"database"` instead of `"knex"`) |
 | `allowDivergentName` | `true` suppresses the codegen warning for a single-implementation contract whose implementation key differs from the contract access key. See [Divergent-name warning](/concepts/conventions#divergent-name-warning). |
+
+### `classes`
+
+Per-class options for [class registration units](/concepts/classes), keyed by class name. Registration keys, lifetimes, and defaults for classes live in `registrations` exactly as they do for factories — this surface holds only the two things specific to the class trigger.
+
+```ts
+classes: {
+  DualUnit: { contract: "Auditor" },
+  S3MediaStorage: { allowDivergentFileName: true },
+},
+```
+
+| Field                    | Effect                                                                                                                                                      |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `contract`               | Selects which `implements` entry is the contract, for a class that lists more than one. Without it, several entries is a hard error naming the class and each contract. |
+| `allowDivergentFileName` | `true` suppresses the migration warning for a class whose file stem would have produced a different key under Awilix `loadModules`. See [Migrating from `loadModules`](/guide/migrating-from-loadmodules). |
 
 ### `lifetimeMarkers`
 

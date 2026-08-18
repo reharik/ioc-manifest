@@ -8,7 +8,9 @@ And once you have more than one package in a monorepo, the registration story ge
 
 ## What this does
 
-`ioc-manifest` scans your TypeScript source at **build time**, discovers factory functions by naming convention, infers their contracts and dependencies from the type system, and generates manifest and types files that hand directly to Awilix.
+`ioc-manifest` scans your TypeScript source at **build time**, discovers registration units by convention — factory functions by naming, classes by their `implements` clause — reads their contracts from what you declared and their dependencies from their deps types, and generates manifest and types files that hand directly to Awilix.
+
+If you already use Awilix's `loadModules` to pick up classes from a directory, this is the same habit with the scan moved to build time; see [Migrating from `loadModules`](/guide/migrating-from-loadmodules).
 
 For a single-package project, that's two generated files:
 
@@ -19,7 +21,7 @@ For a monorepo where one app composes manifests from multiple packages, a third 
 
 3. **`ioc-composed.ts`** — the composition glue: imports each package's manifest, intersects their cradle types into a single `AppCradle`, and emits compile-time assertions that every package's externals are satisfied.
 
-Every factory is registered with the correct key and lifetime, the container is fully typed end-to-end, and you never write a registration line again.
+Every unit is registered with the correct key and lifetime, the container is fully typed end-to-end, and you never write a registration line again.
 
 The approach is loosely inspired by [StructureMap](https://structuremap.github.io/)'s registry scanning conventions from the .NET world — convention over configuration, with a single config file as the policy surface when you need to override defaults.
 

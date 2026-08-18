@@ -1,10 +1,10 @@
 # Testing
 
-The named-deps-type pattern at the factory site enables three levels of testing, each with the ergonomics that fit:
+The named-deps-type pattern at the unit's declaration enables three levels of testing, each with the ergonomics that fit:
 
-## Factory-level (no container)
+## Unit-level (no container)
 
-Most unit tests don't need a container. Import the factory, import its deps type, hand-build a stub, call the factory:
+Most unit tests don't need a container. Import the unit, import its deps type, hand-build a stub, and call the factory — or `new` the class, which takes the same deps object:
 
 ```ts
 import { buildValidateOperationService } from "../src/...";
@@ -22,9 +22,12 @@ const deps: ValidateOperationServiceDeps = {
   },
 };
 const svc = buildValidateOperationService(deps);
+
+// A class unit is the same call, spelled with `new`:
+const svc2 = new ValidateOperationService(deps);
 ```
 
-No container, no manifest, no awilix. TypeScript enforces what must be provided.
+No container, no manifest, no awilix. TypeScript enforces what must be provided. This is one reason class units take a single destructured object rather than positional constructor parameters: the deps type is importable, so a test builds one literal instead of remembering an argument order.
 
 ## Container-level with mocked externals
 

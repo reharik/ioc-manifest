@@ -139,6 +139,10 @@ export const formatDiscoveryReport = (
           `    ${c.dim}reason:${c.reset} ${c.red}${row.skipReason}${c.reset}`,
         );
       }
+
+      if (row.baseClassName) {
+        lines.push(`    ${c.dim}extends:${c.reset} ${row.baseClassName}`);
+      }
     }
 
     lines.push("");

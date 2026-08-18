@@ -1,17 +1,90 @@
 # How conventions work
 
-## Factory discovery
+## The two registration units
 
-The generator looks for exported functions whose name starts with `build` (configurable via `factoryPrefix`). For `buildHttpClient`:
+A **registration unit** is one thing the container knows how to build. There are two kinds, and each is recognised by a trigger you write deliberately:
 
-| Concept                 | Derived value                                         |
-| ----------------------- | ----------------------------------------------------- |
-| **Contract**            | The return type's symbol name, e.g. `HttpClient`      |
-| **Implementation name** | Strip prefix, lowercase first char → `httpClient`     |
-| **Registration key**    | Same as implementation name by default → `httpClient` |
-| **Default access key**  | Camel-cased contract name → `httpClient`              |
+| Unit kind   | Trigger                                             | Contract site           |
+| ----------- | --------------------------------------------------- | ----------------------- |
+| **Factory** | Exported name starts with `build` (`factoryPrefix`) | Return type annotation  |
+| **Class**   | Exported class carries an `implements` clause       | The `implements` clause |
 
-The contract type must be a named type (interface or type alias) that is imported or declared in the factory's file. Anonymous object literals, primitives, and union types are skipped.
+```ts
+// Factory unit — `build` prefix, contract in the return annotation.
+export const buildHttpClient = ({ logger }: HttpClientDeps): HttpClient => ({ ... });
+
+// Class unit — `implements` clause, contract in that clause.
+export class HttpClient implements HttpTransport { ... }
+```
+
+Neither trigger is inferred from shape. A function that happens to return an `HttpClient` but isn't named `build*` is ordinary code; a class with no `implements` is ordinary code. That is the point — whether something is registered is answerable by looking at the declaration, not by reasoning about the type system.
+
+## Contract identity
+
+**A unit's contract is what you wrote at its contract site, read syntactically.** The generator resolves the name at that site to the declaration it names, and the contract is that declaration. No type normalization takes part: the checker is used only to find where a name is declared.
+
+Two consequences worth internalising:
+
+**Import aliases are followed; type aliases are not.** `import { MediaStorage as Store }` annotated as `Store` is the contract `MediaStorage` — an aliased import names the same declaration. But `type QueueTask = WorkerTaskBase` used as an annotation is the contract `QueueTask`, distinct from `WorkerTaskBase`, because you wrote `QueueTask` and that is a declaration of its own.
+
+**Identity is the pair (declaration file, declared name).** Two different declarations that happen to share a name are two contracts, and generation fails naming both declaration sites rather than silently merging them under one manifest key.
+
+### Explicit annotations are required
+
+Every factory that matches the prefix must declare a return type annotation naming its contract. A prefix-matched export without one fails generation, with one aggregated error listing every offender — that list is your worklist:
+
+```ts
+export const buildUserService = ({ userRepository }: UserServiceDeps) => ({ ... });
+//                                                                    ^ no annotation → error
+```
+
+`Promise<T>` and parentheses are unwrapped syntactically, so an async factory annotates the contract it eventually produces:
+
+```ts
+export const buildUserService = async (deps: Deps): Promise<UserService> => { ... };
+```
+
+Inline object literals (`(): { get: () => User } =>`) and anonymous unions (`(): EmailTask | SmsTask =>`) are also errors: a contract must be a named type, so that the cradle has something to import. Name it and the error goes away.
+
+### Plain type aliases are contracts
+
+Any named type works as a contract — `interface`, `type` alias, or an alias naming a union:
+
+```ts
+export type QueueTask = WorkerTaskBase;                 // a contract
+export type Task = EmailTask | SmsTask;                 // also a contract
+export interface UserService { getUser(id: string): User }
+```
+
+::: tip Upgrading from v2
+Through v2, contract identity came from the checker, and a plain alias collapsed into whatever it aliased. Declaring a distinct contract over a base type meant the empty-interface dance — `export interface QueueTask extends WorkerTaskBase {}` — and converting that to a plain alias (as several lint autofixes do) silently broke discovery.
+
+Both are gone in v3: the alias *is* the contract. **Existing `interface Foo extends Base {}` declarations keep working exactly as before** — an empty extending interface is still a perfectly good named type. There is nothing you must change; you can now simplify if you want to.
+:::
+
+## Registration keys
+
+One camelCase rule covers both unit kinds and the contract access key: Awilix's own `formatName: "camelCase"` algorithm, ported so a codebase migrating off `loadModules` keeps its container keys.
+
+| Written                        | Key              |
+| ------------------------------ | ---------------- |
+| `buildHttpClient` / `HttpClient` | `httpClient`   |
+| `buildS3MediaStorage` / `S3MediaStorage` | `s3MediaStorage` |
+| `buildAPIClient` / `APIClient` | `apiClient`      |
+| `buildHTTPSProxy` / `HTTPSProxy` | `httpsProxy`   |
+
+Words split on separators and on case transitions, so an acronym run splits as a word: `API|Client`, not `A|PIClient`. The same name gives the same key whichever unit kind supplies it.
+
+For `buildHttpClient`:
+
+| Concept                 | Derived value                                          |
+| ----------------------- | ------------------------------------------------------ |
+| **Contract**            | The name at the contract site, e.g. `HttpClient`        |
+| **Implementation name** | Strip prefix, camelCase → `httpClient`                  |
+| **Registration key**    | Same as implementation name by default → `httpClient`   |
+| **Default access key**  | camelCased contract name → `httpClient`                 |
+
+Override any key with `registrations[Contract][implementation].name`.
 
 ## Default implementation selection
 
@@ -22,7 +95,7 @@ When a contract has only one implementation, it is the default. When there are m
 3. **Convention** — the implementation whose registration key equals the camel-cased contract name (e.g. `mediaStorage` for `MediaStorage`)
 4. **Single** — if only one implementation exists, it's the default
 
-If the choice is ambiguous, generation fails with a clear error telling you what to do.
+If the choice is ambiguous, generation fails with a clear error telling you what to do. A class and a factory implementing the same contract compete for the default exactly as two factories do — unit kind carries no precedence.
 
 ## Multiple implementations
 
@@ -61,8 +134,8 @@ Group **members** are not exempt: a contract that extends a group's base type is
 
 ## Dependency inference
 
-The generator analyzes each factory's first parameter — the named deps type — to determine which keys the factory consumes. Every property in the deps type becomes a **demand**. If a demanded key has a corresponding `build*` factory in the same package, it's a local dependency. If not, it's an external (and appears in `IocExternals`).
+The generator analyzes each unit's dependency parameter — a factory's first parameter, or a class constructor's single destructured object parameter — to determine which keys it consumes. Every property in that **named deps type** becomes a **demand**. If a demanded key is supplied by a unit in the same package, it's a local dependency. If not, it's an external (and appears in `IocExternals`).
 
-Codegen validates type agreement across factories: if `buildA` declares `database: Knex` and `buildB` declares `database: PostgresClient`, codegen fails with both locations and the conflicting types named.
+Codegen validates type agreement across units: if `buildA` declares `database: Knex` and `buildB` declares `database: PostgresClient`, codegen fails with both locations and the conflicting types named.
 
 ---

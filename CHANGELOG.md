@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.0.0] - Unreleased
 
+The breaking release. Two design commitments that generated most of the library's post-1.0 bug
+history are retired: contracts inferred from return-type symbols, and generated types consumed
+back through TypeScript's own resolution. In their place, contract identity is **declared at the
+site and read syntactically**, and every route from your source into the generated file is
+enumerated and either resolved or rejected. Class registration units ride along, because a class's
+`implements` clause is the same thing a factory's return annotation is — a declared contract site.
+
+Most of what follows is a consequence of those two changes rather than a separate feature.
+
+### Migrating from v2
+
+In order. Each item names the error you get if you skip it.
+
+1. **Regenerate every package with v3, before anything else.** Schema v3 refuses v2 manifests, as
+   every schema bump has.
+
+   > `[ioc] Manifest schema version mismatch. Runtime expects: 3 / Got: 2 from manifest at index 0`
+
+2. **Add an explicit return type annotation to every `build*` export.** One aggregated error lists
+   every offender by file and export name — that list is your worklist, and it is the fastest way
+   to enumerate the work. `ioc inspect --discovery` reports the same set under
+   `missing_return_type_annotation`.
+
+   > `[ioc] 12 factory export(s) have missing or invalid return type annotations. v3 requires every factory to declare an explicit return type annotation naming its contract:`
+   > `  - src/services/buildUserService.ts export "buildUserService": missing return type annotation — add an explicit return type naming the contract`
+
+3. **Name any inline-object or anonymous-union annotation.** Same aggregated error, with per-offender
+   guidance to declare an `interface` or `type` alias and annotate with it.
+
+   > `  - src/tasks/buildTask.ts export "buildTask": anonymous union annotation — name the union with a type alias (e.g. \`type Task = EmailTask | SmsTask\`) and annotate the factory with the alias`
+
+4. **Rename contracts whose declared name collides with another declaration.** Identity is now the
+   pair (declaration file, declared name), so two declarations sharing a name are two contracts and
+   no longer silently merge under one manifest key.
+
+   > `[ioc] Contract name collision: the same contract name is declared in multiple files. Contracts are identified by (declaration file, name); two different declarations cannot share one manifest key. Rename one of the types:`
+
+5. **Update `groupBaseTypeAliases` entries to the new package-relative `baseTypeId` form.** The
+   composition error prints the exact values to paste.
+
+   > `[group-base-type] Group "discountStrategies" has conflicting base type identifiers across manifests`
+
+6. **Replace rejected generated-type reference forms.** Thirteen forms that previously fell through
+   to type resolution are now hard errors; each names the file, line, offending text, and its
+   supported replacement. The full table is in the docs under
+   [Consuming generated types](https://reharik.github.io/ioc-manifest/reference/generated-types).
+
+   > `[ioc] src/services/deps.ts:4 applies \`keyof\` to a generated registry type: \`keyof IocGeneratedCradle\`. \`keyof\` bakes a snapshot of the PREVIOUS cradle's keys into the new output, so the key set silently lags a generation behind. Index the keys you need explicitly (\`IocGeneratedCradle["albumRepository"]\`), or declare the union yourself.`
+
+7. **Check the keys of any factory whose export name has consecutive capitals after the prefix.**
+   This is the one migration item with **no dedicated error**, so it is worth a grep: see the
+   camelCase entry under **Changed** for what changes and how it surfaces.
+
+Nothing else is required. In particular, existing `interface Foo extends Base {}` contracts keep
+working unchanged — see the note under **Fixed**.
+
 ### Added
 
 **Class-based registration units.** An exported class with an `implements` clause is a
@@ -70,16 +126,186 @@ Specifics:
 - **Several `implements` entries** is a hard error naming the class and every contract,
   resolvable with the new `classes` config surface:
   `classes: { DualUnit: { contract: "Auditor" } }`.
-- **Abstract classes** are never registration units. One carrying `implements` is skipped with
-  a warning rather than silently, since that is also what someone who meant to register it
-  would have written.
-- **Migration warning.** When a class's file name would have produced a different key under
-  Awilix `loadModules` (which keys on the file name, not the class name), generation says so —
-  `storage.ts` exporting `S3MediaStorage` registers as `s3MediaStorage`, not `storage`. Kebab
-  and snake file names that camelCase to the same key are silent. Suppress per class with
+- **Registration mechanism.** A class unit registers as `asFunction(cradle => new Ctor(cradle))`.
+  Under PROXY injection this is behaviorally equivalent to `asClass(Ctor, { injectionMode: PROXY })`
+  — that is exactly what `asClass` does — but routing it through the shared factory wrapper is what
+  gives class units the same resolution diagnostics as factories. `asClass` exposes no error hook,
+  so a class registered through it would resolve outside the instrumented path: no manifest-aware
+  frames in the resolution chain, and a raw `AwilixResolutionError` escaping a root resolve instead
+  of an `IocResolutionError`.
+- **`loadModules` migration warning.** When a class's file name would have produced a different
+  key under Awilix `loadModules` (which keys on the file name, not the class name), generation
+  says so — `storage.ts` exporting `S3MediaStorage` registers as `s3MediaStorage`, not `storage`.
+  Kebab and snake file names that camelCase to the same key are silent. Suppress per class with
   `classes: { S3MediaStorage: { allowDivergentFileName: true } }`.
 - Classes that match the trigger but cannot be registered get categorized skip reasons in the
   same aggregated reporting as factories and appear in `ioc inspect --discovery`.
+
+**Inherited-contract diagnostic.** A concrete exported class that extends a base carrying an
+`implements` clause, but declares none itself, is not registered — and is now reported rather than
+dropped in silence:
+
+```
+[ioc] 1 concrete class(es) inherit a contract but declare no `implements`, so they were NOT registered:
+  - src/storage/ArchiveStorage.ts class "ArchiveStorage" extends StorageBase, which declares
+    `implements MediaStorage`. Add `implements MediaStorage` to ArchiveStorage to register it.
+```
+
+Discovery walks the `extends` chain syntactically to the nearest `implements`-bearing ancestor,
+using the same import-following machinery contract-site resolution uses. **That walk is
+diagnostics-only and never registers anything.** Inheriting a contract does not inherit
+registration, by decision: the trigger stays local and explicit so that reading a class tells you
+whether it registers, without following a heritage chain across files. The diagnostic is a warning,
+never fatal — deliberately unregistered subclasses are legitimate — and appears in
+`ioc inspect --discovery` under `class_inherited_contract_not_declared`.
+
+### Changed
+
+**Contract identity is what you wrote at the contract site.** The checker no longer infers or
+normalizes the contract: `Promise<T>` and parentheses are unwrapped syntactically, the remaining
+annotation must be a single named type reference, and the contract is that reference's
+declaration. Import aliases are followed, so `import { Foo as Bar }` annotated as `Bar` is the
+contract `Foo`; type-level aliases are never followed. Canonical identity is the pair
+(declaration file, declared name) — two different declarations sharing a name now fail generation
+with an error naming both declaration sites instead of merging under one manifest key.
+
+**Explicit return type annotations are now required.** A prefix-matched factory export without one
+fails generation with a single aggregated error listing every offender. Inline object-literal
+annotations and anonymous unions are also errors, with guidance to name the type.
+
+Because identity is what was written, **plain type aliases and named union aliases are now
+first-class contracts**:
+
+```ts
+// v2: a plain alias collapsed into its target, so a distinct contract required
+// an empty interface extension.
+export interface QueueTask extends WorkerTaskBase {}
+
+// v3: the alias IS the contract — distinct from WorkerTaskBase, and still a member
+// of WorkerTaskBase groups/markers via the alias-target heritage chain.
+export type QueueTask = WorkerTaskBase;
+
+export const buildQueueTask = (deps: QueueTaskDeps): QueueTask => ({ ... });
+```
+
+Group and lifetime-marker membership keep the nominal heritage walk (`extends` chains,
+intersection members, import-alias following); the walk now enters at the annotation's resolved
+declaration, and alias-target steps count as heritage — consistent with how `type Foo = Bar & Marker`
+already behaved.
+
+**BREAKING: one camelCase rule for every registration key.** Through v2, a factory's key came from
+lowercasing exactly one character after the prefix strip, while class keys used the ported Awilix
+`formatName: "camelCase"` algorithm. The two disagreed on any name with an acronym run, so the same
+acronym reached the cradle under two spellings depending on which unit kind supplied it. v3 uses the
+Awilix algorithm everywhere — factory keys, class keys, and contract access keys alike.
+
+The rule: split into words on non-alphanumeric separators and on case transitions, treating an
+acronym run as one word; lowercase the first word, capitalize later words with the rest lowercased.
+
+```ts
+// Factory export name, past the `build` prefix:
+buildAPIClient;   // v2 → aPIClient     v3 → apiClient
+buildHTTPSProxy;  // v2 → hTTPSProxy    v3 → httpsProxy
+buildAlbumService; // v2 → albumService  v3 → albumService  (unchanged)
+```
+
+Only names with **consecutive capitals after the prefix** change; ordinary CamelCase names and
+names with digits (`buildS3MediaStorage` → `s3MediaStorage`) are unaffected. The same applies to a
+contract's access key, which had to move with it: a contract named `APIClient` whose access key
+stayed `aPIClient` would never convention-match its own `apiClient` implementation, and would emit
+two cradle spellings of one acronym.
+
+To keep a v2 key exactly as it was, name it explicitly — `registrations[Contract][impl].name`
+overrides the derived key and always has:
+
+```ts
+registrations: {
+  ApiClient: {
+    apiClient: { name: "aPIClient" },
+  },
+},
+```
+
+This is the one migration item with no dedicated error. It surfaces at compile time in any
+composition setup — the changed key moves from `IocGeneratedCradle` into `IocExternals` for
+consumers still demanding the old spelling, and the externals assertion fails — and at the first
+resolve otherwise, as an `IocResolutionError`. Grepping for the old spelling is the quickest check.
+
+**Manifest schema version 3.** Composition refuses a v2 manifest outright, as it always has across
+versions — regenerate every package with the same ioc-manifest version.
+
+Implementation metadata gains `kind: "class"`. It is emitted only for class units: absent
+reads as `"factory"`, matching how every other conventional value in this metadata (`default`,
+`accessKey`, `discoveredBy`) stays out of generated output rather than being restated on every
+entry. Since schema v3 refuses v2 manifests there is no cross-version reader to consider, so
+the choice is purely ergonomic, and the smaller diff wins.
+
+`baseTypeId` — the opaque canonical identifier for a group's base type — is now
+**package-relative** instead of an absolute path:
+
+```ts
+// v2 — machine-specific; two developers regenerating the same package got different bytes.
+baseTypeId: "/home/alice/work/monorepo/packages/contracts/src/types/Storage.ts:Storage";
+
+// v3 — `<packageName>/<path within that package>:<TypeName>`.
+baseTypeId: "@acme/contracts/src/types/Storage.ts:Storage";
+```
+
+The package name comes from the nearest enclosing `package.json`; the path is POSIX-relative to
+that manifest's directory. The value is identical on every machine and checkout, and stays
+unambiguous between two packages that declare the same type name at the same inner path. This
+is the main reason `groupBaseTypeAliases` existed: diamond hoisting used to change the absolute
+path and so the id. `groupBaseTypeAliases` is unchanged and still needed where the same logical
+type is reached through genuinely different package layouts (a workspace `src/Storage.ts` build
+versus a published `dist/Storage.d.ts` one) — the escape hatch is narrower now, not gone.
+
+**Regenerate after upgrading**: `baseTypeId` values change in every generated manifest that
+declares a group, and any `groupBaseTypeAliases` entries must be updated to the new form (the
+composition error prints the values to copy).
+
+**Thirteen generated-reference forms now fail generation** wherever they appear in scanned source.
+Each error names the file, the line, the offending form, and the supported replacement, and all
+offenders in a run are aggregated into one error. The forms are: `keyof` on a generated type;
+`typeof` on a generated binding; chained (`Cradle["a"]["b"]`), computed (`Cradle["a" | "b"]`) and
+type-argument-bearing (`Cradle<T>["a"]`) indexed access; indexing anything other than
+`IocGeneratedCradle`; `extends`/`implements` on a generated type; `import … = require(…)` /
+`export =` / default imports of the generated file; and `/// <reference path=… />` directives
+naming it.
+
+The two that most often appear in real code:
+
+```ts
+// Rejected: `keyof` bakes a snapshot of the PREVIOUS cradle's keys into the new output.
+import type { IocGeneratedCradle } from "./generated/ioc-registry.types.js";
+export type CradleKey = keyof IocGeneratedCradle;
+
+// Rejected: extending the cradle absorbs every member of the PREVIOUS registry into the
+// deps type, so the whole stale registry is re-demanded on the next run.
+interface UploadDeps extends IocGeneratedCradle {}
+
+// Supported: demand the keys the factory actually needs.
+type UploadDeps = { storage: IocGeneratedCradle["storage"] };
+```
+
+Separately, a generated type reaching a factory **deps type or return type** in any form other
+than the two claimed ones is now rejected there, by a structural backstop that runs
+immediately before demand analysis would hand the type to the checker. This covers shapes that
+are legal elsewhere but not here — `{ cradle: IocGeneratedCradle }`,
+`{ chans: ReadonlyArray<Channels> }`, `Pick<IocGeneratedCradle, "storage">`,
+`type Deps = IocGeneratedCradle & { … }`. `ReadonlyArray<Channels>` and
+`Pick<IocGeneratedCradle, …>` are the only two of these that used to produce output; both
+produced it by reading the previous generated file. (A group alias is already the collection type —
+`Channels` *is* `ReadonlyArray<Channel>` — so `ReadonlyArray<Channels>` was never right.)
+
+Naming a generated type is unaffected — the documented composition-root pattern
+(`createContainer<IocGeneratedCradle>()`) is still legal, because the name is only ever
+printed back and never read into.
+
+**The abstract-class warning is narrower.** `abstract class Base implements Contract` is the normal
+base-class pattern, and warning on every occurrence trained people to ignore the warning. It now
+fires only when the registration is genuinely missing — when no concrete class in scan range
+declares `implements` for that contract. When a concrete subclass registers it, generation is
+silent.
 
 ### Fixed
 
@@ -117,118 +343,24 @@ import type { SharedChannels, SharedStorage } from "./deps-aliases.js";
 type UploadDeps = { storage: SharedStorage; channels: SharedChannels };
 ```
 
-The other thirteen are rejected — see **Changed** below.
+The other thirteen are rejected — see **Changed** above.
 
-### Changed
+**The lint-autofix trap is gone.** Through v2, converting `interface Foo extends Base {}` to
+`type Foo = Base` — which several lint autofixes do unprompted — silently broke discovery, because
+a plain alias collapsed into its target. Both forms now denote the same contract, so the autofix is
+a no-op on behavior. **Existing empty-extending-interface contracts keep working unchanged**; there
+is nothing to migrate, and you may simplify them if you want to.
 
-**Manifest schema version 3.** Two changes ride the bump. Composition refuses a v2 manifest
-outright, as it always has across versions — regenerate every package with the same
-ioc-manifest version.
+**Contract name collisions no longer merge silently.** Two same-named declarations in different
+files used to land in one manifest entry, with whichever was discovered second overwriting the
+first's metadata. Generation now fails naming both declaration sites.
 
-Implementation metadata gains `kind: "class"`. It is emitted only for class units: absent
-reads as `"factory"`, matching how every other conventional value in this metadata (`default`,
-`accessKey`, `discoveredBy`) stays out of generated output rather than being restated on every
-entry. Since schema v3 refuses v2 manifests there is no cross-version reader to consider, so
-the choice is purely ergonomic, and the smaller diff wins.
-
-`baseTypeId` — the opaque canonical identifier for a group's base type — is now
-**package-relative** instead of an absolute path:
-
-```ts
-// v2 — machine-specific; two developers regenerating the same package got different bytes.
-baseTypeId: "/home/alice/work/monorepo/packages/contracts/src/types/Storage.ts:Storage";
-
-// v3 — `<packageName>/<path within that package>:<TypeName>`.
-baseTypeId: "@acme/contracts/src/types/Storage.ts:Storage";
-```
-
-The package name comes from the nearest enclosing `package.json`; the path is POSIX-relative to
-that manifest's directory. The value is identical on every machine and checkout, and stays
-unambiguous between two packages that declare the same type name at the same inner path. This
-is the main reason `groupBaseTypeAliases` existed: diamond hoisting used to change the absolute
-path and so the id. `groupBaseTypeAliases` is unchanged and still needed where the same logical
-type is reached through genuinely different package layouts (a workspace `src/Storage.ts` build
-versus a published `dist/Storage.d.ts` one) — the escape hatch is narrower now, not gone.
-
-**Regenerate after upgrading**: `baseTypeId` values change in every generated manifest that
-declares a group, and any `groupBaseTypeAliases` entries must be updated to the new form (the
-composition error prints the values to copy).
-
-Twelve reference forms that previously fell through to type resolution now fail generation
-wherever they appear in scanned source. Each error names the file, the line, the offending
-form, and the supported replacement, and all offenders in a run are aggregated into one
-error. The forms are: `keyof` on a generated
-type; `typeof` on a generated binding; chained (`Cradle["a"]["b"]`), computed
-(`Cradle["a" | "b"]`) and type-argument-bearing (`Cradle<T>["a"]`) indexed access; indexing
-anything other than `IocGeneratedCradle`; `extends`/`implements` on a generated type;
-`import … = require(…)` / `export =` / default imports of the generated file; and
-`/// <reference path=… />` directives naming it.
-
-The two that most often appear in real code:
-
-```ts
-// Rejected: `keyof` bakes a snapshot of the PREVIOUS cradle's keys into the new output.
-import type { IocGeneratedCradle } from "./generated/ioc-registry.types.js";
-export type CradleKey = keyof IocGeneratedCradle;
-
-// Rejected: extending the cradle absorbs every member of the PREVIOUS registry into the
-// deps type, so the whole stale registry is re-demanded on the next run.
-interface UploadDeps extends IocGeneratedCradle {}
-
-// Supported: demand the keys the factory actually needs.
-type UploadDeps = { storage: IocGeneratedCradle["storage"] };
-```
-
-Separately, a generated type reaching a factory **deps type or return type** in any form other
-than the two claimed ones is now rejected there, by a structural backstop that runs
-immediately before demand analysis would hand the type to the checker. This covers shapes that
-are legal elsewhere but not here — `{ cradle: IocGeneratedCradle }`,
-`{ chans: ReadonlyArray<Channels> }`, `Pick<IocGeneratedCradle, "storage">`,
-`type Deps = IocGeneratedCradle & { … }`. `ReadonlyArray<Channels>` and
-`Pick<IocGeneratedCradle, …>` are the only two of these that used to produce output; both
-produced it by reading the previous generated file.
-
-Naming a generated type is unaffected — the documented composition-root pattern
-(`createContainer<IocGeneratedCradle>()`) is still legal, because the name is only ever
-printed back and never read into.
-
-Contract identity is now the factory's written return type annotation — declared at the
-site, resolved syntactically to the declaration it names. The checker no longer infers or
-normalizes the contract from the return type: `Promise<T>` and parentheses are unwrapped
-syntactically, the remaining annotation must be a single named type reference, and the
-contract is that reference's declaration (import aliases are followed, so
-`import { Foo as Bar }` annotated as `Bar` is the contract `Foo`; type-level aliases are
-never followed). Canonical identity is the pair (declaration file, declared name) — two
-different declarations sharing a name now fail generation with an error naming both
-declaration sites instead of merging under one manifest key.
-
-**Explicit return type annotations are now required.** A prefix-matched factory export
-without one fails generation with a single aggregated error listing every offender
-(file and export name) — that list is the migration worklist. `ioc inspect --discovery`
-reports the same offenders under `missing_return_type_annotation`. Inline object-literal
-annotations and anonymous unions are also errors, with guidance to name the type.
-
-Because identity is what was written, plain type aliases and named union aliases are now
-first-class contracts. The empty-extends interface dance — and the lint-autofix trap where
-converting `interface Foo extends Base {}` to `type Foo = Base` silently broke discovery —
-are gone:
-
-```ts
-// v2: a plain alias collapsed into its target, so a distinct contract required
-// an empty interface extension.
-export interface QueueTask extends WorkerTaskBase {}
-
-// v3: the alias IS the contract — distinct from WorkerTaskBase, and still a member
-// of WorkerTaskBase groups/markers via the alias-target heritage chain.
-export type QueueTask = WorkerTaskBase;
-
-export const buildQueueTask = (deps: QueueTaskDeps): QueueTask => ({ ... });
-```
-
-Group and lifetime-marker membership keep the nominal heritage walk (`extends` chains,
-intersection members, import-alias following); the walk now enters at the annotation's
-resolved declaration, and alias-target steps count as heritage — consistent with how
-`type Foo = Bar & Marker` already behaved.
+**Lifetime markers resolve on async factories.** The marker walk enters at the written contract
+site with `Promise<>` unwrapped syntactically. Entering at the checker-inferred return type — as
+v2 did — found `Promise<ScopedService>`, which has no heritage to the marker, so an `async` factory
+silently took the default lifetime instead of the marked one. A `singleton` that should have been
+`scoped` is precisely the bug the lifetime-inversion check exists to catch, and this made it
+unreachable for every async factory.
 
 ## [2.6.0]
 

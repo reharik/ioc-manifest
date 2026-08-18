@@ -50,7 +50,7 @@ import * as ioc_services_buildLocalMediaStorage from "../services/buildLocalMedi
 // ... more imports ...
 
 export const iocManifest = {
-  manifestSchemaVersion: 2,
+  manifestSchemaVersion: 3,
   moduleImports: [
     /* ... */
   ] as const satisfies readonly IocModuleNamespace[],
@@ -67,9 +67,35 @@ export const iocManifest = {
         discoveredBy: "naming",
       },
     },
+    MediaStorage: {
+      archiveMediaStorage: {
+        kind: "class",
+        exportName: "ArchiveMediaStorage",
+        registrationKey: "archiveMediaStorage",
+        contractName: "MediaStorage",
+        implementationName: "archiveMediaStorage",
+        lifetime: "singleton",
+        moduleIndex: 1,
+        discoveredBy: "implements",
+      },
+    },
     // ... more contracts ...
   },
 } as const satisfies IocGeneratedContainerManifest;
 ```
+
+`kind: "class"` is emitted only for [class units](/concepts/classes); its absence reads as `"factory"`. That matches how every other conventional value here (`default`, `accessKey`, `discoveredBy`) stays out of the output rather than being restated on every entry — and since schema v3 refuses v2 manifests outright, there is no cross-version reader to consider, so the smaller diff wins.
+
+At runtime a class unit registers as `asFunction(cradle => new Ctor(cradle))` — behaviorally equivalent to `asClass` under PROXY injection, but routed through the shared wrapper so class units get the same [resolution diagnostics](/reference/errors) as factories.
+
+## Group base type identifiers
+
+When a package declares [groups](/concepts/groups), the manifest carries an opaque `baseTypeId` per group — the canonical identity of its base type, used to merge groups across composed manifests:
+
+```ts
+baseTypeId: "@acme/contracts/src/types/Storage.ts:Storage";
+```
+
+The form is `<packageName>/<path within that package>:<TypeName>`: the package name comes from the nearest enclosing `package.json`, and the path is POSIX-relative to it. It's **machine-independent** — identical on every developer's checkout and in CI, which it was not in v2, when it was an absolute filesystem path. See [`groupBaseTypeAliases`](/monorepo/composition#groups-across-manifests) for the narrow case that still needs an equivalence declaration.
 
 ---

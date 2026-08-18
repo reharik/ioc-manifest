@@ -148,20 +148,37 @@ registrations: {
 
 If multiple composed packages declare contributors to the same group (e.g. several packages register `DiscountStrategy` implementations and all declare a `discountStrategies` collection group), the group merges across manifests. `container.resolve("discountStrategies")` returns the union.
 
-For this to work, all contributors must reference the same canonical base type — typically by importing it from a shared contracts package. If npm hoisting produces a single physical file for the base type, identity matching works automatically.
+For this to work, all contributors must reference the same canonical base type — typically by importing it from a shared contracts package.
 
-In rare cases (version skew, peer-dep conflicts, nested installs) two contributors may end up with different physical paths for what is structurally the same type. The library reports this with a clear error and a remediation hint, including the exact config block to paste:
+That canonical identity is the group's `baseTypeId`, and in v3 it is **package-relative**: `<packageName>/<path within that package>:<TypeName>`, resolved from the nearest enclosing `package.json`.
+
+```ts
+// v2 — an absolute path; two developers regenerating the same package got different bytes,
+// and npm hoisting changed it.
+baseTypeId: "/home/alice/work/monorepo/packages/contracts/src/types/Storage.ts:Storage";
+
+// v3 — identical on every machine, every checkout, and in CI.
+baseTypeId: "@acme/contracts/src/types/Storage.ts:Storage";
+```
+
+This removes the main reason mismatches used to happen: hoisting changed the absolute path, so it changed the id, so two contributors to one group stopped matching.
+
+What survives is the genuinely different case — the same logical type reached through different package *layouts*, such as a workspace `src/Storage.ts` build alongside a published `dist/Storage.d.ts` one. There, the library reports the mismatch with the exact config block to paste:
 
 ```ts
 // in the app's ioc.config.ts
 groupBaseTypeAliases: {
   discountStrategies: [
-    "/path/to/a.ts:DiscountStrategy",
-    "/path/to/b.ts:DiscountStrategy",
+    "@acme/contracts/src/types/DiscountStrategy.ts:DiscountStrategy",
+    "@acme/contracts/dist/types/DiscountStrategy.d.ts:DiscountStrategy",
   ],
 }
 ```
 
-The library treats the listed identifiers as equivalent. This is an escape hatch, not a normal-path mechanism.
+The library treats the listed identifiers as equivalent. This is an escape hatch, not a normal-path mechanism — narrower in v3 than it was, but not gone.
+
+::: warning Upgrading from v2
+`baseTypeId` values change in every generated manifest that declares a group. Regenerate every package, and update any existing `groupBaseTypeAliases` entries to the new form — the composition error prints the values to copy.
+:::
 
 ---

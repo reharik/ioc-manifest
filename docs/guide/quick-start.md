@@ -4,7 +4,9 @@ This walks through a single-package setup in library mode.
 
 ## 1. Create factories
 
-Write plain factory functions. The naming convention `build<Name>` is the only requirement. Each factory's first parameter is a **named local deps type** describing what it consumes.
+Write plain factory functions. Two requirements: the export name starts with `build`, and the function declares an **explicit return type annotation** naming its contract. Each factory's first parameter is a **named local deps type** describing what it consumes.
+
+(Prefer classes? An exported class with an `implements` clause is a registration unit too, and everything below applies to it unchanged — see [Class registration](/concepts/classes).)
 
 ```ts
 // src/services/buildUserRepository.ts
@@ -36,7 +38,9 @@ export const buildUserService = ({
 });
 ```
 
-The named-deps-type pattern is required. Factories cannot destructure directly from `IocGeneratedCradle`, and inline object literals (`({ foo, bar }: { foo: Foo; bar: Bar })`) aren't allowed either — codegen will reject both. The rule is: the first parameter must be a named `interface` or `type` alias.
+The return annotation is what declares the contract. It is required — a `build*` export without one fails generation, listing every offender at once. `Promise<T>` is unwrapped, so an async factory annotates `Promise<UserService>` and supplies `UserService`. The contract must be a named type: an inline object literal or an anonymous union is an error, with guidance to name it.
+
+The named-deps-type pattern is required too. Factories cannot destructure directly from `IocGeneratedCradle`, and inline object literals (`({ foo, bar }: { foo: Foo; bar: Bar })`) aren't allowed either — codegen will reject both. The rule is: the first parameter must be a named `interface` or `type` alias.
 
 Three reasons:
 

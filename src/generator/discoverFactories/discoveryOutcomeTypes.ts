@@ -22,8 +22,14 @@ export const IocDiscoverySkipReason = {
   /** v3: `classes[Class].contract` names a type the class does not implement (hard error at generation). */
   CLASS_CONFIGURED_CONTRACT_NOT_IMPLEMENTED:
     "class_configured_contract_not_implemented",
-  /** v3: abstract class carrying `implements` — skipped, warned (likely an unintended base class). */
+  /** v3: abstract class carrying `implements` — skipped; warned only when nothing concrete registers that contract. */
   CLASS_ABSTRACT: "class_abstract",
+  /**
+   * v3: concrete class whose `extends` chain reaches a contract, but which declares no `implements`
+   * of its own — so it was not registered. Almost always an oversight; warned, never fatal.
+   */
+  CLASS_INHERITED_CONTRACT_NOT_DECLARED:
+    "class_inherited_contract_not_declared",
   /** v3: constructor is not the single destructured object parameter PROXY injection needs (hard error). */
   CLASS_INVALID_CONSTRUCTOR_SHAPE: "class_invalid_constructor_shape",
 } as const;
@@ -66,6 +72,12 @@ export type IocDiscoveryOutcome =
       status: typeof IocDiscoveryStatus.SKIPPED;
       skipReason: IocDiscoverySkipReason;
       contractName?: string;
+      /**
+       * `CLASS_INHERITED_CONTRACT_NOT_DECLARED` only: the base class whose declared contract the
+       * concrete class did not restate. Carried on the outcome so both consumers — the aggregated
+       * generation warning and `ioc inspect --discovery` — can name it without a type checker.
+       */
+      baseClassName?: string;
     };
 
 export type IocDiscoveryFileRecord = {

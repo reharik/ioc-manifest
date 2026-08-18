@@ -4,7 +4,11 @@ Errors are designed to tell you exactly what went wrong and what to do about it.
 
 **Config errors** are prefixed `[ioc-config]` — unknown contracts in `registrations`, duplicate defaults, key collisions. These fail at generation time before any files are written.
 
-**Discovery errors** are prefixed `[ioc]` — duplicate registration keys, unresolvable contract types, overlapping scan directories with conflicting scopes, factories destructuring directly from `IocGeneratedCradle` (use named deps types instead).
+**Discovery errors** are prefixed `[ioc]` — missing return type annotations, contract sites that aren't named types, two contract declarations sharing a name, classes listing several `implements` entries or carrying a non-injectable constructor, duplicate registration keys, overlapping scan directories with conflicting scopes, and factories destructuring directly from `IocGeneratedCradle` (use named deps types instead). Discovery aggregates by category: one run reports every offending export, not the first.
+
+**Generated-reference errors** are prefixed `[ioc]` and name the file, the line, the offending source text, why the form can't be supported, and the supported replacement. See [Consuming generated types](/reference/generated-types#rejected-forms).
+
+**Discovery warnings** are prefixed `[ioc]` and never block generation. They cover units that matched a trigger but couldn't be used, concrete classes that inherit a contract without declaring `implements`, abstract classes declaring a contract nothing concrete registers, divergent single-implementation names, and class file names that would have keyed differently under Awilix `loadModules`. `ioc inspect --discovery` shows the same findings per export, with a categorized reason.
 
 **Validation errors** are prefixed by category (`[externals]`, `[same-key-conflict]`, `[group-base-type]`, etc.) and emitted by `ioc validate`. Validate aggregates: a failing run reports every issue at once, not just the first.
 

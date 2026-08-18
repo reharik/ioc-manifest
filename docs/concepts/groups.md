@@ -1,6 +1,8 @@
 # Groups
 
-Groups collect implementations whose **contract types declare** `extends` on a shared base type (nominal membership — same rules as lifetime markers). There are two kinds — `collection` and `object` — and they solve different real-world problems. A group with no local members emits `[ioc-warn]` but still generates; members may come from other composed packages.
+Groups collect implementations whose **contract types declare heritage** to a shared base type (nominal membership — same rules as lifetime markers). Heritage means `extends`, an intersection (`type Foo = Bar & Base`), or a plain alias (`type Foo = Base`) — never structural similarity. There are two kinds — `collection` and `object` — and they solve different real-world problems. A group with no local members emits `[ioc-warn]` but still generates; members may come from other composed packages.
+
+Both [unit kinds](/concepts/conventions#the-two-registration-units) participate: a class whose `implements` contract declares heritage to the base joins alongside factory members, with no distinction downstream.
 
 ## Collection groups: the strategy pattern
 
@@ -183,6 +185,10 @@ export const buildNotificationService = ({
 ```
 
 The equivalent indexed access is still valid and identical — `channels: IocGeneratedCradle["channels"]` — and remains the fallback in the rare case where a group's PascalCase alias would collide with an imported contract type name (generation skips that one alias and emits an `[ioc-warn]` naming the group; every other group still gets its alias, and the file always compiles).
+
+::: warning The alias is already the collection type
+`Channels` *is* `ReadonlyArray<Channel>`, so the demand is `channels: Channels`. Wrapping it — `ReadonlyArray<Channels>` — asks for an array of arrays; it was never correct, and it is now rejected rather than silently resolved out of the previous generated file. See [Consuming generated types](/reference/generated-types).
+:::
 
 Either way, the [named-deps-type rule](/guide/quick-start#1-create-factories) still holds: the parameter binds to a named type (`NotificationServiceDeps`), and the group type appears only as a *type reference inside it*. You still cannot bind the parameter directly to the cradle (`({ channels }: IocGeneratedCradle)`).
 

@@ -161,6 +161,36 @@ describe("resolveLifetimeMarkersForFactories", () => {
     });
   });
 
+  describe("When an async factory's contract carries a marker", () => {
+    it("should resolve the marker through the unwrapped Promise annotation", () => {
+      // The walk enters at the written contract site, not the checker-inferred return type.
+      // Entering at the latter would find `Promise<AsyncScopedService>`, which has no heritage to
+      // `IScoped`, and the factory would silently take the default lifetime instead of `scoped`.
+      const program = makeProgram();
+      const { acceptedFactories } = runDiscovery();
+      const asyncFactory = acceptedFactories.find(
+        (f) => f.exportName === "buildAsyncScopedService",
+      );
+      assert.ok(asyncFactory);
+
+      const result = resolveLifetimeMarkersForFactories(
+        acceptedFactories,
+        { IScoped: "scoped" },
+        { program, projectRoot, scanDirs: [{ absPath: srcDir }] },
+      );
+
+      assert.equal(result.get(factoryLifetimeMarkerKey(asyncFactory!)), "scoped");
+    });
+
+    it("should apply that lifetime in the registration plan", () => {
+      const plans = resolvePlansWithMarkers({ IScoped: "scoped" });
+      assert.equal(
+        findImplLifetime(plans, "AsyncScopedService", "asyncScopedService"),
+        "scoped",
+      );
+    });
+  });
+
   describe("When a factory return type matches no marker", () => {
     it("should omit that factory from the result map", () => {
       const program = makeProgram();

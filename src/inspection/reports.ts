@@ -106,6 +106,8 @@ export type DiscoveryExportReportRow = {
   contractName?: string;
   skipReason?: string;
   registrationKey?: string;
+  /** Set for `class_inherited_contract_not_declared`: the base whose contract was not restated. */
+  baseClassName?: string;
 };
 
 export type DiscoveryReport = {
@@ -148,6 +150,9 @@ const outcomeToRows = (
       status: "skipped",
       skipReason: outcome.skipReason,
       contractName: outcome.contractName,
+      ...(outcome.baseClassName !== undefined
+        ? { baseClassName: outcome.baseClassName }
+        : {}),
     },
   ];
 };

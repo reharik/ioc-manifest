@@ -20,3 +20,8 @@ export interface DualMarked extends IScoped, ITransient {
 export interface PlainService {
   readonly id: string;
 }
+
+export interface AsyncScopedService extends IScoped {
+  readonly __brand: "IScoped";
+  readonly ready: boolean;
+}

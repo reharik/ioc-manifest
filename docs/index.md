@@ -4,7 +4,7 @@ layout: home
 hero:
   name: ioc-manifest
   text: Typed IoC for Awilix, by convention
-  tagline: Write factory functions, run the generator, get a fully typed container — no manual registrations. First-class monorepo composition.
+  tagline: Write factory functions or classes, run the generator, get a fully typed container — no manual registrations. First-class monorepo composition.
   actions:
     - theme: brand
       text: Get started
@@ -17,10 +17,12 @@ hero:
       link: https://github.com/reharik/ioc-manifest
 
 features:
-  - title: Auto-discovery
-    details: Export buildUserService and it's registered as userService returning UserService. No container.register calls, ever.
+  - title: Factories or classes
+    details: Export buildUserService, or write class UserService implements UserContract. Either is a registration unit; both get the same key, and they mix freely.
+  - title: Contracts you declared
+    details: A unit's contract is the name you wrote at its contract site — a return annotation or an implements clause — read syntactically. No central registry, no inference from checker normalization.
   - title: Typed end-to-end
-    details: container.resolve("userService") returns UserService, not any — a fully typed IocGeneratedCradle generated from your factories.
+    details: container.resolve("userService") returns UserService, not any — a fully typed IocGeneratedCradle generated from your source.
   - title: Type-safe groups
     details: Declare a collection or object group over a base type and resolve every implementation as a typed array or keyed object — discovered automatically, composed across packages.
   - title: Cross-package composition

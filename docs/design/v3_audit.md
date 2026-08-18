@@ -115,7 +115,9 @@ Stabilize-in-place, scored honestly: still pays stage 0 (the re-export hole is l
 
 ## Class support and Awilix positioning
 
-Class units are the second independent argument for annotation identity: a factory's return annotation and a class's `implements` clause are the same thing — a declared contract site, named, syntactic, readable without the checker. One identity rule, two unit kinds. Deps analysis (single object constructor param), nominal group membership, and camelCase key derivation all reuse existing machinery; runtime gains a `kind: "class" | "factory"` manifest field and an `asClass(..., PROXY)` branch.
+Class units are the second independent argument for annotation identity: a factory's return annotation and a class's `implements` clause are the same thing — a declared contract site, named, syntactic, readable without the checker. One identity rule, two unit kinds. Deps analysis (single object constructor param), nominal group membership, and camelCase key derivation all reuse existing machinery; runtime gains a `kind: "class" | "factory"` manifest field and a construction branch.
+
+**As implemented (stage 3), that branch is not `asClass`.** A class unit registers as `asFunction(cradle => new Ctor(cradle))`. Under PROXY injection this is behaviorally what `asClass` does — construct with the cradle as the single argument — but `asClass` exposes no error hook, so a class registered through it would resolve outside the instrumented path: an empty frame stack for that node and a raw `AwilixResolutionError` escaping a root resolve. Routing both unit kinds through the one wrapper keeps `IocResolutionError` unit-kind agnostic.
 
 Positioning: Awilix's own discovery is `loadModules` — runtime `require` of globbed files, filename-derived keys, no typing, no wiring validation, bundler-hostile (third-party shims exist just to make the glob work under Vite). The pitch is "loadModules, but type-checked at build time and bundler-safe," aimed at users who already have the drop-a-class-in-`services/` habit. Key parity is near-automatic (camelCase class name ≈ camelCase filename in one-class-per-file codebases); a migration-mode warning when file stem ≠ class name is cheap insurance.
 
@@ -138,7 +140,7 @@ Constituent-package breakdown was evaluated. Most layers are ioc-manifest policy
 - **Stages 1–4 (`v3` branch, rebased on main after stage 0):**
   1. Identity swap (annotation identity) behind the golden-manifest diff gate; the annotation-required error doubles as migration discovery.
   2. B3 formalization — tests and docs of the enumeration guarantee.
-  3. Class units — discovery, `kind` field, `asClass` runtime branch, implements-presence convention. Rides the schema bump; `baseTypeId` moves to package-relative ids here for the same reason.
+  3. Class units — discovery, `kind` field, class-construction runtime branch, implements-presence convention. Rides the schema bump; `baseTypeId` moves to package-relative ids here for the same reason.
   4. Docs — pitfalls shrinks; philosophy reworded from "inferred, not declared" to "declared at the site, discovered from source"; README class examples.
 - **Merge gate:** full monorepo regeneration + boot on the v3 branch, compared against main. Rollback is branch deletion.
 

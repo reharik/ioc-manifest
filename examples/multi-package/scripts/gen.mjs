@@ -1,4 +1,4 @@
-import { existsSync, globSync } from "node:fs";
+import { existsSync, globSync, readdirSync, rmSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,15 +33,77 @@ if (packages.length === 0) {
   process.exit(1);
 }
 
+/**
+ * Every example package writes here — asserted below rather than parsed out of each config, so a
+ * config that moves its output trips the guard instead of silently generating somewhere unchecked.
+ */
+const GENERATED_DIRNAME = path.join("src", "generated");
+
+/** Emitted by every mode; app mode adds `ioc-composed.ts`, covered by the survivor check. */
+const REQUIRED_OUTPUTS = ["ioc-manifest.ts", "ioc-registry.types.ts"];
+
+const generatedFilesIn = (dir) =>
+  existsSync(dir)
+    ? readdirSync(dir)
+        .filter((f) => f.startsWith("ioc-") && f.endsWith(".ts"))
+        .sort((a, b) => a.localeCompare(b))
+    : [];
+
+const fail = (message) => {
+  console.error(`[example] ${message}`);
+  process.exit(1);
+};
+
+/**
+ * The guard: generation is proven to have run by clearing its outputs first and requiring them
+ * back. This script was a silent no-op for weeks — `execSync(cmd, argsArray, opts)` takes
+ * `(command, options)`, so the args and the cwd were both dropped and a bare `node` ran in the repo
+ * root, exiting 0 and regenerating nothing. Stale committed baselines then looked current. Checking
+ * exit status alone could not catch that, and neither could an existence check on files that were
+ * already on disk; only "delete, regenerate, require back" makes the failure mode unreachable.
+ */
 for (const name of packages) {
   const cwd = path.join(exampleRoot, "packages", name);
+  const generatedDir = path.join(cwd, GENERATED_DIRNAME);
+  const before = generatedFilesIn(generatedDir);
+
   console.log(`[example] generating manifest for ${name}...`);
-  // execFileSync, not execSync: execSync takes (command, options), so passing an args array as the
-  // second argument silently dropped both the args and the cwd — `npm run gen` spawned a bare
-  // `node` in the repo root and regenerated nothing.
+
+  for (const file of before) {
+    rmSync(path.join(generatedDir, file));
+  }
+
+  // execFileSync, not execSync: see the note above.
   execFileSync(process.execPath, [iocCli, "generate"], {
     cwd,
     stdio: "inherit",
     env: process.env,
   });
+
+  const after = generatedFilesIn(generatedDir);
+
+  for (const required of REQUIRED_OUTPUTS) {
+    if (!after.includes(required)) {
+      fail(
+        `${name}: generation did not write ${GENERATED_DIRNAME}/${required}. ` +
+          `The generator reported success but produced no output — treat this as a harness failure, not a stale baseline.`,
+      );
+    }
+  }
+
+  const missing = before.filter((f) => !after.includes(f));
+  if (missing.length > 0) {
+    fail(
+      `${name}: generation no longer writes ${missing.join(", ")}, which the previous run produced. ` +
+        `If that is intended, delete the stale file(s) and the expectation with them; otherwise generation is incomplete.`,
+    );
+  }
+
+  for (const file of after) {
+    if (statSync(path.join(generatedDir, file)).size === 0) {
+      fail(`${name}: generation wrote an empty ${GENERATED_DIRNAME}/${file}.`);
+    }
+  }
+
+  console.log(`[example] ${name}: wrote ${after.join(", ")}`);
 }
