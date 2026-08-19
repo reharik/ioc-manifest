@@ -235,15 +235,62 @@ export const nearestImplementsBearingAncestor = (
   return undefined;
 };
 
+/** Written name of the scope-root marker type exported by this package. */
+export const SCOPE_ROOT_MARKER_NAME = "ScopeRoot";
+
+/** The form the marker must be written in, quoted verbatim by the wrong-arity error. */
+export const SCOPE_ROOT_MARKER_FORM = `${SCOPE_ROOT_MARKER_NAME}<TContract, TLbv>`;
+
 /**
- * Syntactically unwraps a factory return annotation to the contract reference: strips
- * parentheses and `Promise<T>` wrappers (by written name, no checker). The result is what the
- * author wrote — type-level aliases are never followed. A class `implements` entry passes through
- * unchanged (neither wrapper is legal there).
+ * A contract site read as a `ScopeRoot<...>` reference.
+ *
+ * `wrong_arity` is a hard error rather than a skip: writing `ScopeRoot` at all is an unambiguous
+ * attempt to declare a scope root, and the missing type argument is exactly the declaration this
+ * feature refuses to infer.
  */
-export const unwrapReturnTypeAnnotation = (node: ts.TypeNode): ts.TypeNode => {
+export type ScopeRootMarker =
+  | { kind: "none" }
+  | {
+      kind: "scope_root";
+      /** First type argument: the root contract site, resolved by the ordinary identity path. */
+      contractSite: ts.TypeNode;
+      /** Second type argument, captured verbatim. Stage 1 never resolves or verifies it. */
+      lbvTypeNode: ts.TypeNode;
+    }
+  | { kind: "wrong_arity"; typeArgumentCount: number };
+
+/**
+ * Reads a `ScopeRoot<...>` marker at an already parens/`Promise`-unwrapped type node.
+ *
+ * Recognition is by written name with no checker involvement — the same trade the `Promise<T>`
+ * unwrap below already makes. A locally-declared `ScopeRoot` shadows the marker, which is
+ * consistent with v3's rule that identity is what the author wrote.
+ */
+const readScopeRootMarker = (node: ts.TypeNode): ScopeRootMarker => {
+  if (
+    !ts.isTypeReferenceNode(node) ||
+    !ts.isIdentifier(node.typeName) ||
+    node.typeName.text !== SCOPE_ROOT_MARKER_NAME
+  ) {
+    return { kind: "none" };
+  }
+
+  const typeArguments = node.typeArguments ?? [];
+  if (typeArguments.length !== 2) {
+    return { kind: "wrong_arity", typeArgumentCount: typeArguments.length };
+  }
+
+  return {
+    kind: "scope_root",
+    contractSite: typeArguments[0]!,
+    lbvTypeNode: typeArguments[1]!,
+  };
+};
+
+/** Parentheses and `Promise<T>` only — the wrappers that are never themselves the contract. */
+const unwrapAwaitedAnnotation = (node: ts.TypeNode): ts.TypeNode => {
   if (ts.isParenthesizedTypeNode(node)) {
-    return unwrapReturnTypeAnnotation(node.type);
+    return unwrapAwaitedAnnotation(node.type);
   }
   if (
     ts.isTypeReferenceNode(node) &&
@@ -252,9 +299,37 @@ export const unwrapReturnTypeAnnotation = (node: ts.TypeNode): ts.TypeNode => {
     node.typeArguments !== undefined &&
     node.typeArguments.length > 0
   ) {
-    return unwrapReturnTypeAnnotation(node.typeArguments[0]);
+    return unwrapAwaitedAnnotation(node.typeArguments[0]);
   }
   return node;
+};
+
+/**
+ * The `ScopeRoot<...>` marker at a contract site, with parentheses and `Promise<T>` stripped first
+ * so `Promise<ScopeRoot<C, L>>` (an async scope-root factory) reads the same as the sync form.
+ */
+export const scopeRootMarkerAtContractSite = (
+  node: ts.TypeNode,
+): ScopeRootMarker => readScopeRootMarker(unwrapAwaitedAnnotation(node));
+
+/**
+ * Syntactically unwraps a factory return annotation to the contract reference: strips
+ * parentheses, `Promise<T>` wrappers, and the `ScopeRoot<TContract, TLbv>` marker (all by written
+ * name, no checker). The result is what the author wrote — type-level aliases are never followed.
+ * A class `implements` entry passes through unchanged (none of these wrappers is legal there).
+ *
+ * `ScopeRoot` unwraps to its FIRST type argument for exactly the reason `Promise` unwraps to its
+ * type argument: neither is the contract, both wrap it. Every existing consumer of this function —
+ * contract identity, the type-only import specifier, the lifetime-marker walk — therefore enters at
+ * the root contract with no further change. A wrong-arity `ScopeRoot` is left intact here and
+ * reported by {@link resolveAnnotationContract}, which is the one place that can raise it.
+ */
+export const unwrapReturnTypeAnnotation = (node: ts.TypeNode): ts.TypeNode => {
+  const awaited = unwrapAwaitedAnnotation(node);
+  const marker = readScopeRootMarker(awaited);
+  return marker.kind === "scope_root"
+    ? unwrapReturnTypeAnnotation(marker.contractSite)
+    : awaited;
 };
 
 /**
@@ -309,13 +384,32 @@ export type AnnotationContractResolution =
       /** Leftmost identifier as written in the unit's file (for the local-scope check). */
       writtenName: string;
       declSourceFile: ts.SourceFile;
+      /**
+       * Set when the site was written as `ScopeRoot<TContract, TLbv>`. Side-band only: the resolved
+       * contract above is `TContract`, unchanged by the marker. Stage 1 captures the declared lbv
+       * type node and resolves nothing about it.
+       */
+      scopeRoot?: DeclaredScopeRootSite;
     }
   | { kind: "missing_annotation" }
   | { kind: "inline_object" }
   | { kind: "anonymous_union" }
   /** Keyword/array/inline-intersection/other non-reference forms — skipped, not hard errors. */
   | { kind: "unsupported" }
-  | { kind: "unresolved"; writtenName: string };
+  | { kind: "unresolved"; writtenName: string }
+  /** `ScopeRoot` written with other than two type arguments — a hard error, never a silent skip. */
+  | { kind: "scope_root_wrong_arity"; typeArgumentCount: number };
+
+/** The declared scope-root facts read off a contract site, before any verification. */
+export type DeclaredScopeRootSite = {
+  /**
+   * The declared late-bound-value type argument, captured verbatim as written. Stage 1 never
+   * resolves, normalizes, or verifies it; stage 2 checks it against the subtree's scope-demands.
+   */
+  lbvTypeNode: ts.TypeNode;
+  /** `lbvTypeNode` source text, so reporting layers need no AST. */
+  lbvTypeText: string;
+};
 
 /**
  * Resolves a contract site's type reference to its declaration.
@@ -331,6 +425,24 @@ export const resolveAnnotationContract = (
   if (contractSite === undefined) {
     return { kind: "missing_annotation" };
   }
+
+  // Marker-unwrap first, so identity resolves against the ROOT contract while the declared lbv is
+  // captured side-band. Arity is the only thing checked about the marker here; the lbv type
+  // argument is carried verbatim and left entirely alone (stage 2 owns it).
+  const marker = scopeRootMarkerAtContractSite(contractSite);
+  if (marker.kind === "wrong_arity") {
+    return {
+      kind: "scope_root_wrong_arity",
+      typeArgumentCount: marker.typeArgumentCount,
+    };
+  }
+  const scopeRoot: DeclaredScopeRootSite | undefined =
+    marker.kind === "scope_root"
+      ? {
+          lbvTypeNode: marker.lbvTypeNode,
+          lbvTypeText: marker.lbvTypeNode.getText(),
+        }
+      : undefined;
 
   const unwrapped = unwrapReturnTypeAnnotation(contractSite);
 
@@ -378,6 +490,7 @@ export const resolveAnnotationContract = (
     contractName: symbol.getName(),
     writtenName,
     declSourceFile: decl.getSourceFile(),
+    ...(scopeRoot !== undefined ? { scopeRoot } : {}),
   };
 };
 

@@ -44,6 +44,42 @@ export type DiscoveredFactory = {
   dependencyKeys?: string[];
 };
 
+/**
+ * One discovered scope-root registration unit (stage 1).
+ *
+ * Deliberately NOT a {@link DiscoveredFactory}: a scope root claims no cradle key, elects no
+ * default, and reaches no manifest at this stage, so it is kept out of the contract map rather than
+ * flowing into the registration plan. See `docs/design/scope-roots.md` for why the stage-1 boundary
+ * is "discovered and reported, not manifest-emitted".
+ */
+export type DiscoveredScopeRoot = {
+  /** Always true — the marker on the row, so consumers read intent rather than infer it. */
+  isScopeRoot: true;
+  /** Root contract resolved from the marker's first type argument, via the ordinary identity path. */
+  contractName: string;
+  /** Absolute (normalized) path of the file declaring the root contract type. */
+  contractDeclAbsPath: string;
+  /**
+   * Factory identity within the root contract's variant set — the derived implementation name
+   * (`buildAuthRouter` → `authRouter`). The variant is ALWAYS the factory identity, never a type
+   * parameter.
+   */
+  variantName: string;
+  exportName: string;
+  modulePath: string;
+  relImport: string;
+  unitKind: IocUnitKind;
+  /**
+   * The declared late-bound-value type argument, captured verbatim. Stage 1 never resolves or
+   * verifies it; stage 2 checks it against the subtree's scope-demands.
+   */
+  lbvTypeNode: ts.TypeNode;
+  /** `lbvTypeNode` source text, so reporting needs no AST. */
+  lbvTypeText: string;
+  /** Always `"scoped"`: a scope root is resolved per scope by construction, not by policy. */
+  lifetime: IocLifetime;
+};
+
 export type FactoryDiscoveryFileContext = {
   absPath: string;
   sourceFile: ts.SourceFile;

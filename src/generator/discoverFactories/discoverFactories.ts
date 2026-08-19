@@ -5,7 +5,8 @@
 import path from "node:path";
 import ts from "typescript";
 import type { IocConfig } from "../../config/iocConfig.js";
-import type { DiscoveredFactory } from "../types.js";
+import type { DiscoveredFactory, DiscoveredScopeRoot } from "../types.js";
+import { SCOPE_ROOT_MARKER_FORM } from "./contractSite.js";
 import {
   resolveFactorySourceAbsPath,
   type FactoryDiscoveryPaths,
@@ -83,6 +84,26 @@ const formatInvalidAnnotationError = (
     ...offenders.map(
       (o) =>
         `  - ${o.modulePath} export "${o.exportName}": ${invalidAnnotationGuidance(o.skipReason)}`,
+    ),
+  ].join("\n");
+
+type ScopeRootOffender = {
+  modulePath: string;
+  exportName: string;
+};
+
+/**
+ * Wrong-arity `ScopeRoot` is a hard error, not a categorized skip. Writing the marker at all is an
+ * unambiguous attempt to declare a scope root; the missing type argument is precisely the
+ * declaration the tool refuses to infer, so it must be demanded, not worked around.
+ */
+const formatScopeRootArityError = (
+  offenders: readonly ScopeRootOffender[],
+): string =>
+  [
+    `[ioc] ${offenders.length} factory export(s) annotate a scope root with the wrong number of type arguments. The scope-root marker is written \`${SCOPE_ROOT_MARKER_FORM}\`: the first type argument is the root contract resolved from the scope, the second is the declared object type of the scope's late-bound values (e.g. \`ScopeRoot<IRouter, { viewerId: ViewerId }>\`). The late-bound-value set is declared, never inferred from the resolution subtree — see docs/design/scope-roots.md:`,
+    ...offenders.map(
+      (o) => `  - ${o.modulePath} export "${o.exportName}"`,
     ),
   ].join("\n");
 
@@ -244,6 +265,13 @@ export const discoverFactories = (
   contractMap: Map<string, Map<string, DiscoveredFactory>>;
   acceptedFactories: DiscoveredFactory[];
   discoveryFiles: IocDiscoveryAnalysisFiles;
+  /**
+   * Scope-root units, in scan order. Deliberately NOT merged into `contractMap` /
+   * `acceptedFactories`: at stage 1 a scope root claims no cradle key and reaches no manifest, so
+   * it must not enter the registration plan. Units sharing a root contract are variants of one
+   * scope root, distinguished by `variantName` / (`modulePath`, `exportName`).
+   */
+  scopeRoots: DiscoveredScopeRoot[];
 } => {
   const checker = program.getTypeChecker();
   const sourceFileByPath = buildSourceFileIndex(program);
@@ -257,6 +285,8 @@ export const discoverFactories = (
   const discoveryFiles: IocDiscoveryFileRecord[] = [];
   const invalidAnnotationOffenders: InvalidAnnotationOffender[] = [];
   const classUnitOffenders: ClassUnitOffender[] = [];
+  const scopeRootOffenders: ScopeRootOffender[] = [];
+  const scopeRoots: DiscoveredScopeRoot[] = [];
   /** contractName → declaration sites seen (first factory per declaring file). */
   const contractDeclSites = new Map<string, ContractDeclSite[]>();
 
@@ -295,6 +325,15 @@ export const discoverFactories = (
       ) {
         continue;
       }
+      if (
+        outcome.skipReason === IocDiscoverySkipReason.SCOPE_ROOT_WRONG_ARITY
+      ) {
+        scopeRootOffenders.push({
+          modulePath: scan.modulePath,
+          exportName: outcome.exportName,
+        });
+        continue;
+      }
       if (INVALID_ANNOTATION_SKIP_REASONS.has(outcome.skipReason)) {
         invalidAnnotationOffenders.push({
           modulePath: scan.modulePath,
@@ -318,6 +357,8 @@ export const discoverFactories = (
         });
       }
     }
+
+    scopeRoots.push(...scan.scopeRoots);
 
     for (const f of scan.discovered) {
       if (f.contractDeclAbsPath !== undefined) {
@@ -375,6 +416,13 @@ export const discoverFactories = (
     aggregatedErrors.push(formatClassUnitError(classUnitOffenders));
   }
 
+  if (
+    scopeRootOffenders.length > 0 &&
+    runOptions?.tolerateInvalidAnnotations !== true
+  ) {
+    aggregatedErrors.push(formatScopeRootArityError(scopeRootOffenders));
+  }
+
   const collisions = new Map<string, readonly ContractDeclSite[]>();
   for (const [contractName, sites] of contractDeclSites) {
     if (sites.length > 1) {
@@ -408,5 +456,6 @@ export const discoverFactories = (
     contractMap,
     acceptedFactories,
     discoveryFiles: sortedFiles,
+    scopeRoots,
   };
 };

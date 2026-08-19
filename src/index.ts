@@ -34,6 +34,10 @@ export type {
   IocGroupsConfig,
 } from "./groups/resolveGroupPlan.js";
 
+// Scope-root authoring surface: the marker type a scope-root factory's return annotation names.
+// Phantom — nothing here exists at runtime. See `docs/design/scope-roots.md`.
+export type { ScopeRoot } from "./scopeRoots/scopeRoot.js";
+
 // Runtime registration entry point and its override types.
 export { registerIocFromManifest } from "./runtime/bootstrap.js";
 export type {

@@ -2,7 +2,10 @@ import path from "node:path";
 import type { IocConfig } from "../config/iocConfig.js";
 import type { ResolvedContractRegistration } from "../generator/resolveRegistrationPlan.js";
 import { buildRegistrationPlan } from "../generator/resolveRegistrationPlan.js";
-import type { DiscoveredFactory } from "../generator/types.js";
+import type {
+  DiscoveredFactory,
+  DiscoveredScopeRoot,
+} from "../generator/types.js";
 import {
   resolveIocConfigPath,
   resolveProjectRootFromIocConfigPath,
@@ -27,6 +30,11 @@ export type DiscoveryAnalysisResult = {
   readonly discoveryFiles: IocDiscoveryAnalysisFiles;
   readonly contractMap: Map<string, Map<string, DiscoveredFactory>>;
   readonly acceptedFactories: readonly DiscoveredFactory[];
+  /**
+   * Scope-root units, separate from `acceptedFactories` because they take no part in the
+   * registration plan at this stage. See `docs/design/scope-roots.md`.
+   */
+  readonly scopeRoots: readonly DiscoveredScopeRoot[];
   /** Resolved lifetimes (includes `lifetimeSource` when built with scanDirs context). */
   readonly registrationPlan: readonly ResolvedContractRegistration[];
 };
@@ -83,7 +91,7 @@ const runDiscoveryFromResolution = async (
   const program = createIocProgramForDiscovery(projectRoot, files);
 
   try {
-    const { contractMap, acceptedFactories, discoveryFiles } =
+    const { contractMap, acceptedFactories, discoveryFiles, scopeRoots } =
       discoverFactories(
         files,
         program,
@@ -112,6 +120,7 @@ const runDiscoveryFromResolution = async (
       discoveryFiles,
       contractMap,
       acceptedFactories,
+      scopeRoots,
       registrationPlan,
     };
   } catch (error) {

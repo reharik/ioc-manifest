@@ -32,6 +32,12 @@ export const IocDiscoverySkipReason = {
     "class_inherited_contract_not_declared",
   /** v3: constructor is not the single destructured object parameter PROXY injection needs (hard error). */
   CLASS_INVALID_CONSTRUCTOR_SHAPE: "class_invalid_constructor_shape",
+  /**
+   * Scope roots (stage 1): the contract site is written `ScopeRoot<...>` with other than two type
+   * arguments. A hard error — writing the marker is an unambiguous declaration attempt, and the
+   * missing type argument is the one thing the tool refuses to infer.
+   */
+  SCOPE_ROOT_WRONG_ARITY: "scope_root_wrong_arity",
 } as const;
 
 export type IocDiscoverySkipReason =
@@ -65,6 +71,15 @@ export type IocDiscoveryOutcome =
       implementationName: string;
       registrationKey: string;
       discoveredBy: IocDiscoveryStrategy;
+      /**
+       * Set when the unit is a scope root (`ScopeRoot<TContract, TLbv>` at the contract site). Such
+       * a unit is discovered and reported but, at stage 1, reaches no manifest — `contractName` is
+       * the root contract and `registrationKey` is the variant's derived name, not a claimed cradle
+       * key. See `docs/design/scope-roots.md`.
+       */
+      isScopeRoot?: true;
+      /** Scope roots only: the declared lbv type argument as written (captured, never resolved). */
+      declaredLbv?: string;
     }
   | {
       scope: "export";

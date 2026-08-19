@@ -11,12 +11,17 @@ import type {
   IocDiscoveryAnalysisFiles,
   IocDiscoveryOutcome,
 } from "../generator/discoverFactories/discoveryOutcomeTypes.js";
+import type { DiscoveredScopeRoot } from "../generator/types.js";
 import type { ManifestValidationIssue } from "./validateManifest.js";
 import { validateManifest } from "./validateManifest.js";
 
 export type DiscoveryReportInput =
   | IocDiscoveryAnalysisFiles
-  | { discoveryFiles: IocDiscoveryAnalysisFiles };
+  | {
+      discoveryFiles: IocDiscoveryAnalysisFiles;
+      /** Omitted by callers that only have per-file outcomes; the scope-root section is then empty. */
+      scopeRoots?: readonly DiscoveredScopeRoot[];
+    };
 
 export type InspectionContractReport = {
   contractName: string;
@@ -108,6 +113,29 @@ export type DiscoveryExportReportRow = {
   registrationKey?: string;
   /** Set for `class_inherited_contract_not_declared`: the base whose contract was not restated. */
   baseClassName?: string;
+  /** Set when this export is a scope-root unit rather than an ordinary registration. */
+  isScopeRoot?: true;
+  /** Scope roots only: the declared lbv type argument as written (captured, never resolved). */
+  declaredLbv?: string;
+};
+
+/** One scope-root variant — the factory identity is what distinguishes variants of a root. */
+export type DiscoveryScopeRootVariantRow = {
+  variantName: string;
+  exportName: string;
+  modulePath: string;
+  /** The declared lbv type argument as written. Stage 1 never resolves it. */
+  declaredLbv: string;
+};
+
+/**
+ * One scope root, with every factory declaring it as a variant. Reported, not manifest-emitted:
+ * stage 1 keeps scope roots out of the registration plan entirely.
+ */
+export type DiscoveryScopeRootRow = {
+  contractName: string;
+  lifetime: string;
+  variants: readonly DiscoveryScopeRootVariantRow[];
 };
 
 export type DiscoveryReport = {
@@ -115,6 +143,8 @@ export type DiscoveryReport = {
     modulePath: string;
     rows: readonly DiscoveryExportReportRow[];
   }[];
+  /** Grouped by root contract; empty when the input carried no scope-root rows. */
+  scopeRoots: readonly DiscoveryScopeRootRow[];
 };
 
 const outcomeToRows = (
@@ -139,6 +169,10 @@ const outcomeToRows = (
         status: "discovered",
         contractName: outcome.contractName,
         registrationKey: outcome.registrationKey,
+        ...(outcome.isScopeRoot === true ? { isScopeRoot: true as const } : {}),
+        ...(outcome.declaredLbv !== undefined
+          ? { declaredLbv: outcome.declaredLbv }
+          : {}),
       },
     ];
   }
@@ -161,6 +195,40 @@ const isDiscoveryFilesArray = (
   input: DiscoveryReportInput,
 ): input is IocDiscoveryAnalysisFiles => Array.isArray(input);
 
+/**
+ * Groups scope-root units by their root contract. Units sharing a contract are variants of one
+ * scope root; the variant is the factory identity, so grouping needs no type-level analysis.
+ */
+const buildScopeRootRows = (
+  units: readonly DiscoveredScopeRoot[],
+): DiscoveryScopeRootRow[] => {
+  const byContract = new Map<string, DiscoveryScopeRootRow>();
+
+  for (const unit of units) {
+    const row = byContract.get(unit.contractName) ?? {
+      contractName: unit.contractName,
+      lifetime: unit.lifetime,
+      variants: [] as DiscoveryScopeRootVariantRow[],
+    };
+    (row.variants as DiscoveryScopeRootVariantRow[]).push({
+      variantName: unit.variantName,
+      exportName: unit.exportName,
+      modulePath: unit.modulePath,
+      declaredLbv: unit.lbvTypeText,
+    });
+    byContract.set(unit.contractName, row);
+  }
+
+  return Array.from(byContract.values())
+    .sort((a, b) => a.contractName.localeCompare(b.contractName))
+    .map((row) => ({
+      ...row,
+      variants: [...row.variants].sort((a, b) =>
+        a.variantName.localeCompare(b.variantName),
+      ),
+    }));
+};
+
 export const buildDiscoveryReport = (
   analysisOrFiles: DiscoveryReportInput,
 ): DiscoveryReport => {
@@ -169,6 +237,9 @@ export const buildDiscoveryReport = (
   )
     ? analysisOrFiles
     : analysisOrFiles.discoveryFiles;
+  const scopeRootUnits = isDiscoveryFilesArray(analysisOrFiles)
+    ? []
+    : (analysisOrFiles.scopeRoots ?? []);
 
   const files = discoveryFiles
     .slice()
@@ -178,5 +249,5 @@ export const buildDiscoveryReport = (
       rows: file.outcomes.flatMap((o) => outcomeToRows(file.modulePath, o)),
     }));
 
-  return { files };
+  return { files, scopeRoots: buildScopeRootRows(scopeRootUnits) };
 };

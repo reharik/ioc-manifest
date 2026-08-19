@@ -31,6 +31,7 @@ describe("formatDiscoveryReport", () => {
             ],
           },
         ],
+        scopeRoots: [],
       };
 
       const text = formatDiscoveryReport(report, { color: false });

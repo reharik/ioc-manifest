@@ -126,11 +126,24 @@ export const formatDiscoveryReport = (
 
       lines.push(`  ${icon} ${c.bold}${row.exportName}${c.reset}`);
 
-      if (row.contractName) {
-        lines.push(`    ${c.dim}contract:${c.reset} ${row.contractName}`);
+      if (row.isScopeRoot === true) {
+        lines.push(`    ${c.dim}unit:${c.reset} ${c.cyan}scope-root${c.reset}`);
       }
 
-      if (row.registrationKey) {
+      if (row.contractName) {
+        const label = row.isScopeRoot === true ? "root contract" : "contract";
+        lines.push(`    ${c.dim}${label}:${c.reset} ${row.contractName}`);
+      }
+
+      if (row.declaredLbv) {
+        lines.push(`    ${c.dim}declared lbv:${c.reset} ${row.declaredLbv}`);
+      }
+
+      // A scope root claims no cradle key at stage 1, so printing one would be a lie; the derived
+      // name is reported as what it actually is — the variant id within the root contract.
+      if (row.registrationKey && row.isScopeRoot === true) {
+        lines.push(`    ${c.dim}variant:${c.reset} ${row.registrationKey}`);
+      } else if (row.registrationKey) {
         lines.push(`    ${c.dim}registrationKey:${c.reset} ${row.registrationKey}`);
       }
 
@@ -145,6 +158,25 @@ export const formatDiscoveryReport = (
       }
     }
 
+    lines.push("");
+  }
+
+  if (report.scopeRoots.length > 0) {
+    lines.push(`${c.bold}Scope roots:${c.reset}`);
+    for (const root of report.scopeRoots) {
+      lines.push(
+        `  ${c.bold}${root.contractName}${c.reset} ${c.dim}(lifetime: ${root.lifetime}; not manifest-emitted at this stage)${c.reset}`,
+      );
+      for (const variant of root.variants) {
+        lines.push(`    - ${variant.variantName}`);
+        lines.push(
+          `      ${c.dim}export:${c.reset} ${variant.exportName} ${c.dim}in${c.reset} ${variant.modulePath}`,
+        );
+        lines.push(
+          `      ${c.dim}declared lbv:${c.reset} ${variant.declaredLbv}`,
+        );
+      }
+    }
     lines.push("");
   }
 

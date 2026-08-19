@@ -18,6 +18,7 @@ import {
   resolveAnnotationContract,
   unwrapReturnTypeAnnotation,
   type AnnotationContractResolution,
+  type DeclaredScopeRootSite,
   type DiscoveredUnitDecl,
 } from "./contractSite.js";
 import {
@@ -32,6 +33,7 @@ import {
 } from "../manifestPaths.js";
 import type {
   DiscoveredFactory,
+  DiscoveredScopeRoot,
   FactoryDiscoveryFileContext,
 } from "../types.js";
 
@@ -223,6 +225,11 @@ export type ScanFactoryFileResult = {
   modulePath: string;
   outcomes: IocDiscoveryOutcome[];
   discovered: DiscoveredFactory[];
+  /**
+   * Scope-root units, kept out of {@link discovered} on purpose: at stage 1 they reach no manifest,
+   * so they must not enter the contract map or the registration plan.
+   */
+  scopeRoots: DiscoveredScopeRoot[];
 };
 
 const matchesFactoryNaming = (
@@ -254,6 +261,8 @@ const skipReasonForContractResolution = (
       return IocDiscoverySkipReason.CONTRACT_NOT_RESOLVED;
     case "unresolved":
       return IocDiscoverySkipReason.CONTRACT_NOT_FOUND;
+    case "scope_root_wrong_arity":
+      return IocDiscoverySkipReason.SCOPE_ROOT_WRONG_ARITY;
     default:
       return undefined;
   }
@@ -324,6 +333,8 @@ type AcceptedUnit = {
   contractName: string;
   declSourceFile: ts.SourceFile;
   contractSite: ts.TypeNode;
+  /** Present when the contract site was written `ScopeRoot<TContract, TLbv>`. */
+  scopeRoot?: DeclaredScopeRootSite;
 };
 
 export const scanFactoryFile = (
@@ -340,6 +351,7 @@ export const scanFactoryFile = (
 
   const modulePath = computeDiscoveryModulePath(absPath, projectRoot, scanDirs);
   const discovered: DiscoveredFactory[] = [];
+  const scopeRoots: DiscoveredScopeRoot[] = [];
   const outcomes: IocDiscoveryOutcome[] = [];
 
   const sourceText = sourceFile.getText();
@@ -357,7 +369,7 @@ export const scanFactoryFile = (
       status: IocDiscoveryStatus.SKIPPED,
       skipReason: IocDiscoverySkipReason.NO_FACTORY_PATTERN_IN_SOURCE,
     });
-    return { modulePath, outcomes, discovered };
+    return { modulePath, outcomes, discovered, scopeRoots };
   }
 
   const analysis = collectFileAnalysisForFactoryDiscovery(sourceFile);
@@ -423,7 +435,7 @@ export const scanFactoryFile = (
         skipReason: IocDiscoverySkipReason.NO_MATCHING_EXPORT,
       });
     }
-    return { modulePath, outcomes, discovered };
+    return { modulePath, outcomes, discovered, scopeRoots };
   }
 
   const skip = (
@@ -499,6 +511,45 @@ export const scanFactoryFile = (
       },
     );
 
+    const relImport = computeManifestModuleSpecifier(
+      absPath,
+      generatedDir,
+      scanDirs,
+      { projectRoot: context.projectRoot },
+    );
+
+    // A scope root branches here and nowhere else: identity, the contract-type import specifier and
+    // the derived names were all produced by the paths above, unchanged. What differs is only where
+    // the row lands — a separate collection that reaches no manifest at stage 1.
+    if (row.scopeRoot !== undefined) {
+      scopeRoots.push({
+        isScopeRoot: true,
+        contractName: row.contractName,
+        contractDeclAbsPath: path.normalize(row.declSourceFile.fileName),
+        variantName: row.implementationName,
+        exportName: row.exportName,
+        modulePath,
+        relImport,
+        unitKind: row.unitKind,
+        lbvTypeNode: row.scopeRoot.lbvTypeNode,
+        lbvTypeText: row.scopeRoot.lbvTypeText,
+        lifetime: "scoped",
+      });
+
+      outcomes.push({
+        scope: "export",
+        exportName: row.exportName,
+        status: IocDiscoveryStatus.DISCOVERED,
+        contractName: row.contractName,
+        implementationName: row.implementationName,
+        registrationKey: row.registrationKey,
+        discoveredBy: row.discoveredBy,
+        isScopeRoot: true,
+        declaredLbv: row.scopeRoot.lbvTypeText,
+      });
+      continue;
+    }
+
     discovered.push({
       unitKind: row.unitKind,
       contractName: row.contractName,
@@ -508,12 +559,7 @@ export const scanFactoryFile = (
       exportName: row.exportName,
       registrationKey: row.registrationKey,
       modulePath,
-      relImport: computeManifestModuleSpecifier(
-        absPath,
-        generatedDir,
-        scanDirs,
-        { projectRoot: context.projectRoot },
-      ),
+      relImport,
       discoveredBy: row.discoveredBy,
     });
 
@@ -528,7 +574,7 @@ export const scanFactoryFile = (
     });
   }
 
-  return { modulePath, outcomes, discovered };
+  return { modulePath, outcomes, discovered, scopeRoots };
 };
 
 type SkipFn = (
@@ -606,6 +652,9 @@ const acceptFactoryUnit = (args: {
       contractName: resolution.contractName,
       declSourceFile: resolution.declSourceFile,
       contractSite: unwrapReturnTypeAnnotation(unit.decl.type!),
+      ...(resolution.scopeRoot !== undefined
+        ? { scopeRoot: resolution.scopeRoot }
+        : {}),
     },
   };
 };
