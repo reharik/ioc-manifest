@@ -232,15 +232,15 @@ describe("scope-root registration units (stage 1: discovery)", () => {
         ["authRouter", "publicRouter", "workerRouter"],
       );
 
+      // One line per unit: the scope-root marker, the root contract, and the declared lbv all ride
+      // the export's own row. Without stage-2 results the lbv is shown as written.
       const text = formatDiscoveryReport(report, { color: false });
-      assert.match(text, /Scope roots:/);
-      assert.match(text, /IRouter \(lifetime: scoped; not manifest-emitted/);
-      assert.match(text, /unit: scope-root/);
-      assert.match(text, /root contract: IRouter/);
-      assert.match(text, /declared lbv: \{ viewerId: string \}/);
-      assert.match(text, /variant: authRouter/);
+      assert.match(
+        text,
+        /⬢ buildAuthRouter\s+→ IRouter \[scope root\]\s+lbv: \{ viewerId: string \}\s+unverified/,
+      );
       // The ordinary factory still reports as an ordinary registration.
-      assert.match(text, /registrationKey: systemClock/);
+      assert.match(text, /✔ buildSystemClock\s+→ Clock\s+key: systemClock/);
     });
 
     it("should report no scope roots when the input carries none", () => {
@@ -251,7 +251,9 @@ describe("scope-root registration units (stage 1: discovery)", () => {
 
       const report = buildDiscoveryReport({ discoveryFiles, scopeRoots });
       assert.deepStrictEqual(report.scopeRoots, []);
-      assert.ok(!formatDiscoveryReport(report, { color: false }).includes("Scope roots:"));
+      assert.ok(
+        !formatDiscoveryReport(report, { color: false }).includes("[scope root]"),
+      );
     });
   });
 });

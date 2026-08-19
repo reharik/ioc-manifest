@@ -100,6 +100,11 @@ export type ScopeRootVariantVerification = {
   modulePath: string;
   /** The declared lbv as written. The raw node stays on the record; this is its source text. */
   declaredLbv: string;
+  /**
+   * Property names read off the declared lbv type, sorted. Reporting only — the report renders the
+   * key list rather than the whole type text, and this is the same list the walk was seeded with.
+   */
+  declaredKeys: readonly string[];
   /** Scope-demands of this variant's subtree, sorted by key. */
   scopeDemands: readonly ScopeRootScopeDemand[];
   /**
@@ -804,6 +809,7 @@ export const verifyScopeRootVariant = (
     exportName: variant.exportName,
     modulePath: variant.modulePath,
     declaredLbv: variant.lbvTypeText,
+    declaredKeys: [...declaredKeys].sort((a, b) => a.localeCompare(b)),
     scopeDemands,
     generationResolvedKeys: Array.from(generationResolvedByKey.values()).sort(
       (a, b) => a.key.localeCompare(b.key),

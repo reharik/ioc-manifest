@@ -3,11 +3,20 @@
  */
 export {
   buildDiscoveryReport,
+  buildGroupReportsFromManifest,
+  buildGroupReportsFromPlans,
   buildInspectionReport,
+  filterDiscoveryReportByContract,
+  filterInspectionReportByContract,
+  type BuildInspectionReportOptions,
   type DiscoveryExportReportRow,
   type DiscoveryReport,
   type DiscoveryReportInput,
+  type DiscoveryScopeRootRow,
+  type DiscoverySummary,
+  type GroupRejectionReportRow,
   type InspectionContractReport,
+  type InspectionGroupReport,
   type InspectionReport,
 } from "./reports.js";
 
@@ -21,9 +30,28 @@ export {
 export {
   formatDiscoveryReport,
   formatInspectionReport,
-  formatRegistrationLifetimeInspect,
   type FormatDiscoveryReportOptions,
+  type FormatInspectionReportOptions,
 } from "./formatReports.js";
+
+export {
+  formatDiscoveryReportJson,
+  formatInspectionReportJson,
+  toDiscoveryReportJson,
+  toInspectionReportJson,
+  type DiscoveryReportJson,
+  type InspectionReportJson,
+} from "./reportJson.js";
+
+export {
+  glossForSkipReason,
+  IOC_DISCOVERY_SKIP_REASON_GLOSS,
+  IOC_DISCOVERY_SKIP_REASON_PARTITION,
+  isConditionalNearMissReason,
+  partitionForSkipReason,
+  type DiscoveryRowPartition,
+  type NearMissSkipReason,
+} from "./skipReasonPartition.js";
 
 export {
   validateManifest,

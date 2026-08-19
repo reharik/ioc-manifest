@@ -36,6 +36,37 @@ export const getDiscoveryTargetFiles = async (
   return unique.sort((a, b) => a.localeCompare(b));
 };
 
+/**
+ * Files the config's `discovery.excludes` removed from the scan: everything the include patterns
+ * would have matched, minus what {@link getDiscoveryTargetFiles} actually returns.
+ *
+ * Read-only and inspection-only — generation never calls this, and neither call widens the scan
+ * set. It runs the *same* resolution twice rather than reimplementing pattern matching, so the two
+ * sets can never disagree about what an exclude pattern means. The generated directory is excluded
+ * from both sides: it is tool machinery, not something the user's config chose to skip.
+ */
+export const getConfigExcludedFiles = async (
+  scanDirs: ResolvedScanDir[],
+  includePatterns: string[],
+  excludePatterns: string[],
+  generatedDir: string,
+): Promise<string[]> => {
+  if (excludePatterns.length === 0) {
+    return [];
+  }
+  const [candidates, scanned] = await Promise.all([
+    getDiscoveryTargetFiles(scanDirs, includePatterns, [], generatedDir),
+    getDiscoveryTargetFiles(
+      scanDirs,
+      includePatterns,
+      excludePatterns,
+      generatedDir,
+    ),
+  ]);
+  const kept = new Set(scanned);
+  return candidates.filter((file) => !kept.has(file));
+};
+
 export type IocTsconfigContext = {
   readonly options: ts.CompilerOptions;
   readonly customConditions: readonly string[] | undefined;

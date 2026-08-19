@@ -12,6 +12,7 @@ import {
   shouldIncludeImplInCollectionGroup,
   type AssignableImplementationMember,
   type ContractDefaultGroupMember,
+  type GroupMembershipRejection,
 } from "./baseTypeAssignability.js";
 import {
   IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS,
@@ -65,6 +66,11 @@ export type GroupPlan =
       baseTypeId: string;
       baseTypeArg?: string;
       members: readonly AssignableImplementationMember[];
+      /**
+       * Candidates the membership pass considered and dropped. Recording only — never emitted to
+       * the manifest, never consulted by membership. Reaches `ioc inspect` and nothing else.
+       */
+      rejections: readonly GroupMembershipRejection[];
     }
   | {
       groupName: string;
@@ -73,6 +79,8 @@ export type GroupPlan =
       baseTypeId: string;
       baseTypeArg?: string;
       members: readonly ContractDefaultGroupMember[];
+      /** See the collection variant: recorded for inspection, never emitted. */
+      rejections: readonly GroupMembershipRejection[];
     };
 
 export type GroupPlanIssue =
@@ -473,6 +481,10 @@ const runGroupPlan = (
         ? { baseTypeArg: entry.baseTypeArg }
         : {};
 
+    // Rejection sink: filled by the same membership walk that selects members, so recording costs
+    // no second pass and cannot change the verdict.
+    const rejections: GroupMembershipRejection[] = [];
+
     if (entry.kind === "object") {
       const objectMembers = collectContractDefaultMembersAssignableToBase(
         checker,
@@ -481,6 +493,7 @@ const runGroupPlan = (
         discovery.scanDirs,
         plans,
         resolvedBase.type,
+        rejections,
       );
 
       if (objectMembers.length === 0) {
@@ -493,6 +506,7 @@ const runGroupPlan = (
           baseTypeId: canonical.baseTypeId,
           ...baseTypeArgField,
           members: [],
+          rejections,
         });
         continue;
       }
@@ -517,6 +531,7 @@ const runGroupPlan = (
         baseTypeId: canonical.baseTypeId,
         ...baseTypeArgField,
         members: built.members,
+        rejections,
       });
       continue;
     }
@@ -529,6 +544,7 @@ const runGroupPlan = (
       plans,
       resolvedBase.type,
       shouldIncludeImplInCollectionGroup,
+      rejections,
     );
 
     if (members.length === 0) {
@@ -541,6 +557,7 @@ const runGroupPlan = (
         baseTypeId: canonical.baseTypeId,
         ...baseTypeArgField,
         members: [],
+        rejections,
       });
       continue;
     }
@@ -559,6 +576,7 @@ const runGroupPlan = (
       baseTypeId: canonical.baseTypeId,
       ...baseTypeArgField,
       members,
+      rejections,
     });
   }
 

@@ -19,7 +19,11 @@ import {
   resolveProjectRootFromIocConfigPath,
   tryLoadIocConfig,
 } from "../config/loadIocConfig.js";
-import type { IocGeneratedContainerManifest } from "../core/manifest.js";
+import {
+  IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS,
+  type IocGeneratedContainerManifest,
+  type IocGroupsManifest,
+} from "../core/manifest.js";
 import {
   mergeManifestOptionsWithIocConfig,
   resolveManifestOptions,
@@ -28,9 +32,12 @@ import type { ResolvedScanDir } from "../generator/manifestPaths.js";
 import {
   buildDiscoveryReport,
   buildInspectionReport,
+  filterDiscoveryReportByContract,
+  filterInspectionReportByContract,
   formatDiscoveryReport,
+  formatDiscoveryReportJson,
   formatInspectionReport,
-  formatRegistrationLifetimeInspect,
+  formatInspectionReportJson,
 } from "../inspection/index.js";
 import {
   resolveDiscoveryManifestContext,
@@ -43,6 +50,22 @@ import {
 
 type GeneratedMainManifestModule = {
   iocManifest: IocGeneratedContainerManifest;
+};
+
+/**
+ * Group roots live as extra top-level manifest properties alongside the fixed keys, so reading them
+ * back is "everything that is not fixed". Shape-checked in `buildGroupReportsFromManifest`.
+ */
+const extractManifestGroupRoots = (
+  manifest: IocGeneratedContainerManifest,
+): IocGroupsManifest => {
+  const groups: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(manifest)) {
+    if (!IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS.has(key)) {
+      groups[key] = value;
+    }
+  }
+  return groups as IocGroupsManifest;
 };
 
 const formatResolvedScanDir = (e: ResolvedScanDir): string => {
@@ -147,10 +170,16 @@ const main = async (): Promise<void> => {
     const analysis = await runDiscoveryAnalysis({
       reuseResolution: resolved,
     });
-    const report = buildDiscoveryReport(analysis);
-    console.log(formatDiscoveryReport(report));
-    console.log("");
-    console.log(formatRegistrationLifetimeInspect(analysis.registrationPlan));
+    const full = buildDiscoveryReport(analysis);
+    const report =
+      cli.contract !== undefined
+        ? filterDiscoveryReportByContract(full, cli.contract)
+        : full;
+    console.log(
+      cli.json
+        ? formatDiscoveryReportJson(report)
+        : formatDiscoveryReport(report, { verbose: cli.verbose }),
+    );
     return;
   }
 
@@ -159,8 +188,16 @@ const main = async (): Promise<void> => {
     searchStart,
   );
 
-  const report = buildInspectionReport(mainMod.iocManifest.contracts);
-  console.log(formatInspectionReport(report));
+  const full = buildInspectionReport(mainMod.iocManifest.contracts, {
+    groups: extractManifestGroupRoots(mainMod.iocManifest),
+  });
+  const report =
+    cli.contract !== undefined
+      ? filterInspectionReportByContract(full, cli.contract)
+      : full;
+  console.log(
+    cli.json ? formatInspectionReportJson(report) : formatInspectionReport(report),
+  );
 };
 
 main().catch((error: unknown) => {

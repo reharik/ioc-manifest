@@ -9,7 +9,7 @@ Usage:
   ioc [--help|-h]
   ioc generate [--config <path> | -c <path>] [--project <path>]
   ioc generate [--help|-h]
-  ioc inspect [--discovery] [--config <path> | -c <path>] [--project <path>]
+  ioc inspect [--discovery] [--verbose] [--contract <substring>] [--json] [--config <path> | -c <path>] [--project <path>]
   ioc inspect [--help|-h]
   ioc validate [--json] [--config <path> | -c <path>] [--project <path>]
   ioc validate [--help|-h]
@@ -21,7 +21,9 @@ Commands:
 
 Options:
   --discovery           (inspect only) Re-run discovery and registration planning; do not read manifest.
-  --json                (validate only) Emit issues as a JSON array for CI.
+  --verbose             (inspect --discovery) Also show not-a-candidate rows, hidden by default.
+  --contract SUBSTRING  (inspect only) Show only rows whose contract name (or, with --discovery, export name) contains SUBSTRING, case-insensitively.
+  --json                (inspect, validate) Emit the full report as JSON for CI and tooling.
   --config PATH   -c    Path to ioc.config.ts
   --project PATH       Directory to resolve config from (default: cwd)
 
@@ -32,7 +34,7 @@ Errors:
 const isHelpFlag = (s: string): boolean => s === "--help" || s === "-h";
 
 const conciseUsageTail = (): string =>
-  "\nUsage: ioc (--help|-h) | ioc generate [--config <path>|-c <path>] [--project <path>] | ioc inspect [--discovery] [--config <path>|-c <path>] [--project <path>] | ioc validate [--json] [--config <path>|-c <path>] [--project <path>]";
+  "\nUsage: ioc (--help|-h) | ioc generate [--config <path>|-c <path>] [--project <path>] | ioc inspect [--discovery] [--verbose] [--contract <substring>] [--json] [--config <path>|-c <path>] [--project <path>] | ioc validate [--json] [--config <path>|-c <path>] [--project <path>]";
 
 export type IocGenerateCliOptions = {
   iocConfigPath?: string;
@@ -43,6 +45,11 @@ export type IocInspectCliOptions = {
   iocConfigPath?: string;
   projectDir?: string;
   discovery: boolean;
+  /** Human output only: show not-a-candidate rows. Never affects `--json`, which is always complete. */
+  verbose: boolean;
+  json: boolean;
+  /** Case-insensitive contains-match narrowing the rows shown. */
+  contract?: string;
 };
 
 export type IocValidateCliOptions = {
@@ -97,7 +104,9 @@ export const parseIocCliArgv = (
 
   let iocConfigPath: string | undefined;
   let projectDir: string | undefined;
+  let contract: string | undefined;
   let discovery = false;
+  let verbose = false;
   let json = false;
 
   for (let i = 1; i < args.length; i += 1) {
@@ -114,11 +123,30 @@ export const parseIocCliArgv = (
       discovery = true;
       continue;
     }
+    if (a === "--verbose") {
+      if (command !== "inspect") {
+        throw cliParseError("--verbose is only valid with the inspect command.");
+      }
+      verbose = true;
+      continue;
+    }
     if (a === "--json") {
-      if (command !== "validate") {
-        throw cliParseError("--json is only valid with the validate command.");
+      if (command !== "validate" && command !== "inspect") {
+        throw cliParseError(
+          "--json is only valid with the inspect and validate commands.",
+        );
       }
       json = true;
+      continue;
+    }
+    if (a === "--contract" && args[i + 1]) {
+      if (command !== "inspect") {
+        throw cliParseError(
+          "--contract is only valid with the inspect command.",
+        );
+      }
+      contract = args[i + 1];
+      i += 1;
       continue;
     }
     if ((a === "--config" || a === "-c") && args[i + 1]) {
@@ -162,7 +190,10 @@ export const parseIocCliArgv = (
     options: {
       ...(iocConfigPath !== undefined ? { iocConfigPath } : {}),
       ...(projectDir !== undefined ? { projectDir } : {}),
+      ...(contract !== undefined ? { contract } : {}),
       discovery,
+      verbose,
+      json,
     },
   };
 };

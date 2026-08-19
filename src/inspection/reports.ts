@@ -1,21 +1,42 @@
 /**
  * @fileoverview Builds structured reports for inspection: manifest contracts → human-oriented rows,
  * plus discovery-oriented summaries from analyzer inputs.
+ *
+ * Two commands, two questions. `inspect` reports **state** — what the manifest is: contracts, keys,
+ * defaults, groups. `inspect --discovery` reports **process** — what the scan did: per-export
+ * outcomes, near-misses, scope-root verification. Both build the full record here; hiding rows and
+ * filtering is a presentation concern applied on top (see {@link filterDiscoveryReportByContract}).
  */
 import { selectDefaultImplementationName } from "../core/defaultImplementationSelection.js";
 import type {
   IocContractManifest,
+  IocGroupsManifest,
+  IocGroupRootManifest,
   ModuleFactoryManifestMetadata,
 } from "../core/manifest.js";
-import type {
-  IocDiscoveryAnalysisFiles,
-  IocDiscoveryOutcome,
+import {
+  IocDiscoverySkipReason,
+  IocDiscoveryStatus,
+  type IocDiscoveryAnalysisFiles,
+  type IocDiscoveryOutcome,
 } from "../generator/discoverFactories/discoveryOutcomeTypes.js";
+import type { ResolvedContractRegistration } from "../generator/resolveRegistrationPlan.js";
 import type { DiscoveredScopeRoot } from "../generator/types.js";
 import type {
   ScopeRootVariantVerification,
   ScopeRootVerificationResult,
 } from "../generator/verifyScopeRoots.js";
+import {
+  glossForGroupRejection,
+  type GroupMembershipRejectionReason,
+} from "../groups/baseTypeAssignability.js";
+import type { GroupPlan } from "../groups/resolveGroupPlan.js";
+import {
+  glossForSkipReason,
+  isConditionalNearMissReason,
+  partitionForSkipReason,
+  type DiscoveryRowPartition,
+} from "./skipReasonPartition.js";
 import type { ManifestValidationIssue } from "./validateManifest.js";
 import { validateManifest } from "./validateManifest.js";
 
@@ -27,7 +48,46 @@ export type DiscoveryReportInput =
       scopeRoots?: readonly DiscoveredScopeRoot[];
       /** Stage-2 verification, matched to variants by (modulePath, exportName). Omitted ⇒ unverified. */
       scopeRootVerification?: ScopeRootVerificationResult;
+      /**
+       * Resolved lifetimes, joined onto discovered rows by (modulePath, exportName). This is what
+       * lets a discovered row carry `scoped (lifetime-marker)` instead of a separate lifetime
+       * section repeating every unit a second time.
+       */
+      registrationPlan?: readonly ResolvedContractRegistration[];
+      /** Group plans from the non-throwing analyzer; carries membership and rejections. */
+      groupPlans?: readonly GroupPlan[];
+      /**
+       * Module paths the config's `discovery.excludes` kept out of the scan, resolved by
+       * `runDiscoveryAnalysis`. Rendered as synthetic rows — see {@link buildExcludedFileEntries}.
+       */
+      excludedFiles?: readonly string[];
     };
+
+/** One rejected group candidate, flattened for reporting. */
+export type GroupRejectionReportRow = {
+  contractName: string;
+  /** Present for implementation-level rejections; absent when the whole contract was dropped. */
+  registrationKey?: string;
+  /** Verbatim reason code — the grep handle. */
+  reason: GroupMembershipRejectionReason;
+  gloss: string;
+};
+
+/**
+ * One configured group. Built either from the generated manifest (`inspect`, no rejections — the
+ * manifest never carries them) or from a group plan (`inspect --discovery`, rejections included).
+ */
+export type InspectionGroupReport = {
+  groupName: string;
+  kind: "collection" | "object";
+  baseType: string;
+  baseTypeArg?: string;
+  /** `memberName` is the contract name for collection groups, the contract key for object groups. */
+  members: readonly { memberName: string; registrationKey: string }[];
+  rejections: readonly GroupRejectionReportRow[];
+  /** True when this view could not know about rejections (manifest-sourced groups). */
+  rejectionsUnavailable?: true;
+};
 
 export type InspectionContractReport = {
   contractName: string;
@@ -46,6 +106,11 @@ export type InspectionContractReport = {
 export type InspectionReport = {
   contracts: readonly InspectionContractReport[];
   manifestIssues: readonly ManifestValidationIssue[];
+  groups: readonly InspectionGroupReport[];
+  /** Present when a `--contract` filter was applied; rows are a subset, counts are not. */
+  filter?: { contract: string };
+  /** Contract count over the unfiltered set, so a filtered view still says how much it hid. */
+  totalContractCount: number;
 };
 
 const pickDefault = (
@@ -72,8 +137,111 @@ const pickDefault = (
   }
 };
 
+const isGroupRootManifest = (value: unknown): value is IocGroupRootManifest => {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<IocGroupRootManifest>;
+  return (
+    (candidate.kind === "collection" || candidate.kind === "object") &&
+    typeof candidate.baseType === "string" &&
+    candidate.members !== undefined
+  );
+};
+
+/**
+ * Group roots as the generated manifest carries them. Members are real; rejections are not knowable
+ * from a manifest — the membership pass that recorded them ran at generation.
+ */
+export const buildGroupReportsFromManifest = (
+  groups: IocGroupsManifest | undefined,
+): InspectionGroupReport[] => {
+  if (groups === undefined) return [];
+
+  return Object.keys(groups)
+    .sort((a, b) => a.localeCompare(b))
+    .flatMap((groupName) => {
+      const root = groups[groupName];
+      if (!isGroupRootManifest(root)) return [];
+
+      const members = Array.isArray(root.members)
+        ? root.members.map((leaf) => ({
+            memberName: leaf.contractName,
+            registrationKey: leaf.registrationKey,
+          }))
+        : Object.keys(root.members)
+            .sort((a, b) => a.localeCompare(b))
+            .map((contractKey) => ({
+              memberName: contractKey,
+              registrationKey: (
+                root.members as Record<
+                  string,
+                  { contractName: string; registrationKey: string }
+                >
+              )[contractKey]!.registrationKey,
+            }));
+
+      return [
+        {
+          groupName,
+          kind: root.kind,
+          baseType: root.baseType,
+          ...(root.baseTypeArg !== undefined
+            ? { baseTypeArg: root.baseTypeArg }
+            : {}),
+          members,
+          rejections: [],
+          rejectionsUnavailable: true as const,
+        },
+      ];
+    });
+};
+
+/** Group plans from the generator-side membership pass — members and the candidates it dropped. */
+export const buildGroupReportsFromPlans = (
+  plans: readonly GroupPlan[],
+): InspectionGroupReport[] =>
+  [...plans]
+    .sort((a, b) => a.groupName.localeCompare(b.groupName))
+    .map((plan) => ({
+      groupName: plan.groupName,
+      kind: plan.kind,
+      baseType: plan.baseType,
+      ...(plan.baseTypeArg !== undefined
+        ? { baseTypeArg: plan.baseTypeArg }
+        : {}),
+      members:
+        plan.kind === "collection"
+          ? plan.members.map((member) => ({
+              memberName: member.contractName,
+              registrationKey: member.registrationKey,
+            }))
+          : plan.members.map((member) => ({
+              memberName: member.contractKey,
+              registrationKey: member.registrationKey,
+            })),
+      rejections: [...plan.rejections]
+        .sort(
+          (a, b) =>
+            a.contractName.localeCompare(b.contractName) ||
+            (a.registrationKey ?? "").localeCompare(b.registrationKey ?? ""),
+        )
+        .map((rejection) => ({
+          contractName: rejection.contractName,
+          ...(rejection.registrationKey !== undefined
+            ? { registrationKey: rejection.registrationKey }
+            : {}),
+          reason: rejection.reason,
+          gloss: glossForGroupRejection(rejection.reason),
+        })),
+    }));
+
+export type BuildInspectionReportOptions = {
+  /** Group roots read off the generated manifest (top-level non-fixed keys). */
+  groups?: IocGroupsManifest;
+};
+
 export const buildInspectionReport = (
   contracts: IocContractManifest,
+  options?: BuildInspectionReportOptions,
 ): InspectionReport => {
   const manifestIssues = validateManifest(contracts);
 
@@ -107,7 +275,12 @@ export const buildInspectionReport = (
     },
   );
 
-  return { contracts: contractsOut, manifestIssues };
+  return {
+    contracts: contractsOut,
+    manifestIssues,
+    groups: buildGroupReportsFromManifest(options?.groups),
+    totalContractCount: contractsOut.length,
+  };
 };
 
 export type DiscoveryExportReportRow = {
@@ -116,13 +289,28 @@ export type DiscoveryExportReportRow = {
   status: "discovered" | "skipped";
   contractName?: string;
   skipReason?: string;
+  /**
+   * Which half of the default screen this row belongs to. Set on skipped rows only — a discovered
+   * row is never hidden. See `skipReasonPartition.ts` for the classification.
+   */
+  partition?: DiscoveryRowPartition;
+  /** One-sentence human gloss for {@link skipReason}, when the reason carries one. */
+  gloss?: string;
   registrationKey?: string;
+  /** Resolved lifetime, joined from the registration plan (discovered non-scope-root rows). */
+  lifetime?: string;
+  /** Where {@link lifetime} came from, verbatim (`lifetime-marker`, `discovery-root`, …). */
+  lifetimeSource?: string;
   /** Set for `class_inherited_contract_not_declared`: the base whose contract was not restated. */
   baseClassName?: string;
   /** Set when this export is a scope-root unit rather than an ordinary registration. */
   isScopeRoot?: true;
   /** Scope roots only: the declared lbv type argument as written (captured, never resolved). */
   declaredLbv?: string;
+  /** Scope roots only: property names read off the declared lbv, when verification supplied them. */
+  declaredLbvKeys?: readonly string[];
+  /** Scope roots only: the stage-2 verdict for this variant, when verification ran. */
+  scopeRootVerification?: DiscoveryScopeRootVerificationRow;
 };
 
 /** Stage-2 verification of one variant, flattened for reporting. */
@@ -158,6 +346,8 @@ export type DiscoveryScopeRootVariantRow = {
   modulePath: string;
   /** The declared lbv type argument as written. The record keeps the raw node; this is its text. */
   declaredLbv: string;
+  /** Property names read off the declared lbv, when verification supplied them. */
+  declaredKeys?: readonly string[];
   /**
    * Present only when the caller supplied stage-2 results. Verification is per variant and never
    * merged across the variants of a root contract.
@@ -175,6 +365,22 @@ export type DiscoveryScopeRootRow = {
   variants: readonly DiscoveryScopeRootVariantRow[];
 };
 
+/** Footer counts. Always computed over the FULL scan, never over a filtered or hidden subset. */
+export type DiscoverySummary = {
+  /** Files that entered the scan. Excluded files are not among them and are counted separately. */
+  filesScanned: number;
+  unitsDiscovered: number;
+  nearMisses: number;
+  /** Scanned files whose every row is not-a-candidate — the ones the default screen omits. */
+  notACandidateFiles: number;
+  /**
+   * Files the config's `discovery.excludes` removed before the scan. Counted in **files**, not
+   * exports: naming an excluded file's exports would mean parsing exactly the files the config
+   * asked us not to parse. Called out on its own in the footer so a stale exclude has a heartbeat.
+   */
+  filesExcludedByConfig: number;
+};
+
 export type DiscoveryReport = {
   files: readonly {
     modulePath: string;
@@ -182,23 +388,122 @@ export type DiscoveryReport = {
   }[];
   /** Grouped by root contract; empty when the input carried no scope-root rows. */
   scopeRoots: readonly DiscoveryScopeRootRow[];
+  /** Configured groups with membership and rejections; empty when no group plan was supplied. */
+  groups: readonly InspectionGroupReport[];
+  /**
+   * Module paths `discovery.excludes` kept out of the scan, sorted. Carried unconditionally (the
+   * complete-record rule) even though the default human screen hides the matching rows.
+   */
+  excludedByConfig: readonly string[];
+  summary: DiscoverySummary;
+  /** Present when a `--contract` filter was applied; rows are a subset, {@link summary} is not. */
+  filter?: { contract: string };
+};
+
+/**
+ * Contracts a concrete class in this scan actually registered. Mirrors the condition
+ * `warnUnusableFactoryExports` uses: an abstract base declaring a contract that something concrete
+ * registers is doing its job and stays a not-a-candidate row.
+ */
+const contractsRegisteredByConcreteClasses = (
+  discoveryFiles: IocDiscoveryAnalysisFiles,
+): ReadonlySet<string> => {
+  const registered = new Set<string>();
+  for (const file of discoveryFiles) {
+    for (const outcome of file.outcomes) {
+      if (
+        outcome.scope === "export" &&
+        outcome.status === IocDiscoveryStatus.DISCOVERED &&
+        outcome.discoveredBy === "implements"
+      ) {
+        registered.add(outcome.contractName);
+      }
+    }
+  }
+  return registered;
+};
+
+const classifySkip = (
+  reason: IocDiscoverySkipReason,
+  contractName: string | undefined,
+  registeredByConcreteClasses: ReadonlySet<string>,
+): DiscoveryRowPartition => {
+  const base = partitionForSkipReason(reason);
+  if (base === "near_miss" || !isConditionalNearMissReason(reason)) {
+    return base;
+  }
+  // The conditional promotion: an abstract base whose contract nothing concrete registers is the
+  // case that warns at generation, so it earns a line on the default screen too.
+  return contractName === undefined ||
+    !registeredByConcreteClasses.has(contractName)
+    ? "near_miss"
+    : "not_a_candidate";
+};
+
+type LifetimeJoin = ReadonlyMap<
+  string,
+  { lifetime: string; lifetimeSource?: string }
+>;
+
+const factoryJoinKey = (modulePath: string, exportName: string): string =>
+  `${modulePath} ${exportName}`;
+
+const buildLifetimeJoin = (
+  plan: readonly ResolvedContractRegistration[] | undefined,
+): LifetimeJoin => {
+  const map = new Map<string, { lifetime: string; lifetimeSource?: string }>();
+  for (const contract of plan ?? []) {
+    for (const impl of contract.implementations) {
+      map.set(factoryJoinKey(impl.modulePath, impl.exportName), {
+        lifetime: impl.lifetime,
+        ...(impl.lifetimeSource !== undefined
+          ? { lifetimeSource: impl.lifetimeSource }
+          : {}),
+      });
+    }
+  }
+  return map;
+};
+
+type RowBuildContext = {
+  registeredByConcreteClasses: ReadonlySet<string>;
+  lifetimes: LifetimeJoin;
+  verificationByVariant: ReadonlyMap<string, ScopeRootVariantVerification>;
 };
 
 const outcomeToRows = (
   modulePath: string,
   outcome: IocDiscoveryOutcome,
+  ctx: RowBuildContext,
 ): DiscoveryExportReportRow[] => {
   if (outcome.scope === "file") {
+    const fileGloss = glossForSkipReason(outcome.skipReason);
     return [
       {
         modulePath,
         status: "skipped",
         skipReason: outcome.skipReason,
+        partition: classifySkip(
+          outcome.skipReason,
+          undefined,
+          ctx.registeredByConcreteClasses,
+        ),
+        ...(fileGloss !== undefined ? { gloss: fileGloss } : {}),
       },
     ];
   }
 
   if (outcome.status === "discovered") {
+    const lifetime = ctx.lifetimes.get(
+      factoryJoinKey(modulePath, outcome.exportName),
+    );
+    const verification =
+      outcome.isScopeRoot === true
+        ? ctx.verificationByVariant.get(
+            factoryJoinKey(modulePath, outcome.exportName),
+          )
+        : undefined;
+
     return [
       {
         modulePath,
@@ -206,20 +511,34 @@ const outcomeToRows = (
         status: "discovered",
         contractName: outcome.contractName,
         registrationKey: outcome.registrationKey,
+        ...(lifetime !== undefined ? lifetime : {}),
         ...(outcome.isScopeRoot === true ? { isScopeRoot: true as const } : {}),
         ...(outcome.declaredLbv !== undefined
           ? { declaredLbv: outcome.declaredLbv }
+          : {}),
+        ...(verification !== undefined
+          ? {
+              declaredLbvKeys: verification.declaredKeys,
+              scopeRootVerification: toVerificationRow(verification),
+            }
           : {}),
       },
     ];
   }
 
+  const gloss = glossForSkipReason(outcome.skipReason);
   return [
     {
       modulePath,
       exportName: outcome.exportName,
       status: "skipped",
       skipReason: outcome.skipReason,
+      partition: classifySkip(
+        outcome.skipReason,
+        outcome.contractName,
+        ctx.registeredByConcreteClasses,
+      ),
+      ...(gloss !== undefined ? { gloss } : {}),
       contractName: outcome.contractName,
       ...(outcome.baseClassName !== undefined
         ? { baseClassName: outcome.baseClassName }
@@ -268,17 +587,9 @@ const toVerificationRow = (
  */
 const buildScopeRootRows = (
   units: readonly DiscoveredScopeRoot[],
-  verification: ScopeRootVerificationResult | undefined,
+  verificationByVariant: ReadonlyMap<string, ScopeRootVariantVerification>,
 ): DiscoveryScopeRootRow[] => {
   const byContract = new Map<string, DiscoveryScopeRootRow>();
-  // Variant identity — (modulePath, exportName) — is what joins a unit to its verification. Never
-  // the contract name: variants of one root have different declarations and different results.
-  const verificationByVariant = new Map(
-    (verification?.variants ?? []).map((v) => [
-      `${v.modulePath} ${v.exportName}`,
-      v,
-    ]),
-  );
 
   for (const unit of units) {
     const row = byContract.get(unit.contractName) ?? {
@@ -287,7 +598,7 @@ const buildScopeRootRows = (
       variants: [] as DiscoveryScopeRootVariantRow[],
     };
     const variantVerification = verificationByVariant.get(
-      `${unit.modulePath} ${unit.exportName}`,
+      factoryJoinKey(unit.modulePath, unit.exportName),
     );
     (row.variants as DiscoveryScopeRootVariantRow[]).push({
       variantName: unit.variantName,
@@ -295,7 +606,10 @@ const buildScopeRootRows = (
       modulePath: unit.modulePath,
       declaredLbv: unit.lbvTypeText,
       ...(variantVerification !== undefined
-        ? { verification: toVerificationRow(variantVerification) }
+        ? {
+            declaredKeys: variantVerification.declaredKeys,
+            verification: toVerificationRow(variantVerification),
+          }
         : {}),
     });
     byContract.set(unit.contractName, row);
@@ -311,31 +625,208 @@ const buildScopeRootRows = (
     }));
 };
 
+/**
+ * Synthetic rows for files the config excluded.
+ *
+ * The `excluded_by_config` skip reason is **never emitted by the scanner** — an excluded file never
+ * enters the scan set, so nothing parses it and nothing records an outcome for it. These rows are
+ * the only source of that reason. Do not go looking for a scanner emission path; there isn't one,
+ * and adding one would mean scanning the files the config asked us to skip.
+ */
+const buildExcludedFileEntries = (
+  excludedFiles: readonly string[],
+): {
+  modulePath: string;
+  rows: readonly DiscoveryExportReportRow[];
+}[] =>
+  [...excludedFiles]
+    .sort((a, b) => a.localeCompare(b))
+    .map((modulePath) => ({
+      modulePath,
+      rows: [
+        {
+          modulePath,
+          status: "skipped" as const,
+          skipReason: IocDiscoverySkipReason.EXCLUDED_BY_CONFIG,
+          partition: partitionForSkipReason(
+            IocDiscoverySkipReason.EXCLUDED_BY_CONFIG,
+          ),
+        },
+      ],
+    }));
+
+const summarize = (
+  scannedFiles: readonly {
+    modulePath: string;
+    rows: readonly DiscoveryExportReportRow[];
+  }[],
+  filesExcludedByConfig: number,
+): DiscoverySummary => {
+  let unitsDiscovered = 0;
+  let nearMisses = 0;
+  let notACandidateFiles = 0;
+
+  for (const file of scannedFiles) {
+    let visible = 0;
+    for (const row of file.rows) {
+      if (row.status === "discovered") {
+        unitsDiscovered += 1;
+        visible += 1;
+        continue;
+      }
+      if (row.partition === "near_miss") {
+        nearMisses += 1;
+        visible += 1;
+      }
+    }
+    if (visible === 0) {
+      notACandidateFiles += 1;
+    }
+  }
+
+  return {
+    filesScanned: scannedFiles.length,
+    unitsDiscovered,
+    nearMisses,
+    notACandidateFiles,
+    filesExcludedByConfig,
+  };
+};
+
 export const buildDiscoveryReport = (
   analysisOrFiles: DiscoveryReportInput,
 ): DiscoveryReport => {
+  const asObject = isDiscoveryFilesArray(analysisOrFiles)
+    ? undefined
+    : analysisOrFiles;
   const discoveryFiles: IocDiscoveryAnalysisFiles = isDiscoveryFilesArray(
     analysisOrFiles,
   )
     ? analysisOrFiles
     : analysisOrFiles.discoveryFiles;
-  const scopeRootUnits = isDiscoveryFilesArray(analysisOrFiles)
-    ? []
-    : (analysisOrFiles.scopeRoots ?? []);
-  const scopeRootVerification = isDiscoveryFilesArray(analysisOrFiles)
-    ? undefined
-    : analysisOrFiles.scopeRootVerification;
 
-  const files = discoveryFiles
+  // Variant identity — (modulePath, exportName) — is what joins a unit to its verification. Never
+  // the contract name: variants of one root have different declarations and different results.
+  const verificationByVariant = new Map(
+    (asObject?.scopeRootVerification?.variants ?? []).map((v) => [
+      factoryJoinKey(v.modulePath, v.exportName),
+      v,
+    ]),
+  );
+
+  const ctx: RowBuildContext = {
+    registeredByConcreteClasses:
+      contractsRegisteredByConcreteClasses(discoveryFiles),
+    lifetimes: buildLifetimeJoin(asObject?.registrationPlan),
+    verificationByVariant,
+  };
+
+  const scannedFiles = discoveryFiles
     .slice()
     .sort((a, b) => a.modulePath.localeCompare(b.modulePath))
     .map((file) => ({
       modulePath: file.modulePath,
-      rows: file.outcomes.flatMap((o) => outcomeToRows(file.modulePath, o)),
+      rows: file.outcomes.flatMap((o) =>
+        outcomeToRows(file.modulePath, o, ctx),
+      ),
     }));
+
+  const excludedByConfig = [...(asObject?.excludedFiles ?? [])].sort((a, b) =>
+    a.localeCompare(b),
+  );
+  // Excluded files join the row list so `--verbose` and `--json` can see them, but they are kept
+  // out of the scan counts: they never entered the scan, so calling them "scanned" would be a lie
+  // of exactly the kind this footer line exists to remove.
+  const files = [
+    ...scannedFiles,
+    ...buildExcludedFileEntries(excludedByConfig),
+  ].sort((a, b) => a.modulePath.localeCompare(b.modulePath));
 
   return {
     files,
-    scopeRoots: buildScopeRootRows(scopeRootUnits, scopeRootVerification),
+    scopeRoots: buildScopeRootRows(
+      asObject?.scopeRoots ?? [],
+      verificationByVariant,
+    ),
+    groups: buildGroupReportsFromPlans(asObject?.groupPlans ?? []),
+    excludedByConfig,
+    summary: summarize(scannedFiles, excludedByConfig.length),
+  };
+};
+
+const containsFold = (haystack: string | undefined, needle: string): boolean =>
+  haystack !== undefined && haystack.toLowerCase().includes(needle);
+
+const groupMatchesContract = (
+  group: InspectionGroupReport,
+  needle: string,
+): boolean =>
+  containsFold(group.groupName, needle) ||
+  containsFold(group.baseType, needle) ||
+  group.members.some((m) => containsFold(m.memberName, needle)) ||
+  group.rejections.some((r) => containsFold(r.contractName, needle));
+
+/**
+ * Narrows a discovery report to rows whose contract or export name contains `contract`
+ * (case-insensitive). {@link DiscoveryReport.summary} is deliberately carried over untouched: the
+ * footer answers "what did the scan do", which a filter must not silently rewrite.
+ */
+export const filterDiscoveryReportByContract = (
+  report: DiscoveryReport,
+  contract: string,
+): DiscoveryReport => {
+  const needle = contract.toLowerCase();
+
+  const files = report.files
+    .map((file) => ({
+      modulePath: file.modulePath,
+      rows: file.rows.filter(
+        (row) =>
+          containsFold(row.contractName, needle) ||
+          containsFold(row.exportName, needle),
+      ),
+    }))
+    .filter((file) => file.rows.length > 0);
+
+  const scopeRoots = report.scopeRoots
+    .map((root) => ({
+      ...root,
+      variants: containsFold(root.contractName, needle)
+        ? root.variants
+        : root.variants.filter(
+            (v) =>
+              containsFold(v.variantName, needle) ||
+              containsFold(v.exportName, needle),
+          ),
+    }))
+    .filter((root) => root.variants.length > 0);
+
+  return {
+    files,
+    scopeRoots,
+    groups: report.groups.filter((g) => groupMatchesContract(g, needle)),
+    // Not narrowed: an excluded file has no contract to match against, and the list is a statement
+    // about the config rather than about the rows the filter selected.
+    excludedByConfig: report.excludedByConfig,
+    summary: report.summary,
+    filter: { contract },
+  };
+};
+
+/** Narrows an inspection report to contracts (and groups) matching `contract`, case-insensitively. */
+export const filterInspectionReportByContract = (
+  report: InspectionReport,
+  contract: string,
+): InspectionReport => {
+  const needle = contract.toLowerCase();
+
+  return {
+    contracts: report.contracts.filter((c) =>
+      containsFold(c.contractName, needle),
+    ),
+    manifestIssues: report.manifestIssues,
+    groups: report.groups.filter((g) => groupMatchesContract(g, needle)),
+    filter: { contract },
+    totalContractCount: report.totalContractCount,
   };
 };

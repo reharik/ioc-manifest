@@ -47,7 +47,11 @@ describe("parseIocCliArgv", () => {
   });
 
   describe("When the argv is valid inspect", () => {
-    const minimal: IocInspectCliOptions = { discovery: false };
+    const minimal: IocInspectCliOptions = {
+      discovery: false,
+      verbose: false,
+      json: false,
+    };
 
     it("should parse bare inspect", () => {
       const r = parseIocCliArgv([...nodeStub(), "inspect"]);
@@ -61,7 +65,41 @@ describe("parseIocCliArgv", () => {
       const r = parseIocCliArgv([...nodeStub(), "inspect", "--discovery"]);
       assert.deepEqual(r, {
         kind: "inspect",
-        options: { discovery: true },
+        options: { ...minimal, discovery: true },
+      });
+    });
+
+    it("should parse --verbose, --json and --contract", () => {
+      const r = parseIocCliArgv([
+        ...nodeStub(),
+        "inspect",
+        "--discovery",
+        "--verbose",
+        "--json",
+        "--contract",
+        "Media",
+      ]);
+      assert.deepEqual(r, {
+        kind: "inspect",
+        options: {
+          discovery: true,
+          verbose: true,
+          json: true,
+          contract: "Media",
+        },
+      });
+    });
+
+    it("should parse --contract on manifest-mode inspect", () => {
+      const r = parseIocCliArgv([
+        ...nodeStub(),
+        "inspect",
+        "--contract",
+        "storage",
+      ]);
+      assert.deepEqual(r, {
+        kind: "inspect",
+        options: { ...minimal, contract: "storage" },
       });
     });
 
@@ -75,7 +113,7 @@ describe("parseIocCliArgv", () => {
       assert.deepEqual(long, {
         kind: "inspect",
         options: {
-          discovery: false,
+          ...minimal,
           iocConfigPath: "/abs/ioc.config.ts",
         },
       });
@@ -89,7 +127,7 @@ describe("parseIocCliArgv", () => {
       assert.deepEqual(short, {
         kind: "inspect",
         options: {
-          discovery: false,
+          ...minimal,
           iocConfigPath: "./cfg.ts",
         },
       });
@@ -105,7 +143,7 @@ describe("parseIocCliArgv", () => {
       assert.deepEqual(r, {
         kind: "inspect",
         options: {
-          discovery: false,
+          ...minimal,
           projectDir: "./pkg",
         },
       });
@@ -155,6 +193,25 @@ describe("parseIocCliArgv", () => {
       assert.throws(
         () => parseIocCliArgv([...nodeStub(), "inspect", "--nope"]),
         /Unknown flag/,
+      );
+    });
+
+    it("should reject --contract and --verbose outside inspect", () => {
+      assert.throws(
+        () =>
+          parseIocCliArgv([...nodeStub(), "validate", "--contract", "Media"]),
+        /--contract is only valid with the inspect command/,
+      );
+      assert.throws(
+        () => parseIocCliArgv([...nodeStub(), "generate", "--verbose"]),
+        /--verbose is only valid with the inspect command/,
+      );
+    });
+
+    it("should reject --json on generate", () => {
+      assert.throws(
+        () => parseIocCliArgv([...nodeStub(), "generate", "--json"]),
+        /--json is only valid with the inspect and validate commands/,
       );
     });
   });

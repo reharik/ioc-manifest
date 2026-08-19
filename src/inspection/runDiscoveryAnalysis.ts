@@ -14,9 +14,11 @@ import {
 import { discoverFactories } from "../generator/discoverFactories/discoverFactories.js";
 import {
   createIocProgramForDiscovery,
+  getConfigExcludedFiles,
   getDiscoveryTargetFiles,
   logDiscoveryProgramErrorDiagnosticsForFailure,
 } from "../generator/iocProgramContext.js";
+import { computeDiscoveryModulePath } from "../generator/manifestPaths.js";
 import {
   mergeManifestOptionsWithIocConfig,
   resolveManifestOptions,
@@ -29,6 +31,10 @@ import {
   verifyScopeRoots,
   type ScopeRootVerificationResult,
 } from "../generator/verifyScopeRoots.js";
+import {
+  analyzeGroupPlan,
+  type GroupPlan,
+} from "../groups/resolveGroupPlan.js";
 
 export type DiscoveryAnalysisResult = {
   readonly discoveryFiles: IocDiscoveryAnalysisFiles;
@@ -46,6 +52,18 @@ export type DiscoveryAnalysisResult = {
    * the report lists every offender rather than dying on the first aggregated failure.
    */
   readonly scopeRootVerification: ScopeRootVerificationResult;
+  /**
+   * Configured group plans with membership and the candidates the membership pass rejected. Built
+   * with the non-throwing analyzer: a group config error must show up as an empty groups section in
+   * the report, never as a crashed inspect.
+   */
+  readonly groupPlans: readonly GroupPlan[];
+  /**
+   * Module paths the config's `discovery.excludes` kept out of the scan. Resolved here rather than
+   * read off discovery outcomes: excluded files never enter the scan set, so the scanner has no
+   * occasion to emit a row for them.
+   */
+  readonly excludedFiles: readonly string[];
 };
 
 export type DiscoveryManifestResolution = {
@@ -97,6 +115,18 @@ const runDiscoveryFromResolution = async (
     excludePatterns,
     generatedDir,
   );
+  // Inspection-only: the scan set itself is untouched, so excluded files are still never parsed —
+  // only named. Reported as files, never as exports: counting their exports would mean scanning
+  // exactly the files the config asked us not to scan.
+  const excludedAbsPaths = await getConfigExcludedFiles(
+    scanDirs,
+    includePatterns,
+    excludePatterns,
+    generatedDir,
+  );
+  const excludedFiles = excludedAbsPaths
+    .map((abs) => computeDiscoveryModulePath(abs, projectRoot, scanDirs))
+    .sort((a, b) => a.localeCompare(b));
   const program = createIocProgramForDiscovery(projectRoot, files);
 
   try {
@@ -140,6 +170,14 @@ const runDiscoveryFromResolution = async (
       config: config ?? undefined,
     });
 
+    // Groups are a codegen artifact, so inspection recomputes rather than reads them. Non-throwing:
+    // a bad `groups` entry must not take down `ioc inspect --discovery`, whose job is to report.
+    const groupAnalysis = analyzeGroupPlan(config?.groups, registrationPlan, {
+      program,
+      generatedDir,
+      scanDirs,
+    });
+
     return {
       discoveryFiles,
       contractMap,
@@ -147,6 +185,8 @@ const runDiscoveryFromResolution = async (
       scopeRoots,
       registrationPlan,
       scopeRootVerification,
+      groupPlans: groupAnalysis.plans,
+      excludedFiles,
     };
   } catch (error) {
     logDiscoveryProgramErrorDiagnosticsForFailure(

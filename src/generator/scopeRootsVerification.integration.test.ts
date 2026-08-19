@@ -528,7 +528,7 @@ describe("scope-root registration units (stage 2: demand–supply verification)"
         /auditLogsGroup container-supplied — resolved at generation \(group key\)/,
       );
       assert.ok(!text.includes("not declared"));
-      assert.match(text, /verification: satisfied/);
+      assert.match(text, /✔ satisfied/);
     });
   });
 
@@ -841,12 +841,14 @@ describe("scope-root registration units (stage 2: demand–supply verification)"
       assert.strictEqual(wide.findings[0]!.code, "lbv_type_mismatch");
 
       const text = formatDiscoveryReport(report, { color: false });
-      assert.match(text, /verification: satisfied/);
-      assert.match(text, /verification: unsatisfied/);
-      assert.match(text, /principal \(narrowRouter → basicAudit → principal\)/);
+      assert.match(text, /✔ satisfied/);
+      assert.match(text, /✖ unsatisfied/);
+      // A satisfied variant's demands stay off the screen; the unsatisfied one lists its own,
+      // walk path included.
+      assert.ok(!text.includes("(narrowRouter → basicAudit → principal)"));
       assert.match(
         text,
-        /principal declared Principal is not assignable to demanded AdminPrincipal/,
+        /principal declared Principal is not assignable to demanded AdminPrincipal \(wideRouter → adminAudit → principal\)/,
       );
     });
 
@@ -881,10 +883,9 @@ describe("scope-root registration units (stage 2: demand–supply verification)"
         report.scopeRoots[0]!.variants[0]!.verification,
         undefined,
       );
-      assert.ok(
-        !formatDiscoveryReport(report, { color: false }).includes(
-          "verification:",
-        ),
+      assert.match(
+        formatDiscoveryReport(report, { color: false }),
+        /\[scope root\].*unverified/,
       );
     });
   });

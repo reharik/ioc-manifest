@@ -18,6 +18,47 @@ export type AssignableImplementationMember = {
   typeArgument?: ts.Type;
 };
 
+/**
+ * Why a candidate did not become a group member. Every member is a branch the membership pass
+ * already takes — recording is a side effect of the existing walk, never a second analysis.
+ */
+export type GroupMembershipRejectionReason =
+  | NominalAssignabilityRejectionReason
+  /** The contract's declared type could not be loaded from the program, so it was never compared. */
+  | "contract_type_unresolved"
+  /**
+   * Collection groups only: the contract passed, but this implementation is a non-default one
+   * sitting on the contract's default-slot key, which {@link shouldIncludeImplInCollectionGroup}
+   * drops so the group does not carry a second "default slot" entry.
+   */
+  | "non_default_impl_at_contract_slot";
+
+/** One considered-and-rejected candidate, recorded for the inspection report only. */
+export type GroupMembershipRejection = {
+  contractName: string;
+  reason: GroupMembershipRejectionReason;
+  /** Set for implementation-level rejections; absent when the whole contract was rejected. */
+  registrationKey?: string;
+};
+
+/** One sentence per rejection reason: what the check saw, and what would change the verdict. */
+export const IOC_GROUP_REJECTION_GLOSS = {
+  base_type_not_named:
+    "the group's base type has no named symbol, so no contract can declare heritage to it",
+  contract_type_not_named:
+    "the contract's declared type has no named symbol (an anonymous or union type), so heritage cannot be traced from it",
+  nominal_heritage_not_declared:
+    "the contract declares no `extends` heritage to the group's base type; membership is nominal, so matching the base's shape is not enough",
+  contract_type_unresolved:
+    "the contract's declared type could not be loaded from the TypeScript program, so it was never compared to the base",
+  non_default_impl_at_contract_slot:
+    "the implementation is a non-default one registered at the contract's default-slot key, which would duplicate default-slot semantics in the group",
+} as const satisfies Record<GroupMembershipRejectionReason, string>;
+
+export const glossForGroupRejection = (
+  reason: GroupMembershipRejectionReason,
+): string => IOC_GROUP_REJECTION_GLOSS[reason];
+
 /** One contract row for `kind: "object"` groups; manifest object keys are `contractKey`. */
 export type ContractDefaultGroupMember = {
   contractKey: string;
@@ -246,26 +287,48 @@ const symbolDeclaresNominalHeritageToBase = (
 };
 
 /**
- * Whether `candidate` declares (transitively) nominal heritage to `base` via `extends` or
- * type-alias intersection — not structural shape matching.
+ * Why a candidate contract type is not nominally assignable to a group base. One member per branch
+ * the walk below actually takes — no reason exists here that the check cannot distinguish.
  */
-export const isNominallyAssignable = (
+export type NominalAssignabilityRejectionReason =
+  /** The group base type carries no named symbol, so nothing can declare heritage to it. */
+  | "base_type_not_named"
+  /**
+   * The candidate's declared type collapsed to a type with no named symbol — an anonymous or
+   * transient type, e.g. a type alias whose right-hand side is a union. There is no symbol to start
+   * a heritage walk from.
+   */
+  | "contract_type_not_named"
+  /** The walk ran to completion and found no declared `extends` / intersection path to the base. */
+  | "nominal_heritage_not_declared";
+
+export type NominalAssignabilityAnalysis =
+  | { assignable: true }
+  | { assignable: false; reason: NominalAssignabilityRejectionReason };
+
+/**
+ * {@link isNominallyAssignable} with the failing branch reported. Single pass — the caller gets the
+ * verdict and the reason from the same walk, never from a second check.
+ */
+export const analyzeNominalAssignability = (
   checker: ts.TypeChecker,
   candidate: ts.Type,
   base: ts.Type,
-): boolean => {
+): NominalAssignabilityAnalysis => {
   const baseSym = getNamedSymbolForType(base);
   if (baseSym === undefined) {
-    return false;
+    return { assignable: false, reason: "base_type_not_named" };
   }
   const candidateSym = getNamedSymbolForType(candidate);
   if (candidateSym === undefined) {
-    return false;
+    return { assignable: false, reason: "contract_type_not_named" };
   }
   const canonicalBase = resolveCanonicalSymbol(checker, baseSym);
   const canonicalCandidate = resolveCanonicalSymbol(checker, candidateSym);
+  // Alias collapse onto the base symbol is an ACCEPTANCE branch, not a rejection: a contract whose
+  // alias resolves to the base itself is a member of its own group.
   if (canonicalCandidate === canonicalBase) {
-    return true;
+    return { assignable: true };
   }
   const visited = new Set<ts.Symbol>();
   return symbolDeclaresNominalHeritageToBase(
@@ -273,8 +336,20 @@ export const isNominallyAssignable = (
     canonicalCandidate,
     canonicalBase,
     visited,
-  );
+  )
+    ? { assignable: true }
+    : { assignable: false, reason: "nominal_heritage_not_declared" };
 };
+
+/**
+ * Whether `candidate` declares (transitively) nominal heritage to `base` via `extends` or
+ * type-alias intersection — not structural shape matching.
+ */
+export const isNominallyAssignable = (
+  checker: ts.TypeChecker,
+  candidate: ts.Type,
+  base: ts.Type,
+): boolean => analyzeNominalAssignability(checker, candidate, base).assignable;
 
 /** Declared type-parameter counts for a group's base type, read from its declaration. */
 export type BaseTypeParameterInfo = {
@@ -443,6 +518,8 @@ export const shouldIncludeImplInCollectionGroup = (
  * Skips contracts whose declared type cannot be loaded from the program.
  *
  * @param filterImpl - When set, only implementations for which this returns true are included.
+ * @param rejections - When set, every considered-and-rejected candidate is appended here. Recording
+ * only: membership semantics are identical whether or not the sink is supplied.
  */
 export const collectImplementationMembersAssignableToBase = (
   checker: ts.TypeChecker,
@@ -455,6 +532,7 @@ export const collectImplementationMembersAssignableToBase = (
     plan: ResolvedContractRegistration,
     impl: ResolvedImplementationEntry,
   ) => boolean,
+  rejections?: GroupMembershipRejection[],
 ): AssignableImplementationMember[] => {
   const members: AssignableImplementationMember[] = [];
   for (const plan of plans) {
@@ -466,9 +544,22 @@ export const collectImplementationMembersAssignableToBase = (
       plan,
     );
     if (contractType === undefined) {
+      rejections?.push({
+        contractName: plan.contractName,
+        reason: "contract_type_unresolved",
+      });
       continue;
     }
-    if (!isNominallyAssignable(checker, contractType, baseType)) {
+    const nominal = analyzeNominalAssignability(
+      checker,
+      contractType,
+      baseType,
+    );
+    if (!nominal.assignable) {
+      rejections?.push({
+        contractName: plan.contractName,
+        reason: nominal.reason,
+      });
       continue;
     }
     const typeArgument = extractMemberBaseTypeArgument(
@@ -478,6 +569,11 @@ export const collectImplementationMembersAssignableToBase = (
     );
     for (const impl of plan.implementations) {
       if (filterImpl !== undefined && !filterImpl(plan, impl)) {
+        rejections?.push({
+          contractName: plan.contractName,
+          registrationKey: impl.registrationKey,
+          reason: "non_default_impl_at_contract_slot",
+        });
         continue;
       }
       members.push({
@@ -503,6 +599,7 @@ export const collectContractDefaultMembersAssignableToBase = (
   scanDirs: readonly ResolvedScanDir[],
   plans: readonly ResolvedContractRegistration[],
   baseType: ts.Type,
+  rejections?: GroupMembershipRejection[],
 ): ContractDefaultGroupMember[] => {
   const members: ContractDefaultGroupMember[] = [];
   for (const plan of plans) {
@@ -514,9 +611,22 @@ export const collectContractDefaultMembersAssignableToBase = (
       plan,
     );
     if (contractType === undefined) {
+      rejections?.push({
+        contractName: plan.contractName,
+        reason: "contract_type_unresolved",
+      });
       continue;
     }
-    if (!isNominallyAssignable(checker, contractType, baseType)) {
+    const nominal = analyzeNominalAssignability(
+      checker,
+      contractType,
+      baseType,
+    );
+    if (!nominal.assignable) {
+      rejections?.push({
+        contractName: plan.contractName,
+        reason: nominal.reason,
+      });
       continue;
     }
     const defaultImpl = plan.implementations.find(

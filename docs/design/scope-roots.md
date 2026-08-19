@@ -143,3 +143,42 @@ Two consequences fix the check site. For generic scope-opening helpers (the `beg
 ## 3. Append to the variants section
 
 Because factory identity is the variant, an opening site selects its variant, and satisfaction is checked against that variant's declared lbv — never a union or intersection across variants of the contract. The stage-2 check signature therefore takes the variant identity as a parameter from the start; stage 3's cradle-presence design inherits a check that already discriminates by variant rather than retrofitting one.
+
+## Stage 3: cradle presence and the emitted opener
+
+### The framing
+
+A scope is a container. The root container is created once, is supplied its late-bound values (externals) at composition, has that supply verified by the externals check, and is accessed through a generated typed surface (the cradle). An opened scope is created N times, is supplied its late-bound values (lbv) at open, has that supply verified by stage 2 at generation and by the opener's signature at every call site, and is accessed through the opener's typed return. Externals are lbv at frequency one. The concepts remain distinct — supplied-once-verified-at-composition and supplied-per-open-verified-per-call are different lifecycles — but they are the same shape, and stage 3 is the generator doing for the Nth container exactly what composition already does for the first. Hand-opening a scope (`createScope`, string-keyed `register`, a cast on `resolve`) is the same disease at frequency N that hand-wiring registrations was at frequency one, and it gets the same cure: generated, typed, verified.
+
+### One container, one resolve
+
+A container — root or scope — is resolved exactly once, for exactly one unit. Needing a second resolve from the same container means a composing module is missing: write a unit whose deps are the several things you wanted, and resolve that. This holds at the root (a bootstrap that resolves five things and wires them by hand is the anti-pattern; the fix is an `app` unit whose deps are those five things and whose `start` does the wiring, leaving bootstrap as create-container, resolve `app`, start) and at every scope (a request scope that resolves a router, an audit log, and a notifier is missing the unit that composes them). This principle is what fixes the opener's return shape: there is no multi-resolve view to emit, because a scope that wants one is misdeclared.
+
+### What stage 3 emits
+
+Variants claim no root-cradle keys. The ambiguous-default problem is not solved; it is unasked — a variant is not a competing registration, it is a different scope. Per variant, the generator emits an **opener**: a unit registered in the cradle under its own key, injectable as an ordinary dependency, with the shape
+
+    openAuthRouterScope(lbv: { viewerId: ViewerId; uow: UnitOfWork })
+      → { authRouter: IRouter; dispose(): ... }
+
+The opener closes over the scope that resolved it, creates a child scope, registers each lbv value and the variant factory (routed through `asFunction(cradle => ...)` scoped, preserving the instrumented resolution-error path), resolves the variant eagerly, and returns it with a disposer. No `AwilixContainer` type appears in the parameter or return — the opener is the sanctioned scope-resolver handle legal in a deps position (audit roadmap item (c)), and it is what retires both the hand-authored `RequestScope` view types and the container self-registration (`container: asValue(container)`), whose only consumer was request-path code needing to hand-open scopes. A stage-3 acceptance test against the consuming apps is the deletion of that line.
+
+The lbv parameter is where §2's call-site semantics land: forgetting a key or supplying a wrong type is a compile error at the opening site, checked by TypeScript against the emitted signature. Because an injected opener is closed over a statically anonymous scope, its signature requires the full declared lbv at every call — there is no ambient omission of outer-scope lbv. Ambient supply narrows to what the container chain provides for free (registrations, externals, via Awilix parent-chain resolution); outer-scope lbv is passed explicitly by the caller. This is the completeness principle surfacing in the API rather than a ceremony cost: nested roots redeclare and re-pass, and remain transportable for exactly that reason.
+
+### Scope roots join demand-supply
+
+Stage 2 left scope-root units invisible to `analyzeDemandSupply` (they are absent from `acceptedFactories`), which forced every root-own demand into the lbv even when it is a genuine container constant. Stage 3 adds scope-root units to the demand walk as consumers. A root-own demand not satisfied by registrations and not declared in the variant's lbv then flows to the `Externals` interface like any other unregistered demand, and the generation-mode classifier's membership rule continues to hold: external means present in the demand-supply externals set. The stage-2 divergence note (inspection permissive, generation authoritative) is unchanged.
+
+### Declared lbv keys are scope-supplied; the config need not repeat them
+
+A key is excluded from `Externals` emission when it appears in `config.scopeProvided` **or in any variant's declared lbv**. If a declared lbv already says it, the config never has to say it again. The aggregate is a union across variants, which is legitimate here and only here: it is an aggregation of written declarations — every element traces to an lbv someone typed — and it feeds Externals exclusion exclusively. Satisfaction remains strictly per-variant; no check anywhere consults another variant's lbv. `config.scopeProvided` survives for hand-opened scopes that have no `ScopeRoot` declaration to speak for them, and the existing rules around it (built-and-scope-provided hard error, undemanded-declaration warning) are untouched.
+
+Per-variant divergence — a key declared in one variant's lbv while another variant of the same root consumes it from the container — is not an error. Under the opener model it has a precise meaning: the declaring variant's opening sites override a container constant per-open; the other variant inherits the constant through the parent chain. Legal, occasionally exactly what is wanted, and worth at most an informational line in `--discovery`.
+
+### Collision rules turning on
+
+With emission, the stage-1 exemptions end where they can. A contract that is both scope-rooted and ordinarily registered is a **hard error**: allowing it makes `deps: { defaultRouter: IRouter }` legal while `deps: { authRouter: IRouter }` is not, for reasons invisible at the interface — a split-brain contract. The mixed mode ("container default plus scoped variants") is coherent and deliberately deferred until real usage demands it; relaxing a hard error is cheap, un-shipping the confusion is not. Opener keys join global key-uniqueness (an opener key colliding with a registration key, group key, or another opener key is the existing conflict machinery's business). Global key-uniqueness for the variants themselves remains vacuous — they still claim no root-cradle keys — which is not an exemption but a consequence of the design.
+
+### Consequence accepted
+
+Scope-rooted contracts are opener-only. No variant is reachable through a root-cradle key or an ordinary deps position; a consumer that wants a variant as a plain dependency is asking for an ordinary factory, which is a different declaration. This is the line that keeps the model whole, and it is drawn on purpose.
