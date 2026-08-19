@@ -175,6 +175,45 @@ export const formatDiscoveryReport = (
         lines.push(
           `      ${c.dim}declared lbv:${c.reset} ${variant.declaredLbv}`,
         );
+
+        const v = variant.verification;
+        if (v === undefined) {
+          continue;
+        }
+
+        lines.push(
+          `      ${c.dim}verification:${c.reset} ${v.satisfied ? `${c.green}satisfied${c.reset}` : `${c.red}unsatisfied${c.reset}`}`,
+        );
+
+        for (const demand of v.scopeDemands) {
+          const marker =
+            demand.satisfiedBy === "declared-lbv"
+              ? `${c.green}✔${c.reset}`
+              : `${c.red}✖${c.reset}`;
+          const detail =
+            demand.satisfiedBy === "undeclared"
+              ? " not declared"
+              : demand.satisfiedBy === "type-mismatch"
+                ? ` declared ${demand.suppliedTypeText} is not assignable to demanded ${demand.demandedTypeText}`
+                : "";
+          lines.push(
+            `        ${marker} ${demand.key}${detail} ${c.dim}(${demand.via})${c.reset}`,
+          );
+        }
+
+        // Container-supplied, not a scope-demand: this layer cannot expand the group, generation
+        // can. Rendering it as unsatisfied would claim a failure that generation does not have.
+        for (const resolved of v.generationResolvedKeys) {
+          lines.push(
+            `        ${c.dim}·${c.reset} ${resolved.key} ${c.dim}container-supplied — resolved at generation (${resolved.via} key) (${resolved.path})${c.reset}`,
+          );
+        }
+
+        for (const key of v.unusedDeclaredKeys) {
+          lines.push(
+            `        ${c.yellow}!${c.reset} ${key} ${c.dim}declared but never demanded${c.reset}`,
+          );
+        }
       }
     }
     lines.push("");

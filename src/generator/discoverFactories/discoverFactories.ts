@@ -201,9 +201,19 @@ const formatContractNameCollisionError = (
   return lines.join("\n");
 };
 
+/**
+ * Units whose deps parameter is enriched with inferred contracts and cradle keys. Scope roots take
+ * the same enrichment as ordinary factories (stage 2): the row shape differs, the deps analysis does
+ * not, and the inferred `dependencyKeys` are the entry edge of the scope-root subtree walk.
+ */
+type DependencyEnrichable = Pick<
+  DiscoveredFactory,
+  "modulePath" | "exportName" | "dependencyContractNames" | "dependencyKeys"
+>;
+
 const enrichDependencyContracts = (
   program: ts.Program,
-  acceptedFactories: DiscoveredFactory[],
+  acceptedFactories: readonly DependencyEnrichable[],
   contractNames: ReadonlySet<string>,
   discoveryPaths: FactoryDiscoveryPaths,
   sourceFileByPath: Map<string, ts.SourceFile>,
@@ -441,6 +451,15 @@ export const discoverFactories = (
   enrichDependencyContracts(
     program,
     acceptedFactories,
+    knownContracts,
+    discoveryPaths,
+    sourceFileByPath,
+  );
+  // Stage 2: scope-root units get the same deps enrichment. Stage 1 skipped it because it is a
+  // demand/supply analysis; the inferred `dependencyKeys` are what the subtree walk starts from.
+  enrichDependencyContracts(
+    program,
+    scopeRoots,
     knownContracts,
     discoveryPaths,
     sourceFileByPath,

@@ -38,7 +38,8 @@ const isInversion = (
 ): boolean =>
   LIFETIME_RANK[depLifetime] < LIFETIME_RANK[consumerLifetime];
 
-const inversionSeverity = (
+/** Exported for the scope-root subgraph walk, which ranks the same pairs from its own consumers. */
+export const inversionSeverity = (
   consumerLifetime: IocLifetime,
   depLifetime: IocLifetime,
 ): "error" | "warn" | undefined => {
@@ -170,7 +171,11 @@ const resolveDepCandidates = (
   return "skip";
 };
 
-const isSuppressed = (
+/**
+ * `allowLifetimeInversion` suppression for one (unit, dep key) pair. Exported so the scope-root
+ * subgraph walk honours the same opt-out rather than inventing a second one.
+ */
+export const isLifetimeInversionSuppressed = (
   factory: DiscoveredFactory,
   depKey: string,
   config: IocConfig | undefined,
@@ -217,7 +222,7 @@ export const validateLifetimeInversionsAtCodegen = (
     }
 
     for (const depKey of dependencyKeys) {
-      if (isSuppressed(factory, depKey, config)) {
+      if (isLifetimeInversionSuppressed(factory, depKey, config)) {
         continue;
       }
 

@@ -78,6 +78,16 @@ export type DiscoveredScopeRoot = {
   lbvTypeText: string;
   /** Always `"scoped"`: a scope root is resolved per scope by construction, not by policy. */
   lifetime: IocLifetime;
+  /**
+   * Contract types inferred from the deps parameter — the same enrichment ordinary factories get.
+   * Stage 1 deliberately skipped this (it is a demand/supply analysis); stage 2 owns it.
+   */
+  dependencyContractNames?: string[];
+  /**
+   * Cradle keys demanded by this variant's deps destructuring. The entry edge of the stage-2
+   * subtree walk; same omit rules as {@link DiscoveredFactory.dependencyKeys}.
+   */
+  dependencyKeys?: string[];
 };
 
 export type FactoryDiscoveryFileContext = {

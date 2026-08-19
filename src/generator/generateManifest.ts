@@ -52,6 +52,7 @@ import { loadComposedPackageSpecs } from "./loadComposedPackageExternalKeys.js";
 import { resolveLifetimeMarkersForFactories } from "./resolveLifetimeMarkers.js";
 import { validateScopeProvidedAtCodegen } from "./validateScopeProvidedAtCodegen.js";
 import { validateLifetimeInversionsAtCodegen } from "./validateLifetimeInversionsAtCodegen.js";
+import { verifyScopeRootsAtCodegen } from "./verifyScopeRoots.js";
 import { validateDivergentNamesAtCodegen } from "./validateDivergentNamesAtCodegen.js";
 import { validateGeneratedReferencesAtCodegen } from "./validateGeneratedReferencesAtCodegen.js";
 import { validateNonEmptyGroupsAtCodegen } from "./validateNonEmptyGroupsAtCodegen.js";
@@ -164,15 +165,16 @@ export const generateManifest = async (
     generatedDir,
   });
 
-  const { contractMap, acceptedFactories, discoveryFiles } = discoverFactories(
-    files,
-    program,
-    projectRoot,
-    factoryExportPrefix,
-    { projectRoot, scanDirs, generatedDir },
-    config,
-    { collectFileRecords: true },
-  );
+  const { contractMap, acceptedFactories, discoveryFiles, scopeRoots } =
+    discoverFactories(
+      files,
+      program,
+      projectRoot,
+      factoryExportPrefix,
+      { projectRoot, scanDirs, generatedDir },
+      config,
+      { collectFileRecords: true },
+    );
 
   warnUnusableFactoryExports(discoveryFiles);
   warnDivergentClassFileNames(acceptedFactories, config);
@@ -245,6 +247,22 @@ export const generateManifest = async (
     demandSupply,
     config,
   );
+
+  // Scope-root stage 2. Runs after the registration plan, the group plan and the demand/supply pass
+  // exist — all three are the container-supplied side a scope-demand is measured against — and after
+  // the ordinary lifetime pass, so a subtree's own inversions are reported once, by the global
+  // check, before the scope-root-specific ones. Scope roots still reach no manifest: this pass
+  // verifies and reports, and emits nothing.
+  verifyScopeRootsAtCodegen(scopeRoots, {
+    program,
+    projectRoot,
+    scanDirs,
+    acceptedFactories,
+    plans,
+    groupsManifest: groupResult?.manifest,
+    config,
+    externalKeys: demandSupply.externalKeys,
+  });
 
   validateDivergentNamesAtCodegen(plans, config, factoryExportPrefix);
 

@@ -25,6 +25,10 @@ import {
 import type { ManifestRuntimePaths } from "../generator/manifestPaths.js";
 import type { IocDiscoveryAnalysisFiles } from "../generator/discoverFactories/discoveryOutcomeTypes.js";
 import { resolveLifetimeMarkersForFactories } from "../generator/resolveLifetimeMarkers.js";
+import {
+  verifyScopeRoots,
+  type ScopeRootVerificationResult,
+} from "../generator/verifyScopeRoots.js";
 
 export type DiscoveryAnalysisResult = {
   readonly discoveryFiles: IocDiscoveryAnalysisFiles;
@@ -37,6 +41,11 @@ export type DiscoveryAnalysisResult = {
   readonly scopeRoots: readonly DiscoveredScopeRoot[];
   /** Resolved lifetimes (includes `lifetimeSource` when built with scanDirs context). */
   readonly registrationPlan: readonly ResolvedContractRegistration[];
+  /**
+   * Stage-2 demand–supply verification, one entry per scope-root variant. Run in tolerate mode so
+   * the report lists every offender rather than dying on the first aggregated failure.
+   */
+  readonly scopeRootVerification: ScopeRootVerificationResult;
 };
 
 export type DiscoveryManifestResolution = {
@@ -116,12 +125,28 @@ const runDiscoveryFromResolution = async (
       markerLifetimesByFactoryKey,
     });
 
+    // Inspection has no group plan (groups are a codegen artifact) and no demand/supply pass, so it
+    // cannot expand a group root key into its members and has no authoritative externals set. It is
+    // still not allowed to claim unsatisfied for a key generation satisfies: group root keys are
+    // recognised from `config.groups` and reported as container-supplied, and the externals verdict
+    // falls out of the classifier's fallback. Reported, never thrown: the report is a view, and
+    // generation remains the authority that fails the run.
+    const scopeRootVerification = verifyScopeRoots(scopeRoots, {
+      program,
+      projectRoot,
+      scanDirs,
+      acceptedFactories,
+      plans: registrationPlan,
+      config: config ?? undefined,
+    });
+
     return {
       discoveryFiles,
       contractMap,
       acceptedFactories,
       scopeRoots,
       registrationPlan,
+      scopeRootVerification,
     };
   } catch (error) {
     logDiscoveryProgramErrorDiagnosticsForFailure(
