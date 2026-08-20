@@ -16,6 +16,18 @@ export interface IocGeneratedCradle {
 
 export type Channels = ReadonlyArray<StaleContract>;
 
+/** Opener alias for the `scopedStorage` variant the opener fixtures declare. */
+export type OpenScopedStorageScope = (lbv: Record<string, never>) => {
+  scopedStorage: StaleContract;
+  dispose: () => Promise<void>;
+};
+
+/** Opener alias with NO variant behind it — the shape of a name a previous run left here. */
+export type OpenRetiredRouterScope = (lbv: Record<string, never>) => {
+  retiredRouter: StaleContract;
+  dispose: () => Promise<void>;
+};
+
 export interface IocExternals {
   config: StaleContract;
 }

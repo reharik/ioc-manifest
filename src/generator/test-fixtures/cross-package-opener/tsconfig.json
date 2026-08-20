@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@test/lib-router": ["packages/lib-router/src/index.ts"],
+      "@test/lib-router/iocTypes": [
+        "packages/lib-router/src/generated/ioc-registry.types.ts"
+      ]
+    }
+  },
+  "include": ["app/**/*.ts", "packages/**/*.ts"]
+}

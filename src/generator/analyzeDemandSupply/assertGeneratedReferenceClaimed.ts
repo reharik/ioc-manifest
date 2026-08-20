@@ -22,6 +22,7 @@ import {
   resolveGeneratedBindingReference,
 } from "../generatedRegistryBindings.js";
 import { formatRejectedGeneratedReference } from "../generatedReferenceForms.js";
+import { looksLikeOpenerTypeAliasName } from "../naming.js";
 import { moduleSpecifierTargetsGeneratedRegistry } from "../generatedRegistrySpecifier.js";
 import { isGeneratedRegistrySourceFile } from "./resolveIocGeneratedCradleIndexedAccess.js";
 
@@ -184,21 +185,51 @@ const findGeneratedReference = (
 export type GeneratedReferenceBackstopPaths = {
   readonly projectRoot: string;
   readonly generatedDir: string;
+  /**
+   * Alias names of the openers THIS generation emits. Used only to pick the diagnostic: a name
+   * outside this set that is nonetheless shaped like an opener alias is stale generated output,
+   * and "regenerate" is the useful advice there. Both forms are rejections either way.
+   */
+  readonly openerAliasNames?: ReadonlySet<string>;
+};
+
+/**
+ * Which rejected form the offending node is reported as.
+ *
+ * The default is the deps-position catch-all. The one refinement: an `Open…Scope` name that no
+ * opener of this generation claims — the shape of a reference to an opener a previous run emitted,
+ * which is a different mistake with different advice. An opener alias the current run DOES emit
+ * never reaches here from a deps property (the claim parser takes it); reaching here from a
+ * contract site means it was written in a return position, where it stays barred under the
+ * catch-all, exactly as any other generated type is.
+ */
+const rejectedFormIdFor = (
+  found: UnclaimedGeneratedReference,
+  openerAliasNames: ReadonlySet<string> | undefined,
+): string => {
+  if (!ts.isTypeReferenceNode(found.node) || !ts.isIdentifier(found.node.typeName)) {
+    return "unclaimedReferenceInDepsPosition";
+  }
+  const name = found.node.typeName.text;
+  return looksLikeOpenerTypeAliasName(name) &&
+    openerAliasNames?.has(name) !== true
+    ? "staleOpenerAliasReference"
+    : "unclaimedReferenceInDepsPosition";
 };
 
 const formatUnclaimed = (
   found: UnclaimedGeneratedReference,
-  projectRoot: string,
+  paths: GeneratedReferenceBackstopPaths,
   context: string,
 ): string => {
   const rel = path
-    .relative(projectRoot, path.resolve(found.sourceFile.fileName))
+    .relative(paths.projectRoot, path.resolve(found.sourceFile.fileName))
     .replace(/\\/g, "/");
   const { line } = found.sourceFile.getLineAndCharacterOfPosition(
     found.node.getStart(found.sourceFile),
   );
   return `${formatRejectedGeneratedReference(
-    "unclaimedReferenceInDepsPosition",
+    rejectedFormIdFor(found, paths.openerAliasNames),
     `${rel}:${line + 1}`,
     found.node.getText(found.sourceFile),
   )} (reached from ${context})`;
@@ -220,6 +251,6 @@ export const assertGeneratedReferenceClaimed = (
 ): void => {
   const found = findGeneratedReference(typeNode, checker, paths.generatedDir);
   if (found !== undefined) {
-    throw new Error(formatUnclaimed(found, paths.projectRoot, context));
+    throw new Error(formatUnclaimed(found, paths, context));
   }
 };

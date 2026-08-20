@@ -51,6 +51,10 @@ const compilerOptions: ts.CompilerOptions = {
 
 const fixture = (name: string): string => path.join(fixtureDir, name);
 
+/** The `IocExternals` declaration out of a generated types source, braces and all. */
+const externalsBlockOf = (typesSource: string): string =>
+  /export interface IocExternals \{[^}]*\}/.exec(typesSource)?.[0] ?? "";
+
 const scopedSubtree = (
   perContract: Record<string, Record<string, { lifetime?: "scoped" }>>,
   extra?: { scopeProvided?: string[] },
@@ -593,6 +597,97 @@ describe("scope-root registration units (stage 3a: opener emission)", () => {
       assert.deepStrictEqual(clean.openers, []);
       assert.ok(!clean.sources.mainSource.includes("scopeRoots"));
       assert.ok(!clean.sources.typesSource.includes("export type Open"));
+    });
+  });
+
+  describe("When an ordinary factory injects an emitted opener", () => {
+    const consumerFixtures = (...extra: string[]): string[] => [
+      fixture("deps-contracts.ts"),
+      fixture("opener-consumer.ts"),
+      ...extra.map(fixture),
+    ];
+
+    it("should accept both sanctioned spellings and resolve them to the one opener key", () => {
+      // The alias form and the indexed form are two spellings of the same demand. Neither is a
+      // relaxation of the backstop: both are enumerated forms with their own recognition rule, and
+      // discovery/generation completing at all is the assertion — before this, either threw.
+      const { demandSupply, openers } = generate(consumerFixtures());
+
+      assert.deepStrictEqual(
+        openers.map((o) => [o.variantName, o.openerKey]),
+        [["consumedRouter", "openConsumedRouterScope"]],
+      );
+      // Both consumers recorded a demand on the key; neither produced a cradle entry of its own,
+      // because emission owns the opener's property.
+      assert.deepStrictEqual(
+        (demandSupply.demandersByKey.get("openConsumedRouterScope") ?? []).map(
+          (d) => d.exportName,
+        ),
+        ["buildAliasGateway", "buildIndexedGateway"],
+      );
+      assert.ok(
+        !demandSupply.entries.some((e) => e.key === "openConsumedRouterScope"),
+      );
+    });
+
+    it("should never ask the composing app for the opener", () => {
+      const { demandSupply, sources } = generate(consumerFixtures());
+
+      // The key is supplied by this package's own emission. Putting it in `IocExternals` would ask
+      // the app to hand-build a scope opener — the thing the feature exists to stop.
+      assert.ok(!demandSupply.externalKeys.includes("openConsumedRouterScope"));
+      assert.ok(!/openConsumedRouterScope/.test(externalsBlockOf(sources.typesSource)));
+    });
+
+    it("should emit the opener by reference to its alias, never inlined at the demand site", () => {
+      const { sources } = generate(consumerFixtures());
+
+      // One cradle property, naming the alias…
+      const propertyLines = sources.typesSource
+        .split("\n")
+        .filter((line) => /^ {2}openConsumedRouterScope:/.test(line));
+      assert.deepStrictEqual(propertyLines, [
+        "  openConsumedRouterScope: OpenConsumedRouterScope;",
+      ]);
+      // …and the function type appears exactly once, in the alias declaration itself. A demand that
+      // expanded the handle member-by-member would print the signature a second time.
+      const signatureOccurrences = sources.typesSource.split(
+        "dispose: () => Promise<void>",
+      ).length - 1;
+      assert.strictEqual(signatureOccurrences, 1);
+      assert.match(
+        sources.typesSource,
+        /export type OpenConsumedRouterScope = \(lbv: \{ requestId: string \}\) => \{ consumedRouter: IRequestRouter; dispose: \(\) => Promise<void> \};/,
+      );
+      // Nothing was read out of the stand-in prior output, either.
+      assert.ok(!sources.typesSource.includes("StaleRouter"));
+    });
+
+    it("should still register the consumers themselves as ordinary units", () => {
+      const { sources } = generate(consumerFixtures());
+
+      assert.match(sources.typesSource, /^ {2}aliasGateway: AliasGateway;$/m);
+      assert.match(sources.typesSource, /^ {2}indexedGateway: IndexedGateway;$/m);
+    });
+
+    it("should still bar the opener alias in a return position", () => {
+      // The sanction is a DEPS sanction. A contract site feeds the cradle's supply type and is read
+      // member-by-member, so the alias is rejected there exactly as any other generated type is —
+      // and by the catch-all form, not the stale-output one, because this generation does emit it.
+      assert.throws(
+        () => generate(consumerFixtures("opener-return-position.ts")),
+        (error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          assert.match(
+            message,
+            /references the generated registry file from a factory deps type/,
+          );
+          assert.match(message, /OpenConsumedRouterScope/);
+          assert.match(message, /contract site/);
+          assert.doesNotMatch(message, /Re-run generation/);
+          return true;
+        },
+      );
     });
   });
 

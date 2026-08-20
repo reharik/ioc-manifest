@@ -145,6 +145,20 @@ export const iocManifest = {
         configOverridesApplied: ["default"],
       },
     },
+    ReportGateway: {
+      reportGateway: {
+        exportName: "buildReportGateway",
+        registrationKey: "reportGateway",
+        modulePath: "examples/h-scope-root.ts",
+        relImport: "../examples/h-scope-root.js",
+        contractName: "ReportGateway",
+        implementationName: "reportGateway",
+        lifetime: "singleton",
+        moduleIndex: 6,
+        default: true,
+        discoveredBy: "naming",
+      },
+    },
     Widget: {
       primaryWidget: {
         exportName: "buildPrimaryWidget",

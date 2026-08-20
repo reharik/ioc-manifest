@@ -282,30 +282,27 @@ const importDeclarationForSpecifier = (
   ts.findAncestor(spec, ts.isImportDeclaration) ?? undefined;
 
 /**
- * When a deps property is typed as a bare reference to a group's exported type alias imported by
- * name from the generated registry-types file
- * (`import type { Channels } from './generated/ioc-registry.types.js'` → `deps: { channels: Channels }`),
- * returns the group key (`channels`).
+ * The name a deps-position type node reaches INTO the generated registry-types file by, when it is
+ * a bare reference to a name exported from that file — `undefined` otherwise.
  *
- * ENTIRELY SYNTACTIC and cold-start-safe: it reads the import specifier node and reverse-maps the
- * imported name against the groups manifest. It never resolves the alias's underlying type or reads
- * the alias declaration from the generated file — either would reintroduce the chicken-egg where the
- * generated file must already exist for the deps-resolution pass to succeed. The import specifier is
- * present in the factory source even when the target module cannot resolve on a cold start, so the
- * module specifier is matched on BASENAME only (the full path can't be resolved yet). A namespace
- * import (`import type * as Ioc from '…'` → `Ioc.Channels`) is read the same way, straight off the
- * file's import statements.
+ * This is the single recognition mechanism behind every by-name claim form (group aliases, and the
+ * scope-root opener aliases below). ENTIRELY SYNTACTIC and cold-start-safe: it reads the import
+ * specifier node and hands back the name that was imported. It never resolves the alias's
+ * underlying type or reads the alias declaration from the generated file — either would reintroduce
+ * the chicken-egg where the generated file must already exist for the deps-resolution pass to
+ * succeed. The import specifier is present in the factory source even when the target module cannot
+ * resolve on a cold start, so the module specifier is matched on BASENAME only (the full path can't
+ * be resolved yet). A namespace import (`import type * as Ioc from '…'` → `Ioc.Channels`) is read
+ * the same way, straight off the file's import statements.
+ *
+ * What the name MEANS is the caller's business: each claim parser reverse-maps it against its own
+ * enumeration of emitted names, so an unrecognized name stays unclaimed and reaches the backstop.
  */
-export const tryParseConsumedGroupAliasKey = (
+const generatedRegistryAliasNameOf = (
   checker: ts.TypeChecker,
   typeNode: ts.TypeNode | undefined,
-  groupsManifest: IocGroupsManifest | undefined,
   generatedDir: string,
 ): string | undefined => {
-  if (groupsManifest === undefined) {
-    return undefined;
-  }
-
   const resolved = resolveDepsPropertyTypeNode(typeNode, checker);
   if (
     resolved === undefined ||
@@ -315,21 +312,8 @@ export const tryParseConsumedGroupAliasKey = (
     return undefined;
   }
 
-  const groupKeyForAliasName = (aliasName: string): string | undefined => {
-    for (const key of Object.keys(groupsManifest)) {
-      if (groupKeyToTypeAliasName(key) === aliasName) {
-        return key;
-      }
-    }
-    return undefined;
-  };
-
   if (!ts.isIdentifier(resolved.typeName)) {
-    const qualified = namespaceQualifiedGeneratedName(
-      resolved.typeName,
-      generatedDir,
-    );
-    return qualified === undefined ? undefined : groupKeyForAliasName(qualified);
+    return namespaceQualifiedGeneratedName(resolved.typeName, generatedDir);
   }
 
   const symbol = checker.getSymbolAtLocation(resolved.typeName);
@@ -355,16 +339,82 @@ export const tryParseConsumedGroupAliasKey = (
       continue;
     }
     const importedName = importSpecifierImportedName(decl);
-    if (importedName === undefined) {
-      continue;
-    }
-    const key = groupKeyForAliasName(importedName);
-    if (key !== undefined) {
-      return key;
+    if (importedName !== undefined) {
+      return importedName;
     }
   }
 
   return undefined;
+};
+
+/**
+ * When a deps property is typed as a bare reference to a group's exported type alias imported by
+ * name from the generated registry-types file
+ * (`import type { Channels } from './generated/ioc-registry.types.js'` → `deps: { channels: Channels }`),
+ * returns the group key (`channels`).
+ *
+ * Recognition is by name against the groups manifest — see {@link generatedRegistryAliasNameOf} for
+ * why the name, and not the type behind it, is what gets read.
+ */
+export const tryParseConsumedGroupAliasKey = (
+  checker: ts.TypeChecker,
+  typeNode: ts.TypeNode | undefined,
+  groupsManifest: IocGroupsManifest | undefined,
+  generatedDir: string,
+): string | undefined => {
+  if (groupsManifest === undefined) {
+    return undefined;
+  }
+
+  const aliasName = generatedRegistryAliasNameOf(
+    checker,
+    typeNode,
+    generatedDir,
+  );
+  if (aliasName === undefined) {
+    return undefined;
+  }
+
+  for (const key of Object.keys(groupsManifest)) {
+    if (groupKeyToTypeAliasName(key) === aliasName) {
+      return key;
+    }
+  }
+  return undefined;
+};
+
+/**
+ * When a deps property is typed as a bare reference to an emitted scope-root OPENER's exported type
+ * alias
+ * (`import type { OpenAuthRouterScope } from './generated/ioc-registry.types.js'`
+ * → `deps: { openAuthRouterScope: OpenAuthRouterScope }`), returns the opener's cradle key
+ * (`openAuthRouterScope`).
+ *
+ * The opener is the sanctioned scope-resolver handle, injectable like any other registration
+ * (`docs/design/scope-roots.md`, "What stage 3 emits"), so it is an enumerated generated-reference
+ * form in a deps position — `openerAliasReference` — rather than a relaxation of the general
+ * prohibition. Recognition is the SAME mechanism the group-alias form uses: the alias name read off
+ * the import specifier, reverse-mapped against the names this generation emits
+ * ({@link openerKeysByTypeAliasName}). Nothing about the opener's function type is resolved here;
+ * the reference is carried by name and printed back by name.
+ */
+export const tryParseConsumedScopeRootOpenerAliasKey = (
+  checker: ts.TypeChecker,
+  typeNode: ts.TypeNode | undefined,
+  openerKeysByAliasName: ReadonlyMap<string, string> | undefined,
+  generatedDir: string,
+): string | undefined => {
+  if (openerKeysByAliasName === undefined || openerKeysByAliasName.size === 0) {
+    return undefined;
+  }
+  const aliasName = generatedRegistryAliasNameOf(
+    checker,
+    typeNode,
+    generatedDir,
+  );
+  return aliasName === undefined
+    ? undefined
+    : openerKeysByAliasName.get(aliasName);
 };
 
 export const depsPropertyTypeNodeByName = (

@@ -212,7 +212,7 @@ describe("same-package IocGeneratedCradle indexed access", () => {
         (err: Error) => {
           assert.match(
             err.message,
-            /consumed cradle key "channels" on property "channels" that is not a known registration or group/,
+            /consumed cradle key "channels" on property "channels" that is not a known registration, group or scope-root opener/,
           );
           return true;
         },
@@ -252,7 +252,7 @@ describe("same-package IocGeneratedCradle indexed access", () => {
         (err: Error) => {
           assert.match(
             err.message,
-            /consumed cradle key "channel" on property "channel" that is not a known registration or group/,
+            /consumed cradle key "channel" on property "channel" that is not a known registration, group or scope-root opener/,
           );
           return true;
         },

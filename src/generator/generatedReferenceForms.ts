@@ -248,6 +248,24 @@ export const GENERATED_REFERENCE_FORMS: readonly GeneratedReferenceForm[] = [
     disposition: "resolved",
   },
   {
+    id: "openerAliasReference",
+    syntax: "OpenAuthRouterScope  →  deps: { openAuthRouterScope: OpenAuthRouterScope }",
+    disposition: "resolved",
+  },
+  {
+    id: "staleOpenerAliasReference",
+    syntax: "OpenRetiredRouterScope  (no such variant in this generation)",
+    disposition: "rejected",
+    headline:
+      "references a scope-root opener type this generation does not emit",
+    reason:
+      "The name is shaped like an emitted opener alias but matches no scope-root variant discovered " +
+      "on this run, so it can only be a name a PREVIOUS run wrote, and resolving it would read that " +
+      "prior generated output",
+    guidance:
+      "Re-run generation and use the opener alias it emits, or fix the `ScopeRoot` variant whose opener you meant to name.",
+  },
+  {
     id: "bareTypeReference",
     syntax: "createContainer<IocGeneratedCradle>()",
     disposition: "by-name",

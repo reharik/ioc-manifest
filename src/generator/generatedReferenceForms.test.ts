@@ -12,6 +12,7 @@ import ts from "typescript";
 import type { IocGroupsManifest } from "../core/manifest.js";
 import type { DiscoveredFactory } from "./types.js";
 import { analyzeDemandSupply } from "./analyzeDemandSupply/index.js";
+import { discoverFactories } from "./discoverFactories/discoverFactories.js";
 import {
   GENERATED_REFERENCE_FORMS,
   generatedReferenceForm,
@@ -91,12 +92,28 @@ const runAnalysis = (
 ): ReturnType<typeof analyzeDemandSupply> => {
   const files = fixtureFiles(ref);
   const modulePath = ref.cold ? `cold/${ref.id}.ts` : `${ref.id}.ts`;
+  const program = makeProgram(files);
+  // Scope roots come from REAL discovery over the same files, not a hand-built row: the
+  // `openerAliasReference` form is recognized against the openers this generation emits, so the
+  // fixture's own `ScopeRoot` declaration has to be what puts the alias name in scope.
+  const { scopeRoots } = discoverFactories(
+    files,
+    program,
+    fixtureDir,
+    "build",
+    {
+      projectRoot: fixtureDir,
+      scanDirs: [{ absPath: fixtureDir }],
+      generatedDir: ref.cold ? coldGeneratedDir : warmGeneratedDir,
+    },
+  );
   return analyzeDemandSupply(factoriesFor(modulePath), {
-    program: makeProgram(files),
+    program,
     projectRoot: fixtureDir,
     scanDirs: [{ absPath: fixtureDir }],
     generatedDir: ref.cold ? coldGeneratedDir : warmGeneratedDir,
     groupsManifest,
+    scopeRoots,
   });
 };
 
@@ -177,6 +194,13 @@ const EXPECTATIONS: Readonly<Record<string, Expectation>> = {
     cold: true,
   },
   groupAliasReference: { kind: "resolved", absentKeys: ["channels"] },
+  // The opener's key is claimed and short-circuited exactly as a group root's is: emission owns
+  // the cradle property, so the walk contributes no entry — and no `IocExternals` ask either.
+  openerAliasReference: {
+    kind: "resolved",
+    absentKeys: ["openScopedStorageScope"],
+    cold: true,
+  },
   bareTypeReference: { kind: "acceptedByName" },
   // Use forms — rejected
   typeofGeneratedBinding: { kind: "rejectedByValidator" },
@@ -186,6 +210,7 @@ const EXPECTATIONS: Readonly<Record<string, Expectation>> = {
   genericObjectTypeIndexedAccess: { kind: "rejectedByValidator" },
   unsupportedIndexedAccessTarget: { kind: "rejectedByValidator" },
   heritageClauseReference: { kind: "rejectedByValidator" },
+  staleOpenerAliasReference: { kind: "rejectedByBackstop", cold: true },
   // Indirection
   localTypeAliasIndirection: {
     kind: "resolved",
@@ -307,6 +332,12 @@ describe("generated-registry reference forms (closure by enumeration)", () => {
           assert.ok(
             !byKey.has(key),
             `group consumption must not demand ${JSON.stringify(key)}`,
+          );
+          // …and must not reach the composing app either: a key emission already claims is
+          // supplied, so asking for it in `IocExternals` would be asking twice.
+          assert.ok(
+            !result.externalKeys.includes(key),
+            `${JSON.stringify(key)} must not reach IocExternals`,
           );
         }
         // The generated fixture types every key as StaleContract. Seeing it anywhere means the

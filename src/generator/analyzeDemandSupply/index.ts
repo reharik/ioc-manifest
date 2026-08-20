@@ -25,8 +25,13 @@ import { validateNamedDepsType } from "./enforceNamedDepsType.js";
 import {
   depsPropertyTypeNodeByName,
   tryParseConsumedGroupAliasKey,
+  tryParseConsumedScopeRootOpenerAliasKey,
   tryParseIocGeneratedCradleIndexedAccessKey,
 } from "./resolveIocGeneratedCradleIndexedAccess.js";
+import {
+  openerKeysByTypeAliasName,
+  openerKeysForScopeRoots,
+} from "../naming.js";
 import type {
   DemandingUnitRef,
   DemandSupplyAnalysisResult,
@@ -50,9 +55,20 @@ const typesMutuallyAgree = (
 ): boolean =>
   checker.isTypeAssignableTo(a, b) && checker.isTypeAssignableTo(b, a);
 
+/**
+ * The keys this package's cradle will carry without anyone asking the app for them: registration
+ * keys, group roots, and — since scope-roots stage 3a — the emitted opener keys.
+ *
+ * An opener belongs here for the same reason a group root does: it is a registration this run
+ * writes, not a value the composing app supplies. `openerKeys` also carries the openers a COMPOSED
+ * package contributes, which `composeManifests` registers under those same keys; asking the app for
+ * one in `IocExternals` would be asking it to hand-build a scope opener, which is precisely what the
+ * feature exists to stop.
+ */
 const collectLocalSupplierKeys = (
   factories: readonly DiscoveredFactory[],
   groupsManifest: IocGroupsManifest | undefined,
+  openerKeys: ReadonlySet<string>,
 ): Set<string> => {
   const keys = new Set<string>();
   for (const factory of factories) {
@@ -62,6 +78,9 @@ const collectLocalSupplierKeys = (
     for (const groupKey of Object.keys(groupsManifest)) {
       keys.add(groupKey);
     }
+  }
+  for (const openerKey of openerKeys) {
+    keys.add(openerKey);
   }
   return keys;
 };
@@ -135,7 +154,7 @@ const formatUnknownConsumedCradleKeyError = (
 ): string => {
   const abs = path.join(projectRoot, loc.modulePath);
   const rel = path.relative(projectRoot, abs).replace(/\\/g, "/");
-  return `[ioc] Factory ${JSON.stringify(loc.exportName)} at ${rel}:${loc.line} references consumed cradle key ${JSON.stringify(key)} on property ${JSON.stringify(propName)} that is not a known registration or group`;
+  return `[ioc] Factory ${JSON.stringify(loc.exportName)} at ${rel}:${loc.line} references consumed cradle key ${JSON.stringify(key)} on property ${JSON.stringify(propName)} that is not a known registration, group or scope-root opener`;
 };
 
 /**
@@ -283,6 +302,16 @@ export type AnalyzeDemandSupplyOptions = FactoryDiscoveryPaths & {
    * does, and the generation-mode classifier's membership rule keeps holding.
    */
   scopeRoots?: readonly DiscoveredScopeRoot[];
+  /**
+   * Opener keys carried in by composed package manifests (app mode).
+   *
+   * They are supply, not demand: `composeManifests` registers each one on the root container, so a
+   * factory here may inject a library's opener and the composing app is never asked for it. The
+   * cross-package reference form is the library's own exported alias, imported from its `iocTypes`
+   * export — a name from another package, which this package's syntactic interception neither sees
+   * nor needs to; only the KEY has to be known here, and this is it.
+   */
+  composedOpenerKeys?: readonly string[];
 };
 
 /**
@@ -321,9 +350,28 @@ export const analyzeDemandSupply = (
     groupsManifest,
     scopeProvided,
     scopeRoots,
+    composedOpenerKeys,
   } = options;
   const checker = program.getTypeChecker();
-  const localSupplierKeys = collectLocalSupplierKeys(factories, groupsManifest);
+
+  // The opener universe, in the two shapes this walk needs it: the KEYS (what a demand may resolve
+  // to and what the supply side already has) and the ALIAS NAMES (what the `openerAliasReference`
+  // form is recognized against). Locally emitted openers are named by both; a composed package's
+  // openers contribute keys only — their alias lives in that package's generated file, under that
+  // package's name.
+  const localOpenerKeys = openerKeysForScopeRoots(scopeRoots);
+  const openerAliasKeys = openerKeysByTypeAliasName(localOpenerKeys);
+  const openerAliasNames = new Set(openerAliasKeys.keys());
+  const openerKeys = new Set<string>([
+    ...localOpenerKeys,
+    ...(composedOpenerKeys ?? []),
+  ]);
+
+  const localSupplierKeys = collectLocalSupplierKeys(
+    factories,
+    groupsManifest,
+    openerKeys,
+  );
   const scopeProvidedSet = new Set(scopeProvided ?? []);
 
   const sourceFileByPath = new Map<string, ts.SourceFile>();
@@ -428,7 +476,7 @@ export const analyzeDemandSupply = (
     assertGeneratedReferenceClaimed(
       unit.contractSite,
       checker,
-      { projectRoot, generatedDir },
+      { projectRoot, generatedDir, openerAliasNames },
       `${unit.decl.unitKind} ${JSON.stringify(factory.exportName)} contract site`,
     );
 
@@ -468,7 +516,7 @@ export const analyzeDemandSupply = (
     assertGeneratedReferenceClaimed(
       depsDecl.parameters[0]?.type,
       checker,
-      { projectRoot, generatedDir },
+      { projectRoot, generatedDir, openerAliasNames },
       `${unit.decl.unitKind} ${JSON.stringify(factory.exportName)} deps type`,
     );
 
@@ -488,21 +536,36 @@ export const analyzeDemandSupply = (
           propTypeNodes.get(propName),
           groupsManifest,
           generatedDir,
+        ) ??
+        tryParseConsumedScopeRootOpenerAliasKey(
+          checker,
+          propTypeNodes.get(propName),
+          openerAliasKeys,
+          generatedDir,
         );
 
       if (consumedCradleKey === undefined) {
-        // BACKSTOP: both claim parsers declined, so this property is about to be handed to the
+        // BACKSTOP: every claim parser declined, so this property is about to be handed to the
         // checker. If it still reaches the generated file, resolving it would read prior output.
         assertGeneratedReferenceClaimed(
           propTypeNodes.get(propName),
           checker,
-          { projectRoot, generatedDir },
+          { projectRoot, generatedDir, openerAliasNames },
           `${unit.decl.unitKind} ${JSON.stringify(factory.exportName)} deps property ${JSON.stringify(propName)}`,
         );
       }
 
       if (consumedCradleKey !== undefined) {
         if (groupsManifest?.[consumedCradleKey] !== undefined) {
+          continue;
+        }
+
+        // An opener key is supplied by emission, not by this walk: locally, `writeManifest` writes
+        // the cradle property from the planned opener; across packages, `composeManifests`
+        // registers the key it carried in. Either way the reference is carried BY NAME — both
+        // spellings (`OpenAuthRouterScope`, `IocGeneratedCradle["openAuthRouterScope"]`) land here
+        // and neither is ever expanded member-by-member.
+        if (openerKeys.has(consumedCradleKey)) {
           continue;
         }
 

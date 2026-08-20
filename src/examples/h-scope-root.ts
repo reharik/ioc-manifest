@@ -31,8 +31,13 @@
  * `viewer` stays in `IocExternals` and the composing app registers it. Had every variant that
  * touches `viewer` declared it, the declaration would speak for itself and the key would be
  * excluded from `IocExternals` — the config would never have to repeat what a variant already said.
+ *
+ * `buildReportGateway` at the bottom is the other half of the lesson: an ordinary registration that
+ * INJECTS the opener and opens a scope per call. That is the consumer pattern the openers exist
+ * for, and it is exercised end to end by `runtime/bootstrap.integration.test.ts`.
  */
 import type { ScopeRoot } from "../scopeRoots/scopeRoot.js";
+import type { OpenRequestReportScope } from "../generated/ioc-registry.types.js";
 import type { MediaStorage } from "./b-multiple-implementations.js";
 
 /** The contract resolved from an opened report scope. */
@@ -75,3 +80,42 @@ export const buildPublicReport = ({
     render: () => `public report for ${viewer.id}`,
   };
 };
+
+/** What an opener's consumer looks like from the outside: one call per request, nothing scoped leaks. */
+export type ReportGateway = {
+  renderFor: (viewerId: string) => Promise<string>;
+};
+
+type ReportGatewayDeps = {
+  /**
+   * The generated opener, injected under its own cradle key and named by its emitted alias.
+   *
+   * This is the pattern the whole feature exists for, and it is why the opener is an enumerated
+   * generated-reference form in a deps position: the alias is recognized by NAME against the
+   * openers this generation emits, carried by reference, and never expanded member-by-member. The
+   * `AwilixContainer<RequestScope>` view type this replaces could not be written at all — a
+   * container type in a deps position drags the whole cradle in and the backstop rejects it.
+   */
+  openRequestReportScope: OpenRequestReportScope;
+};
+
+/**
+ * A root-resolved singleton that OPENS a scope per call.
+ *
+ * The lbv is supplied here, at the opening site, checked by TypeScript against the emitted
+ * signature; the disposer is awaited in a `finally`, so the scope's lifetime is the call's.
+ */
+export const buildReportGateway = ({
+  openRequestReportScope,
+}: ReportGatewayDeps): ReportGateway => ({
+  renderFor: async (viewerId: string) => {
+    const { requestReport, dispose } = openRequestReportScope({
+      viewer: { id: viewerId },
+    });
+    try {
+      return requestReport.render();
+    } finally {
+      await dispose();
+    }
+  },
+});

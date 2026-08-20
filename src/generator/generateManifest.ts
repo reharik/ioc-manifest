@@ -43,6 +43,7 @@ import {
   loadComposedManifestGroupNames,
   validateGroupBaseTypeAliasKeysAtCodegen,
 } from "./loadComposedManifestGroups.js";
+import { loadComposedManifestOpenerKeys } from "./loadComposedManifestScopeRoots.js";
 import { buildComposedRegistrationOverridesFromConfig } from "./buildComposedRegistrationOverrides.js";
 import {
   buildComposedManifestSource,
@@ -237,11 +238,23 @@ export const generateManifest = async (
   // Ordering invariant: `buildGroupPlan` must finish before `analyzeDemandSupply`.
   // Demand analysis resolves `IocGeneratedCradle['<key>']` against `groupsManifest` and
   // the factory supply map; calling demand analysis first yields spurious
-  // "not a known registration or group" errors on valid group consumers.
+  // "not a known registration, group or scope-root opener" errors on valid group consumers.
   // Scope-root stage 3: variants join the walk as consumers. They still supply nothing and claim no
   // contract key — what changes is that a root-own demand is now visible, so it reaches the
   // externals set (and the `Externals` interface) like any other unregistered demand instead of
   // being invisible to everything downstream.
+  // Openers a composed package already registers. Loaded before demand analysis because they are
+  // part of its supply side: a factory here that injects a library's opener is asking for a key
+  // composition provides, not for one the app must promise in `IocExternals`.
+  const composedOpenerKeys =
+    config !== undefined && isAppMode(config)
+      ? await loadComposedManifestOpenerKeys(
+          projectRoot,
+          config.composedManifests!,
+          tsconfigContext.customConditions,
+        )
+      : undefined;
+
   const demandSupply = analyzeDemandSupply(acceptedFactories, {
     program,
     projectRoot,
@@ -250,6 +263,7 @@ export const generateManifest = async (
     groupsManifest: groupResult?.manifest,
     scopeProvided: config?.scopeProvided,
     scopeRoots,
+    composedOpenerKeys,
   });
 
   validateScopeProvidedAtCodegen(config?.scopeProvided ?? [], demandSupply);

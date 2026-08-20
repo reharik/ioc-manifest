@@ -95,6 +95,37 @@ describe("registerIocFromManifest", () => {
     });
   });
 
+  describe("When an ordinary registration injects the opener through its deps", () => {
+    /**
+     * The consumer pattern, end to end on real generated output: `buildReportGateway` types a deps
+     * property as the emitted `OpenRequestReportScope` alias, generation resolved that to the
+     * opener's own cradle key, and PROXY injection hands the registered opener to it here. The
+     * pattern has to exist in the dogfood — `npm run typecheck` and this suite are what stop the
+     * sanctioned form from regressing while every test still passes.
+     */
+    it("should resolve the gateway and let it open a scope per call", async () => {
+      const container = createContainer<IocGeneratedCradle>();
+      registerIocFromManifest(container, [iocManifest]);
+
+      const gateway = container.resolve("reportGateway");
+
+      assert.match(await gateway.renderFor("u_7"), /^report for u_7 backed by /);
+      // Per call, not per container: a second call gets its own scope and its own lbv.
+      assert.match(await gateway.renderFor("u_8"), /^report for u_8 backed by /);
+    });
+
+    it("should demand the opener under its own key and nothing else", () => {
+      const container = createContainer<IocGeneratedCradle>();
+      registerIocFromManifest(container, [iocManifest]);
+
+      // The gateway resolves ONE key. If the opener alias had been read member-by-member instead of
+      // carried by name, the deps type would have demanded the variant or its lbv here.
+      assert.strictEqual(container.hasRegistration("openRequestReportScope"), true);
+      assert.strictEqual(container.hasRegistration("requestReport"), false);
+      assert.strictEqual(container.hasRegistration("dispose"), false);
+    });
+  });
+
   describe("When variants of one root diverge on a late-bound value", () => {
     /**
      * `viewer` is declared by the `requestReport` variant and consumed from the container by the

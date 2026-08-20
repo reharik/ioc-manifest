@@ -6,7 +6,11 @@ import type { MediaStorage } from "../examples/b-multiple-implementations.js";
 import type { Widget } from "../examples/c-default-selection.js";
 import type { CacheClient } from "../examples/d-grouping.js";
 import type { AlbumService } from "../examples/f-dependency-injection.js";
-import type { RequestReport, Viewer } from "../examples/h-scope-root.js";
+import type {
+  ReportGateway,
+  RequestReport,
+  Viewer,
+} from "../examples/h-scope-root.js";
 
 export interface IocGeneratedCradle {
   albumService: AlbumService;
@@ -21,6 +25,7 @@ export interface IocGeneratedCradle {
   openPublicReportScope: OpenPublicReportScope;
   openRequestReportScope: OpenRequestReportScope;
   primaryWidget: Widget;
+  reportGateway: ReportGateway;
   s3MediaStorage: MediaStorage;
   secondaryWidget: Widget;
   widget: Widget;
