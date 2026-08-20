@@ -10,7 +10,10 @@ import {
   cradleTypeImportUsesDefaultExport,
   resolveContractTypeSourceFile,
 } from "./contractTypeSourceFile.js";
-import type { DemandSupplyAnalysisResult } from "./analyzeDemandSupply/index.js";
+import type {
+  DemandSupplyAnalysisResult,
+  DemandSupplyCradleEntry,
+} from "./analyzeDemandSupply/index.js";
 import type {
   EmittedTypeReference,
   FactorySourceLocation,
@@ -22,8 +25,16 @@ import type {
   IocGroupNodeManifest,
   IocGroupRootManifest,
   IocGroupsManifest,
+  IocScopeRootsManifest,
   ModuleFactoryManifestMetadata,
+  ScopeRootVariantManifestMetadata,
 } from "../core/manifest.js";
+import {
+  openerFunctionTypeText,
+  openerTypeImports,
+  openersToManifest,
+  type ScopeRootOpener,
+} from "./scopeRootOpeners.js";
 import {
   formatRelativeImportEscapesPackageRootWarning,
   IOC_REGISTRY_TYPES_BASENAME,
@@ -52,6 +63,20 @@ export type WriteManifestOptions = {
    * default per-member union.
    */
   boundedGroupCollectionTypeRefs?: Map<string, EmittedTypeReference>;
+  /**
+   * One emitted opener per scope-root variant (stage 3). Each claims a cradle key and an exported
+   * type alias; the variants themselves still claim nothing.
+   */
+  scopeRootOpeners?: readonly ScopeRootOpener[];
+  /**
+   * Keys excluded from `IocExternals` emission because a declaration already says they enter at a
+   * scope boundary — the union of `config.scopeProvided` and every variant's declared lbv.
+   *
+   * Emission-only, deliberately. It never touches classification: `demandSupply.externalKeys` stays
+   * the authoritative demand/supply set that scope-root verification is measured against, so
+   * excluding a key here can never turn one variant's declaration into another variant's failure.
+   */
+  externalsExcludedKeys?: ReadonlySet<string>;
 };
 
 /** Deterministic ordering for manifest output. */
@@ -68,9 +93,17 @@ const sortFactoriesForManifest = (
     return a.exportName.localeCompare(b.exportName);
   });
 
-/** One row per implementation module, in stable order. */
+/**
+ * One row per registration-unit module, in stable order.
+ *
+ * Scope-root modules join the same list: the runtime needs the variant factory's namespace to
+ * register its opener, exactly as it needs an implementation's namespace to register it. They are
+ * appended as a second source rather than merged upstream so a package with no scope roots produces
+ * a byte-identical module list (and therefore identical `moduleIndex` values) to before stage 3.
+ */
 const uniqueModuleRows = (
   sortedFactories: DiscoveredFactory[],
+  scopeRootModules: readonly { relImport: string; modulePath: string }[] = [],
 ): { relImport: string; modulePath: string }[] => {
   const seen = new Map<string, { relImport: string; modulePath: string }>();
 
@@ -83,6 +116,12 @@ const uniqueModuleRows = (
       relImport: factory.relImport,
       modulePath: factory.modulePath,
     });
+  }
+
+  for (const moduleEntry of scopeRootModules) {
+    if (!seen.has(moduleEntry.modulePath)) {
+      seen.set(moduleEntry.modulePath, moduleEntry);
+    }
   }
 
   return Array.from(seen.values()).sort((a, b) =>
@@ -404,9 +443,59 @@ const serializeRegistrationManifestValue = (
   return contractLines.join("\n");
 };
 
+const serializeScopeRootVariantBlock = (
+  meta: ScopeRootVariantManifestMetadata,
+): string =>
+  [
+    ...(meta.kind !== undefined ? [`      kind: ${JSON.stringify(meta.kind)},`] : []),
+    `      exportName: ${JSON.stringify(meta.exportName)},`,
+    `      openerKey: ${JSON.stringify(meta.openerKey)},`,
+    `      variantKey: ${JSON.stringify(meta.variantKey)},`,
+    `      contractName: ${JSON.stringify(meta.contractName)},`,
+    `      variantName: ${JSON.stringify(meta.variantName)},`,
+    `      modulePath: ${JSON.stringify(meta.modulePath)},`,
+    `      relImport: ${JSON.stringify(meta.relImport)},`,
+    `      lbvKeys: [${meta.lbvKeys.map((k) => JSON.stringify(k)).join(", ")}],`,
+    `      moduleIndex: ${meta.moduleIndex},`,
+  ].join("\n");
+
+/**
+ * The `scopeRoots` block, or "" when the package declares none.
+ *
+ * Omitted entirely rather than emitted empty: a manifest that has no scope roots must stay
+ * byte-identical to one generated before openers existed.
+ */
+const serializeScopeRootsForManifest = (
+  scopeRoots: IocScopeRootsManifest,
+): string => {
+  const contractNames = Object.keys(scopeRoots).sort((a, b) =>
+    a.localeCompare(b),
+  );
+  if (contractNames.length === 0) {
+    return "";
+  }
+
+  const lines: string[] = ["", "  scopeRoots: {"];
+  for (const contractName of contractNames) {
+    const variants = scopeRoots[contractName]!;
+    lines.push(`    ${JSON.stringify(contractName)}: {`);
+    for (const variantName of Object.keys(variants).sort((a, b) =>
+      a.localeCompare(b),
+    )) {
+      lines.push(`      ${JSON.stringify(variantName)}: {`);
+      lines.push(serializeScopeRootVariantBlock(variants[variantName]!));
+      lines.push("      },");
+    }
+    lines.push("    },");
+  }
+  lines.push("  },");
+  return lines.join("\n");
+};
+
 const serializeMainIocManifestSource = (
   contractManifest: IocContractManifest,
   groupsManifest: IocGroupsManifest | undefined,
+  scopeRootsManifest: IocScopeRootsManifest,
   manifestImportFromPackage: string,
   importLines: string[],
   moduleArrayLines: string[],
@@ -428,6 +517,7 @@ Re-run \`npm run gen:manifest\` after changing factories or IoC config.
     ? "IocGeneratedContainerManifest<IocManifestGroupRoots>"
     : "IocGeneratedContainerManifest";
   const contractsBlock = serializeRegistrationManifestValue(contractManifest);
+  const scopeRootsBlock = serializeScopeRootsForManifest(scopeRootsManifest);
 
   return `${header}import type {
   IocGeneratedContainerManifest,
@@ -443,7 +533,7 @@ ${groupRootsTypeBlock}export const iocManifest = {
 ${moduleArrayLines.join("\n")}
   ] as const satisfies readonly IocModuleNamespace[],
 
-  contracts: ${contractsBlock},${groupRootsBlock}
+  contracts: ${contractsBlock},${scopeRootsBlock}${groupRootsBlock}
 } as const satisfies ${satisfiesType};
 
 export const IOC_SCOPE_PROVIDED_KEYS = [${scopeProvidedKeys.map((k) => JSON.stringify(k)).join(", ")}] as const;
@@ -564,10 +654,23 @@ const buildCradleTypeSource = (
   demandSupply: DemandSupplyAnalysisResult,
   registryTypesBuildContext?: IocRegistryTypesBuildContext,
   boundedGroupCollectionTypeRefs?: Map<string, EmittedTypeReference>,
+  scopeRootOpeners: readonly ScopeRootOpener[] = [],
+  externalsExcludedKeys: ReadonlySet<string> = new Set(),
 ): string => {
   const grouped = new Map<string, TypeImportBucket>();
 
+  /**
+   * A demanded key a declaration already claims as scope-supplied (`config.scopeProvided`, or any
+   * variant's declared lbv) is not emitted as an external. Its imports must go with it: an emitted
+   * import with nothing left referencing it is a dangling name in the generated file.
+   */
+  const isExternalsExcluded = (entry: DemandSupplyCradleEntry): boolean =>
+    entry.classification === "external" && externalsExcludedKeys.has(entry.key);
+
   for (const entry of demandSupply.entries) {
+    if (isExternalsExcluded(entry)) {
+      continue;
+    }
     for (const imp of entry.typeRef.imports) {
       addTypeImport(
         grouped,
@@ -713,9 +816,6 @@ const buildCradleTypeSource = (
     }
   }
 
-  cradleProperties.sort((a, b) => a.key.localeCompare(b.key));
-  const propertyLines = cradleProperties.map((p) => p.line);
-
   // Names this file declares at top level. Single source of truth: it seeds the
   // alias-collision set below and is reused as the exclusion list that strips
   // self-imports before import lines are emitted (a file must never import a name it
@@ -782,6 +882,53 @@ const buildCradleTypeSource = (
   const groupAliasBlock =
     groupAliasLines.length > 0 ? `\n\n${groupAliasLines.join("\n\n")}` : "";
 
+  // One emitted opener per scope-root variant: a cradle key like any other registration, plus an
+  // exported alias for its function type so a consumer can name it in a deps position
+  // (`deps: { openAuthRouterScope: OpenAuthRouterScope }`) — which is the whole point, since the
+  // opener is the sanctioned scope-resolver handle that replaces `AwilixContainer<RequestScope>`.
+  //
+  // The variants themselves claim NO cradle key here and never will. That is a consequence of the
+  // model rather than an exemption: scope-rooted contracts are opener-only, so there is no key for
+  // the uniqueness machinery to be about. Only `openerKey` joins the namespace, and it is checked
+  // against registrations, access keys, group roots and other openers at codegen.
+  const openerAliasLines: string[] = [];
+  for (const opener of scopeRootOpeners) {
+    for (const imp of openerTypeImports(opener)) {
+      addTypeImport(grouped, imp.relImport, imp.typeName, imp.useDefaultImport);
+    }
+
+    const typeText = openerFunctionTypeText(opener);
+    const aliasName = opener.openerTypeName;
+    // Same alias-collision policy as group aliases, and for the same reason: the file must always
+    // compile. When the alias name is taken, the cradle property carries the function type inline
+    // and only the convenience name is lost.
+    if (isValidTsIdentifier(aliasName) && !reservedTopLevelNames.has(aliasName)) {
+      reservedTopLevelNames.add(aliasName);
+      locallyDeclaredNames.add(aliasName);
+      openerAliasLines.push(`export type ${aliasName} = ${typeText};`);
+      cradleProperties.push({
+        key: opener.openerKey,
+        line: `  ${tsIdentifierOrQuoted(opener.openerKey)}: ${aliasName};`,
+      });
+      continue;
+    }
+    console.warn(
+      `[ioc-warn] scope root "${opener.contractName}" variant "${opener.variantName}": cannot emit type alias "${aliasName}" (name is invalid or collides with an existing type). Use IocGeneratedCradle["${opener.openerKey}"] instead.`,
+    );
+    cradleProperties.push({
+      key: opener.openerKey,
+      line: `  ${tsIdentifierOrQuoted(opener.openerKey)}: ${typeText};`,
+    });
+  }
+
+  const openerAliasBlock =
+    openerAliasLines.length > 0 ? `\n\n${openerAliasLines.join("\n\n")}` : "";
+
+  // Sorted here rather than earlier: opener properties are appended above, after their alias names
+  // are resolved against the same reservation set the group aliases use.
+  cradleProperties.sort((a, b) => a.key.localeCompare(b.key));
+  const propertyLines = cradleProperties.map((p) => p.line);
+
   // Never import a name this file also declares (self-import → TS2440). Strip the
   // locally-declared top-level names from every import bucket, then drop any bucket
   // left empty so no `import type {} from '…'` line is emitted. Only the import
@@ -809,8 +956,12 @@ const buildCradleTypeSource = (
     );
   }
 
+  // A key some variant's declared lbv names is supplied at scope open by that variant's opener, so
+  // the composing app must not be asked for it on the root container. `config.scopeProvided` says
+  // the same thing for a hand-opened scope with no `ScopeRoot` declaration to speak for it — hence
+  // one exclusion set, built as a union of written declarations, applied at emission only.
   const externalEntries = demandSupply.entries.filter(
-    (e) => e.classification === "external",
+    (e) => e.classification === "external" && !isExternalsExcluded(e),
   );
   const externalsLines = externalEntries.map(
     (e) => `  ${tsIdentifierOrQuoted(e.key)}: ${e.typeRef.typeName};`,
@@ -851,7 +1002,7 @@ Re-run \`npm run gen:manifest\` after changing factories or IoC config.
 
   return `${header}${importLines.length > 0 ? importLines.join("\n") + "\n\n" : ""}export interface IocGeneratedCradle {
 ${propertyLines.join("\n")}
-}${groupAliasBlock}${externalsBlock}${scopeProvidedBlock}
+}${groupAliasBlock}${openerAliasBlock}${externalsBlock}${scopeProvidedBlock}
 `;
 };
 
@@ -872,11 +1023,21 @@ export const buildManifestArtifactSources = (
   manifestImportFromPackage: string,
   options: WriteManifestOptions,
 ): ManifestArtifactSources => {
+  const openers = options.scopeRootOpeners ?? [];
   const sortedFactories = sortFactoriesForManifest(acceptedFactories);
-  const modules = uniqueModuleRows(sortedFactories);
+  const modules = uniqueModuleRows(
+    sortedFactories,
+    [...openers]
+      .map((opener) => ({
+        relImport: opener.relImport,
+        modulePath: opener.modulePath,
+      }))
+      .sort((a, b) => a.modulePath.localeCompare(b.modulePath)),
+  );
   const moduleIndexByPath = buildModuleIndexByPath(modules);
   const aliasByPath = assignStableModuleAliases(modules);
   const contractManifest = plansToIocContractManifest(plans, moduleIndexByPath);
+  const scopeRootsManifest = openersToManifest(openers, moduleIndexByPath);
   const iocGroupsManifest: IocGroupsManifest | undefined = groupsManifest;
 
   const importLines = modules.map((moduleEntry) => {
@@ -908,6 +1069,7 @@ export const buildManifestArtifactSources = (
   const mainSource = serializeMainIocManifestSource(
     contractManifest,
     iocGroupsManifest,
+    scopeRootsManifest,
     manifestImportFromPackage,
     importLines,
     moduleArrayLines,
@@ -925,6 +1087,8 @@ export const buildManifestArtifactSources = (
     options.demandSupply,
     options.registryTypesBuildContext,
     options.boundedGroupCollectionTypeRefs,
+    openers,
+    options.externalsExcludedKeys,
   );
 
   return { mainSource, typesSource, typesPath };

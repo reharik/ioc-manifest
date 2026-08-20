@@ -371,6 +371,7 @@ describe("--json output", () => {
           },
         ],
         scopeRoots: [],
+        scopeRootSharedUnits: [],
       });
 
       const parsed = JSON.parse(formatDiscoveryReportJson(report)) as {

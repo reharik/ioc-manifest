@@ -19,6 +19,7 @@ import { buildRegistrationPlan } from "../resolveRegistrationPlan.js";
 import {
   buildDiscoveryReport,
   formatDiscoveryReport,
+  formatDiscoveryReportJson,
 } from "../../inspection/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -232,15 +233,55 @@ describe("scope-root registration units (stage 1: discovery)", () => {
         ["authRouter", "publicRouter", "workerRouter"],
       );
 
-      // One line per unit: the scope-root marker, the root contract, and the declared lbv all ride
-      // the export's own row. Without stage-2 results the lbv is shown as written.
+      // One line per unit: the scope-root marker, the root contract, the emitted opener key and the
+      // declared lbv all ride the export's own row. Without stage-2 results the lbv is shown as
+      // written.
       const text = formatDiscoveryReport(report, { color: false });
       assert.match(
         text,
-        /⬢ buildAuthRouter\s+→ IRouter \[scope root\]\s+lbv: \{ viewerId: string \}\s+unverified/,
+        /⬢ buildAuthRouter\s+→ IRouter \[scope root\]\s+opener: openAuthRouterScope\s+lbv: \{ viewerId: string \}\s+unverified/,
       );
       // The ordinary factory still reports as an ordinary registration.
       assert.match(text, /✔ buildSystemClock\s+→ Clock\s+key: systemClock/);
+    });
+
+    it("should carry the emitted opener key on the row and in the variant list", () => {
+      const { discoveryFiles, scopeRoots } = discover(routerFixtures(), true);
+
+      const report = buildDiscoveryReport({ discoveryFiles, scopeRoots });
+
+      // The variant claims no cradle key; the opener it emits is the one key the scope root puts
+      // in the cradle, so a discovery row that omitted it would name nothing resolvable.
+      const rows = report.files.flatMap((f) => f.rows);
+      assert.strictEqual(
+        rows.find((r) => r.exportName === "buildAuthRouter")!.openerKey,
+        "openAuthRouterScope",
+      );
+      assert.strictEqual(
+        rows.find((r) => r.exportName === "buildSystemClock")!.openerKey,
+        undefined,
+      );
+      assert.deepStrictEqual(
+        report.scopeRoots[0]!.variants.map((v) => [v.variantName, v.openerKey]),
+        [
+          ["authRouter", "openAuthRouterScope"],
+          ["publicRouter", "openPublicRouterScope"],
+          ["workerRouter", "openWorkerRouterScope"],
+        ],
+      );
+
+      // Same record in --json, per the complete-record rule.
+      const json = JSON.parse(formatDiscoveryReportJson(report)) as {
+        scopeRoots: { variants: { openerKey: string }[] }[];
+      };
+      assert.deepStrictEqual(
+        json.scopeRoots[0]!.variants.map((v) => v.openerKey),
+        [
+          "openAuthRouterScope",
+          "openPublicRouterScope",
+          "openWorkerRouterScope",
+        ],
+      );
     });
 
     it("should report no scope roots when the input carries none", () => {

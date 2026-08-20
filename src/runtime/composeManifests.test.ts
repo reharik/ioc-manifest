@@ -9,6 +9,7 @@ import { MANIFEST_SCHEMA_VERSION } from "../schemaVersion.js";
 import { baseManifest, implMeta } from "../test-support/manifestFixtures.js";
 import {
   composeManifests,
+  formatConflictingComposedKeyError,
   formatConflictingRegistrationKeyError,
   formatGroupBaseTypeMismatchError,
   formatGroupKindMismatchError,
@@ -760,6 +761,153 @@ describe("composeManifests", () => {
       const composed = composeManifests([groupOnly, withContract]);
       assert.ok(composed.tactics);
       assert.ok(composed.contracts.Unit?.u);
+    });
+  });
+});
+
+describe("composeManifests — scope-root openers", () => {
+  const opener = (
+    partial: {
+      contractName: string;
+      variantName: string;
+      openerKey: string;
+      moduleIndex?: number;
+    },
+  ) => ({
+    exportName: `build${partial.variantName.charAt(0).toUpperCase()}${partial.variantName.slice(1)}`,
+    openerKey: partial.openerKey,
+    variantKey: partial.variantName,
+    contractName: partial.contractName,
+    variantName: partial.variantName,
+    modulePath: `${partial.variantName}.ts`,
+    relImport: `../${partial.variantName}.js`,
+    lbvKeys: ["viewerId"],
+    moduleIndex: partial.moduleIndex ?? 0,
+  });
+
+  describe("When a composed package declares scope roots", () => {
+    it("should carry the openers through and rebase their module indices", () => {
+      const local = baseManifest(
+        { A: { a: implMeta({ contractName: "A", implementationName: "a" }) } },
+        [{ buildA: () => ({}) }],
+      );
+      const composed = baseManifest(
+        { B: { b: implMeta({ contractName: "B", implementationName: "b" }) } },
+        [{ buildB: () => ({}) }, { buildAuthRouter: () => ({}) }],
+        {
+          scopeRoots: {
+            IRouter: {
+              authRouter: opener({
+                contractName: "IRouter",
+                variantName: "authRouter",
+                openerKey: "openAuthRouterScope",
+                moduleIndex: 1,
+              }),
+            },
+          },
+        },
+      );
+
+      const merged = composeManifests([local, composed]);
+
+      const carried = merged.scopeRoots!.IRouter!.authRouter!;
+      assert.strictEqual(carried.openerKey, "openAuthRouterScope");
+      // The opener resolves its factory out of the MERGED import list, so the index has to move
+      // exactly the way an implementation's does.
+      const ns = merged.moduleImports[carried.moduleIndex]!;
+      assert.strictEqual(typeof ns.buildAuthRouter, "function");
+    });
+
+    it("should merge variants of one root contract from several manifests", () => {
+      const a = baseManifest({}, [{ buildAuthRouter: () => ({}) }], {
+        scopeRoots: {
+          IRouter: {
+            authRouter: opener({
+              contractName: "IRouter",
+              variantName: "authRouter",
+              openerKey: "openAuthRouterScope",
+            }),
+          },
+        },
+      });
+      const b = baseManifest({}, [{ buildPublicRouter: () => ({}) }], {
+        scopeRoots: {
+          IRouter: {
+            publicRouter: opener({
+              contractName: "IRouter",
+              variantName: "publicRouter",
+              openerKey: "openPublicRouterScope",
+            }),
+          },
+        },
+      });
+
+      const merged = composeManifests([a, b]);
+
+      // Two packages, two boundaries into one contract. Variants claim no key, so nothing competes.
+      assert.deepStrictEqual(
+        Object.keys(merged.scopeRoots!.IRouter!).sort(),
+        ["authRouter", "publicRouter"],
+      );
+    });
+
+    it("should omit the field when nothing contributed one", () => {
+      const merged = composeManifests([
+        baseManifest({ A: { a: implMeta({ contractName: "A", implementationName: "a" }) } }),
+      ]);
+
+      assert.ok(!("scopeRoots" in merged));
+    });
+  });
+
+  describe("When an opener key collides across manifests", () => {
+    it("should report it through the same key-conflict machinery", () => {
+      const withOpener = baseManifest({}, [{ buildAuthRouter: () => ({}) }], {
+        scopeRoots: {
+          IRouter: {
+            authRouter: opener({
+              contractName: "IRouter",
+              variantName: "authRouter",
+              openerKey: "openAuthRouterScope",
+            }),
+          },
+        },
+      });
+      const withRegistration = baseManifest({
+        Other: {
+          other: implMeta({
+            contractName: "Other",
+            implementationName: "other",
+            registrationKey: "openAuthRouterScope",
+          }),
+        },
+      });
+
+      assert.throws(
+        () => composeManifests([withOpener, withRegistration]),
+        (error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          assert.match(message, /Conflicting registration key "openAuthRouterScope"/);
+          assert.match(message, /scope-root opener/);
+          return true;
+        },
+      );
+    });
+
+    it("should format both claimants with their manifest indices", () => {
+      const message = formatConflictingComposedKeyError(
+        "openAuthRouterScope",
+        {
+          kind: "scopeRootOpener",
+          originalIndex: 0,
+          contractName: "IRouter",
+          variantName: "authRouter",
+        },
+        { kind: "groupRoot", originalIndex: 2 },
+      );
+
+      assert.match(message, /a scope-root opener \(contract: IRouter, variant: authRouter\) in the manifest at index 0/);
+      assert.match(message, /a group root in the manifest at index 2/);
     });
   });
 });

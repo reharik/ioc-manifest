@@ -74,9 +74,54 @@ export type IocContractManifest = Record<
   Record<string, ModuleFactoryManifestMetadata>
 >;
 
-/** Fixed top-level keys on the generated container manifest; group roots must not use these names. */
+/**
+ * One scope-root variant's emitted opener (scope-roots stage 3).
+ *
+ * A variant claims no cradle key of its own — the OPENER does, and this row is what the runtime
+ * needs to register it: which module exports the variant factory, the key the opener is reachable
+ * under, the key the variant is registered under *inside* the child scope, and the declared
+ * late-bound values the opener must register there before resolving.
+ *
+ * `lbvKeys` is the declared set, verbatim from the variant's `ScopeRoot<C, TLbv>` type argument —
+ * never a set derived from the subtree. See `docs/design/scope-roots.md`.
+ */
+export type ScopeRootVariantManifestMetadata = {
+  /** Registration unit kind. Omitted for factories (see {@link iocUnitKindOf}). */
+  kind?: IocUnitKind;
+  /** Exported factory identifier, e.g. `buildAuthRouter`. */
+  exportName: string;
+  /** Cradle key the opener is registered under, e.g. `openAuthRouterScope`. */
+  openerKey: string;
+  /** Key the variant is registered under inside the opened child scope, e.g. `authRouter`. */
+  variantKey: string;
+  /** Root contract resolved from the scope. */
+  contractName: string;
+  /** Variant identity within the root contract's variant set (the derived implementation name). */
+  variantName: string;
+  /** Path relative to `src/`, informational. */
+  modulePath: string;
+  /** Relative import path from the generated manifest directory to the source file. */
+  relImport: string;
+  /** Declared late-bound-value keys, sorted. Registered `asValue` on the child scope at open. */
+  lbvKeys: readonly string[];
+  /** Index into the parallel `moduleImports` array. */
+  moduleIndex: number;
+};
+
+/** Scope roots by root contract, then by variant name — the same contract-first shape `contracts` uses. */
+export type IocScopeRootsManifest = Record<
+  string,
+  Record<string, ScopeRootVariantManifestMetadata>
+>;
+
+/**
+ * Fixed top-level keys on the generated container manifest; group roots must not use these names.
+ *
+ * `scopeRoots` is here for the same reason `contracts` is: group roots are "every top-level key that
+ * is not fixed", so a new structural field must be named here or it would be read back as a group.
+ */
 export const IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS: ReadonlySet<string> =
-  new Set(["manifestSchemaVersion", "moduleImports", "contracts"]);
+  new Set(["manifestSchemaVersion", "moduleImports", "contracts", "scopeRoots"]);
 
 /**
  * Core shape every generated container manifest includes. Configured group roots are emitted
@@ -86,6 +131,11 @@ export type IocGeneratedContainerManifestCore = {
   readonly manifestSchemaVersion: ManifestSchemaVersion;
   readonly moduleImports: readonly IocModuleNamespace[];
   readonly contracts: IocContractManifest;
+  /**
+   * Emitted openers, one per scope-root variant. Optional and omitted entirely when the package
+   * declares no scope roots, so a manifest without them is byte-identical to a pre-stage-3 one.
+   */
+  readonly scopeRoots?: IocScopeRootsManifest;
 };
 
 /**

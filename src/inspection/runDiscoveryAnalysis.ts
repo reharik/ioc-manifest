@@ -28,9 +28,15 @@ import type { ManifestRuntimePaths } from "../generator/manifestPaths.js";
 import type { IocDiscoveryAnalysisFiles } from "../generator/discoverFactories/discoveryOutcomeTypes.js";
 import { resolveLifetimeMarkersForFactories } from "../generator/resolveLifetimeMarkers.js";
 import {
+  buildScopeRootSupplyIndex,
   verifyScopeRoots,
   type ScopeRootVerificationResult,
 } from "../generator/verifyScopeRoots.js";
+import {
+  demandersFromUnitEdges,
+  resolveExternalsExclusion,
+  type ScopeRootSharedSubtreeUnit,
+} from "../generator/scopeRootExternalsExclusion.js";
 import {
   analyzeGroupPlan,
   type GroupPlan,
@@ -52,6 +58,16 @@ export type DiscoveryAnalysisResult = {
    * the report lists every offender rather than dying on the first aggregated failure.
    */
   readonly scopeRootVerification: ScopeRootVerificationResult;
+  /**
+   * Units demanding a declared late-bound value from inside a declaring subtree while also being
+   * reachable from outside it — the reason such a key stays in `IocExternals`.
+   *
+   * Computed from units' own dependency edges, since inspection runs no demand/supply pass. That is
+   * the same edge set the subtree walk uses and a subset of what generation sees, so this view stays
+   * permissive in the direction the rest of scope-root inspection already is: generation is the
+   * authority, and inspection must never claim something generation does not.
+   */
+  readonly scopeRootSharedUnits: readonly ScopeRootSharedSubtreeUnit[];
   /**
    * Configured group plans with membership and the candidates the membership pass rejected. Built
    * with the non-throwing analyzer: a group config error must show up as an empty groups section in
@@ -170,6 +186,27 @@ const runDiscoveryFromResolution = async (
       config: config ?? undefined,
     });
 
+    const scopeRootSharedUnits =
+      scopeRoots.length === 0
+        ? []
+        : resolveExternalsExclusion({
+            variants: scopeRootVerification.variants,
+            demandersByKey: demandersFromUnitEdges(
+              acceptedFactories,
+              scopeRoots,
+            ),
+            acceptedFactories,
+            scopeRoots,
+            supplyIndex: buildScopeRootSupplyIndex({
+              program,
+              projectRoot,
+              scanDirs,
+              acceptedFactories,
+              plans: registrationPlan,
+              config: config ?? undefined,
+            }),
+          }).sharedSubtreeUnits;
+
     // Groups are a codegen artifact, so inspection recomputes rather than reads them. Non-throwing:
     // a bad `groups` entry must not take down `ioc inspect --discovery`, whose job is to report.
     const groupAnalysis = analyzeGroupPlan(config?.groups, registrationPlan, {
@@ -185,6 +222,7 @@ const runDiscoveryFromResolution = async (
       scopeRoots,
       registrationPlan,
       scopeRootVerification,
+      scopeRootSharedUnits,
       groupPlans: groupAnalysis.plans,
       excludedFiles,
     };

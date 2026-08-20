@@ -6,6 +6,7 @@ export {
   buildGroupReportsFromManifest,
   buildGroupReportsFromPlans,
   buildInspectionReport,
+  buildOpenerReportsFromManifest,
   filterDiscoveryReportByContract,
   filterInspectionReportByContract,
   type BuildInspectionReportOptions,
@@ -17,6 +18,7 @@ export {
   type GroupRejectionReportRow,
   type InspectionContractReport,
   type InspectionGroupReport,
+  type InspectionOpenerReport,
   type InspectionReport,
 } from "./reports.js";
 

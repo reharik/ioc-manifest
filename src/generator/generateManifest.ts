@@ -52,7 +52,16 @@ import { loadComposedPackageSpecs } from "./loadComposedPackageExternalKeys.js";
 import { resolveLifetimeMarkersForFactories } from "./resolveLifetimeMarkers.js";
 import { validateScopeProvidedAtCodegen } from "./validateScopeProvidedAtCodegen.js";
 import { validateLifetimeInversionsAtCodegen } from "./validateLifetimeInversionsAtCodegen.js";
-import { verifyScopeRootsAtCodegen } from "./verifyScopeRoots.js";
+import {
+  buildScopeRootSupplyIndex,
+  verifyScopeRootsAtCodegen,
+} from "./verifyScopeRoots.js";
+import {
+  buildScopeRootOpeners,
+  validateScopeRootEmissionAtCodegen,
+} from "./scopeRootOpeners.js";
+import { resolveExternalsExclusion } from "./scopeRootExternalsExclusion.js";
+import { IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS } from "../core/manifest.js";
 import { validateDivergentNamesAtCodegen } from "./validateDivergentNamesAtCodegen.js";
 import { validateGeneratedReferencesAtCodegen } from "./validateGeneratedReferencesAtCodegen.js";
 import { validateNonEmptyGroupsAtCodegen } from "./validateNonEmptyGroupsAtCodegen.js";
@@ -229,6 +238,10 @@ export const generateManifest = async (
   // Demand analysis resolves `IocGeneratedCradle['<key>']` against `groupsManifest` and
   // the factory supply map; calling demand analysis first yields spurious
   // "not a known registration or group" errors on valid group consumers.
+  // Scope-root stage 3: variants join the walk as consumers. They still supply nothing and claim no
+  // contract key — what changes is that a root-own demand is now visible, so it reaches the
+  // externals set (and the `Externals` interface) like any other unregistered demand instead of
+  // being invisible to everything downstream.
   const demandSupply = analyzeDemandSupply(acceptedFactories, {
     program,
     projectRoot,
@@ -236,6 +249,7 @@ export const generateManifest = async (
     generatedDir,
     groupsManifest: groupResult?.manifest,
     scopeProvided: config?.scopeProvided,
+    scopeRoots,
   });
 
   validateScopeProvidedAtCodegen(config?.scopeProvided ?? [], demandSupply);
@@ -253,7 +267,7 @@ export const generateManifest = async (
   // the ordinary lifetime pass, so a subtree's own inversions are reported once, by the global
   // check, before the scope-root-specific ones. Scope roots still reach no manifest: this pass
   // verifies and reports, and emits nothing.
-  verifyScopeRootsAtCodegen(scopeRoots, {
+  const scopeRootVerification = verifyScopeRootsAtCodegen(scopeRoots, {
     program,
     projectRoot,
     scanDirs,
@@ -263,6 +277,54 @@ export const generateManifest = async (
     config,
     externalKeys: demandSupply.externalKeys,
   });
+
+  // Stage 3 emission. Openers are planned only after verification has passed: an opener's signature
+  // is its variant's declared lbv, and emitting one from a declaration the subtree contradicts
+  // would publish a boundary contract the tool has just said is wrong.
+  const scopeRootOpeners = buildScopeRootOpeners(scopeRoots, {
+    program,
+    projectRoot,
+    scanDirs,
+    generatedDir,
+  });
+
+  // The stage-1 collision exemptions end here: a scope-rooted contract that is also ordinarily
+  // registered is a hard error, and opener keys join the same global key namespace registrations
+  // and group roots live in.
+  validateScopeRootEmissionAtCodegen(scopeRoots, scopeRootOpeners, {
+    acceptedFactories,
+    plans,
+    groupsManifest: groupResult?.manifest,
+    reservedManifestKeys: IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS,
+  });
+
+  // Externals exclusion reasons across variants — legitimate here and ONLY here, because it decides
+  // emission and never satisfaction. A declared key is excluded only when every demand of it in the
+  // package sits inside the subtree of a variant that declares it; anything else resolving the key
+  // does so from the container, which must therefore still be asked to have one.
+  //
+  // `config.scopeProvided` is not subject to that predicate. It is an explicit statement that the
+  // key enters at a scope boundary, and an explicit statement outranks an inference drawn from
+  // declarations, so it is unioned on afterwards.
+  const scopeRootExclusion = resolveExternalsExclusion({
+    variants: scopeRootVerification.variants,
+    demandersByKey: demandSupply.demandersByKey,
+    acceptedFactories,
+    scopeRoots,
+    supplyIndex: buildScopeRootSupplyIndex({
+      program,
+      projectRoot,
+      scanDirs,
+      acceptedFactories,
+      plans,
+      groupsManifest: groupResult?.manifest,
+      config,
+    }),
+  });
+  const externalsExcludedKeys = new Set<string>([
+    ...(config?.scopeProvided ?? []),
+    ...scopeRootExclusion.excludedKeys,
+  ]);
 
   validateDivergentNamesAtCodegen(plans, config, factoryExportPrefix);
 
@@ -286,6 +348,8 @@ export const generateManifest = async (
       projectRoot,
     },
     boundedGroupCollectionTypeRefs,
+    scopeRootOpeners,
+    externalsExcludedKeys,
   };
 
   const artifactSources = buildManifestArtifactSources(

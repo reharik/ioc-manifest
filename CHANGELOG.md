@@ -159,6 +159,56 @@ whether it registers, without following a heritage chain across files. The diagn
 never fatal — deliberately unregistered subclasses are legitimate — and appears in
 `ioc inspect --discovery` under `class_inherited_contract_not_declared`.
 
+**Scope-root registration units and their emitted openers.** A factory whose return annotation is
+`ScopeRoot<TContract, TLbv>` declares a request- or work-scoped boundary: `TContract` is what is
+resolved from the scope once it is open, `TLbv` is the developer-declared set of late-bound values
+that enter at it. The lbv set is declared and never derived — the generator verifies the
+declaration against the resolution subtree and reports disagreement, it does not synthesize one.
+
+```ts
+import type { ScopeRoot } from "ioc-manifest";
+
+export const buildAuthRouter = (
+  deps: AuthRouterDeps,
+): ScopeRoot<IRouter, { viewerId: ViewerId; uow: UnitOfWork }> => makeRouter(deps);
+```
+
+Generation emits one **opener** per variant — registered in the cradle under its own key,
+injectable as an ordinary dependency, typed from the declared lbv:
+
+```ts
+const { authRouter, dispose } = openAuthRouterScope({ viewerId, uow });
+try {
+  await authRouter.handle(req);
+} finally {
+  await dispose();
+}
+```
+
+The opener creates a child scope from the scope that resolved it, registers each late-bound value
+and the variant factory onto it, resolves the variant eagerly, and returns it with an async
+disposer (double-dispose is a no-op). No `AwilixContainer` appears in its parameter or return, so
+it is legal in a deps position — which is what retires hand-authored `AwilixContainer<RequestScope>`
+view types. Variants of one root contract claim no cradle key and elect no default: they are
+different scopes, not competing implementations. A contract that is both scope-rooted and
+ordinarily registered is a hard error; opener keys join the same global key-uniqueness namespace as
+registration and group-root keys.
+
+A key a variant declares as late-bound is excluded from `IocExternals` only when every demand of it
+in the package sits inside the subtree of a variant that declares it. A declaration speaks for the
+declaring variant's subtree and for nothing else, so any demand outside one — an ordinary factory, a
+class, a variant that demands the key without declaring it — keeps the key in `IocExternals` and the
+app is still asked for the container constant that consumer will resolve. Shadowing that constant
+per-open from inside a scope stays supported precisely because the base ask survives it.
+`config.scopeProvided` outranks all of it, and survives for hand-opened scopes with no `ScopeRoot`
+declaration to speak for them.
+
+Schema note: `scopeRoots` ships as an optional field within schema v3 rather than as a version bump.
+A runtime predating opener emission that composes a manifest carrying `scopeRoots` fails loudly (the
+field is rejected as a malformed group root); this is accepted because a lockstep monorepo never
+mixes tool versions across generation and composition. Publishing scope-rooted packages for
+consumption by independently versioned runtimes would need this revisited.
+
 ### Changed
 
 **Contract identity is what you wrote at the contract site.** The checker no longer infers or

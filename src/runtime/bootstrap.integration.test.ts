@@ -1,8 +1,11 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { createContainer } from "awilix";
+import { asValue, createContainer, type AwilixContainer } from "awilix";
 import type { MediaStorage } from "../examples/b-multiple-implementations.js";
-import type { IocGeneratedCradle } from "../generated/ioc-registry.types.js";
+import type {
+  IocExternals,
+  IocGeneratedCradle,
+} from "../generated/ioc-registry.types.js";
 import { iocManifest } from "../generated/ioc-manifest.js";
 import { registerIocFromManifest } from "./bootstrap.js";
 
@@ -60,6 +63,82 @@ describe("registerIocFromManifest", () => {
         new Set(mediaGroup.map((m) => m.label)).size === mediaGroup.length,
         "collection group should not duplicate implementations",
       );
+    });
+  });
+
+  describe("When opening a scope root from the dogfood manifest", () => {
+    it("should resolve the emitted opener under its own key and nothing under the variant's", () => {
+      const container = createContainer<IocGeneratedCradle>();
+      registerIocFromManifest(container, [iocManifest]);
+
+      // End to end on real generated output: the opener key came out of `ioc generate`, the
+      // registration out of the manifest it wrote, and the type out of `ioc-registry.types.ts`.
+      const open = container.resolve("openRequestReportScope");
+      assert.strictEqual(typeof open, "function");
+      // Opener-only: the scope-rooted contract claims no cradle key and elects no default.
+      assert.strictEqual(container.hasRegistration("requestReport"), false);
+    });
+
+    it("should supply the declared late-bound value and resolve the variant eagerly", async () => {
+      const container = createContainer<IocGeneratedCradle>();
+      registerIocFromManifest(container, [iocManifest]);
+
+      const opened = container.resolve("openRequestReportScope")({
+        viewer: { id: "u_1" },
+      });
+
+      // `viewer` entered at the boundary; `mediaStorage` came from the container through the
+      // parent chain. Exactly the split the declaration draws.
+      assert.match(opened.requestReport.render(), /^report for u_1 backed by /);
+      await opened.dispose();
+      await opened.dispose();
+    });
+  });
+
+  describe("When variants of one root diverge on a late-bound value", () => {
+    /**
+     * `viewer` is declared by the `requestReport` variant and consumed from the container by the
+     * `publicReport` variant. Because some variant consumes it, the key stays in `IocExternals` and
+     * the app registers it — which is the supply this test stands in for.
+     */
+    const bootWithExternalViewer = (): AwilixContainer<
+      IocGeneratedCradle & IocExternals
+    > => {
+      // The composing app's own typing: the cradle it generated, plus the externals it promised.
+      const container = createContainer<IocGeneratedCradle & IocExternals>();
+      registerIocFromManifest(container, [iocManifest]);
+      container.register({ viewer: asValue({ id: "container" }) });
+      return container;
+    };
+
+    it("should resolve the container constant in the non-declaring variant's scope", async () => {
+      const container = bootWithExternalViewer();
+
+      // Empty lbv: everything this boundary needs comes through the parent chain. If the exclusion
+      // union had removed `viewer` from `IocExternals`, nothing would have asked the app for it and
+      // this would fail at resolution rather than at composition.
+      const opened = container.resolve("openPublicReportScope")({});
+
+      assert.strictEqual(opened.publicReport.render(), "public report for container");
+      await opened.dispose();
+    });
+
+    it("should let the declaring variant's opener shadow the container constant per open", async () => {
+      const container = bootWithExternalViewer();
+
+      const scoped = container.resolve("openRequestReportScope")({
+        viewer: { id: "u_2" },
+      });
+      const inherited = container.resolve("openPublicReportScope")({});
+
+      // Same key, same container, two boundaries: one overrides per-open, the other inherits.
+      assert.match(scoped.requestReport.render(), /^report for u_2 backed by /);
+      assert.strictEqual(inherited.publicReport.render(), "public report for container");
+      // …and the override is confined to its own scope — the container constant is untouched.
+      assert.deepStrictEqual(container.resolve("viewer"), { id: "container" });
+
+      await scoped.dispose();
+      await inherited.dispose();
     });
   });
 });

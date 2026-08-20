@@ -6,6 +6,7 @@ import type { MediaStorage } from "../examples/b-multiple-implementations.js";
 import type { Widget } from "../examples/c-default-selection.js";
 import type { CacheClient } from "../examples/d-grouping.js";
 import type { AlbumService } from "../examples/f-dependency-injection.js";
+import type { RequestReport, Viewer } from "../examples/h-scope-root.js";
 
 export interface IocGeneratedCradle {
   albumService: AlbumService;
@@ -17,6 +18,8 @@ export interface IocGeneratedCradle {
   mediaStorage: MediaStorage;
   mediaStoragesGroup: ReadonlyArray<MediaStorage>;
   memoryCache: CacheClient;
+  openPublicReportScope: OpenPublicReportScope;
+  openRequestReportScope: OpenRequestReportScope;
   primaryWidget: Widget;
   s3MediaStorage: MediaStorage;
   secondaryWidget: Widget;
@@ -25,6 +28,18 @@ export interface IocGeneratedCradle {
 
 export type MediaStoragesGroup = ReadonlyArray<MediaStorage>;
 
-export interface IocExternals {}
+export type OpenPublicReportScope = (lbv: Record<string, never>) => {
+  publicReport: RequestReport;
+  dispose: () => Promise<void>;
+};
+
+export type OpenRequestReportScope = (lbv: { viewer: Viewer }) => {
+  requestReport: RequestReport;
+  dispose: () => Promise<void>;
+};
+
+export interface IocExternals {
+  viewer: Viewer;
+}
 
 export interface IocScopeProvided {}

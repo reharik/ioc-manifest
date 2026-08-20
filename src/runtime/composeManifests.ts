@@ -16,6 +16,7 @@ import {
   type IocModuleNamespace,
   type IocRegisterableManifest,
   type ModuleFactoryManifestMetadata,
+  type ScopeRootVariantManifestMetadata,
 } from "../core/manifest.js";
 import { MANIFEST_SCHEMA_VERSION } from "../schemaVersion.js";
 import type { ComposedRegistrationOverrides } from "./composedOverrides.js";
@@ -37,7 +38,40 @@ type KeyOwner =
   | {
       readonly kind: "groupRoot";
       readonly originalIndex: number;
+    }
+  | {
+      readonly kind: "scopeRootOpener";
+      readonly originalIndex: number;
+      readonly contractName: string;
+      readonly variantName: string;
     };
+
+/** How a key's current owner reads in a conflict message. */
+const describeKeyOwner = (owner: KeyOwner): string => {
+  switch (owner.kind) {
+    case "implementation":
+      return `an implementation (contract: ${owner.contractName}, implementation: ${owner.implementationName})`;
+    case "groupRoot":
+      return "a group root";
+    case "scopeRootOpener":
+      return `a scope-root opener (contract: ${owner.contractName}, variant: ${owner.variantName})`;
+    default: {
+      const exhaustive: never = owner;
+      return String(exhaustive);
+    }
+  }
+};
+
+export const formatConflictingComposedKeyError = (
+  key: string,
+  existing: KeyOwner,
+  incoming: KeyOwner,
+): string =>
+  [
+    `[ioc] Conflicting registration key ${JSON.stringify(key)} across manifests:`,
+    `  - Claimed by ${describeKeyOwner(existing)} in the manifest at index ${existing.originalIndex}`,
+    `  - Claimed by ${describeKeyOwner(incoming)} in the manifest at index ${incoming.originalIndex}`,
+  ].join("\n");
 
 const extractGroupRootKeys = (manifest: IocRegisterableManifest): string[] => {
   const keys: string[] = [];
@@ -58,6 +92,11 @@ const manifestFingerprint = (manifest: IocRegisterableManifest): string => {
     }
   }
   keys.push(...extractGroupRootKeys(manifest));
+  for (const variants of Object.values(manifest.scopeRoots ?? {})) {
+    for (const meta of Object.values(variants)) {
+      keys.push(meta.openerKey);
+    }
+  }
   return keys.sort((a, b) => a.localeCompare(b)).join("\0");
 };
 
@@ -593,6 +632,10 @@ export const composeManifests = (
   const mergedImports: IocModuleNamespace[] = [];
   const mergedContracts: IocContractManifest = {};
   const mergedGroupRoots: Record<string, IocGroupRootManifest> = {};
+  const mergedScopeRoots: Record<
+    string,
+    Record<string, ScopeRootVariantManifestMetadata>
+  > = {};
   const groupRootContributorIndex = new Map<string, number>();
   const aliasSets = overrides?.groups?.baseTypeAliases;
   const keyOwners = new Map<string, KeyOwner>();
@@ -612,6 +655,15 @@ export const composeManifests = (
                 `  - Group root declared by manifest at index ${existing.originalIndex}`,
                 `  - Implementation supplied by manifest at index ${originalIndex} (contract: ${contractName}, implementation: ${implementationName})`,
               ].join("\n"),
+            );
+          } else if (existing.kind === "scopeRootOpener") {
+            throw new Error(
+              formatConflictingComposedKeyError(key, existing, {
+                kind: "implementation",
+                originalIndex,
+                contractName,
+                implementationName,
+              }),
             );
           } else {
             const incomingOwner: KeyOwner & { kind: "implementation" } = {
@@ -675,6 +727,13 @@ export const composeManifests = (
             overrides,
             indexForSource,
           );
+        } else if (existingOwner.kind === "scopeRootOpener") {
+          throw new Error(
+            formatConflictingComposedKeyError(groupKey, existingOwner, {
+              kind: "groupRoot",
+              originalIndex,
+            }),
+          );
         } else {
           throwRegistrationKeyConflict(groupKey, existingOwner, {
             kind: "implementation",
@@ -690,6 +749,44 @@ export const composeManifests = (
       }
     }
 
+    // Scope-root openers carry across composition like any other registration: their key joins the
+    // same namespace (so a collision is this machinery's business, not a parallel check) and their
+    // `moduleIndex` is rebased onto the merged import list. Variants themselves claim no key, so
+    // there is nothing else to reconcile — two packages declaring variants of the same root
+    // contract simply contribute two openers.
+    for (const [contractName, variants] of Object.entries(
+      manifest.scopeRoots ?? {},
+    ).sort(([a], [b]) => a.localeCompare(b))) {
+      for (const [variantName, meta] of Object.entries(variants).sort(
+        ([a], [b]) => a.localeCompare(b),
+      )) {
+        const incomingOwner: KeyOwner = {
+          kind: "scopeRootOpener",
+          originalIndex,
+          contractName,
+          variantName,
+        };
+        const existingOwner = keyOwners.get(meta.openerKey);
+        if (existingOwner !== undefined) {
+          throw new Error(
+            formatConflictingComposedKeyError(
+              meta.openerKey,
+              existingOwner,
+              incomingOwner,
+            ),
+          );
+        }
+        keyOwners.set(meta.openerKey, incomingOwner);
+
+        const bucket = mergedScopeRoots[contractName] ?? {};
+        bucket[variantName] = {
+          ...meta,
+          moduleIndex: meta.moduleIndex + moduleOffset,
+        };
+        mergedScopeRoots[contractName] = bucket;
+      }
+    }
+
     mergedImports.push(...manifest.moduleImports);
   }
 
@@ -700,6 +797,11 @@ export const composeManifests = (
     manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
     moduleImports: mergedImports,
     contracts: mergedContracts,
+    // Omitted when nothing contributed one, so a composition of scope-root-free manifests is
+    // shape-identical to what it produced before openers existed.
+    ...(Object.keys(mergedScopeRoots).length > 0
+      ? { scopeRoots: mergedScopeRoots }
+      : {}),
     ...mergedGroupRoots,
   };
 };

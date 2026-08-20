@@ -13,6 +13,7 @@ import * as ioc_examples_c_default_selection from "../examples/c-default-selecti
 import * as ioc_examples_d_grouping from "../examples/d-grouping.js";
 import * as ioc_examples_f_dependency_injection from "../examples/f-dependency-injection.js";
 import * as ioc_examples_g_class_registration from "../examples/g-class-registration.js";
+import * as ioc_examples_h_scope_root from "../examples/h-scope-root.js";
 
 type IocManifestGroupRoots = {
   readonly mediaStoragesGroup: {
@@ -46,6 +47,7 @@ export const iocManifest = {
     ioc_examples_d_grouping,
     ioc_examples_f_dependency_injection,
     ioc_examples_g_class_registration,
+    ioc_examples_h_scope_root,
   ] as const satisfies readonly IocModuleNamespace[],
 
   contracts: {
@@ -167,6 +169,32 @@ export const iocManifest = {
         lifetime: "singleton",
         moduleIndex: 2,
         discoveredBy: "naming",
+      },
+    },
+  },
+  scopeRoots: {
+    RequestReport: {
+      publicReport: {
+        exportName: "buildPublicReport",
+        openerKey: "openPublicReportScope",
+        variantKey: "publicReport",
+        contractName: "RequestReport",
+        variantName: "publicReport",
+        modulePath: "examples/h-scope-root.ts",
+        relImport: "../examples/h-scope-root.js",
+        lbvKeys: [],
+        moduleIndex: 6,
+      },
+      requestReport: {
+        exportName: "buildRequestReport",
+        openerKey: "openRequestReportScope",
+        variantKey: "requestReport",
+        contractName: "RequestReport",
+        variantName: "requestReport",
+        modulePath: "examples/h-scope-root.ts",
+        relImport: "../examples/h-scope-root.js",
+        lbvKeys: ["viewer"],
+        moduleIndex: 6,
       },
     },
   },

@@ -526,6 +526,7 @@ export const scanFactoryFile = (
         isScopeRoot: true,
         contractName: row.contractName,
         contractDeclAbsPath: path.normalize(row.declSourceFile.fileName),
+        contractTypeRelImport,
         variantName: row.implementationName,
         exportName: row.exportName,
         modulePath,

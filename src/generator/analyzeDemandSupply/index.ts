@@ -12,7 +12,7 @@ import {
   resolveFactorySourceAbsPath,
   type FactoryDiscoveryPaths,
 } from "../manifestPaths.js";
-import type { DiscoveredFactory } from "../types.js";
+import type { DiscoveredFactory, DiscoveredScopeRoot } from "../types.js";
 import {
   emitTypeReference,
   formatTypeDisplay,
@@ -28,13 +28,18 @@ import {
   tryParseIocGeneratedCradleIndexedAccessKey,
 } from "./resolveIocGeneratedCradleIndexedAccess.js";
 import type {
+  DemandingUnitRef,
   DemandSupplyAnalysisResult,
   DemandSupplyCradleEntry,
   FactorySourceLocation,
   EmittedTypeReference,
 } from "./types.js";
 
-export type { DemandSupplyAnalysisResult, DemandSupplyCradleEntry } from "./types.js";
+export type {
+  DemandingUnitRef,
+  DemandSupplyAnalysisResult,
+  DemandSupplyCradleEntry,
+} from "./types.js";
 
 const normalizePath = (p: string): string => path.normalize(p);
 
@@ -268,7 +273,37 @@ export type AnalyzeDemandSupplyOptions = FactoryDiscoveryPaths & {
   projectRoot: string;
   groupsManifest?: IocGroupsManifest;
   scopeProvided?: readonly string[];
+  /**
+   * Scope-root units, joined into the walk as CONSUMERS ONLY (scope-roots stage 3).
+   *
+   * Stage 2 left them invisible here — they are absent from `acceptedFactories` — which forced
+   * every root-own demand into the lbv even when it was a genuine container constant. They demand
+   * like any other unit now, and supply nothing: a variant claims no cradle key and elects no
+   * default, so an unregistered root-own demand flows to `Externals` exactly as a subtree demand
+   * does, and the generation-mode classifier's membership rule keeps holding.
+   */
+  scopeRoots?: readonly DiscoveredScopeRoot[];
 };
+
+/**
+ * A scope-root variant in the terms this walk consumes: identity, deps site, contract site.
+ *
+ * `registrationKey` is the variant name and is used ONLY to look the unit's AST back up; it is
+ * never entered into `unitByRegistrationKey` and never reaches a cradle entry, because a variant
+ * claims no cradle key. That is what "consumer only" means here.
+ */
+const scopeRootAsDemandConsumer = (
+  variant: DiscoveredScopeRoot,
+): DiscoveredFactory => ({
+  unitKind: variant.unitKind,
+  contractName: variant.contractName,
+  contractTypeRelImport: variant.contractTypeRelImport,
+  implementationName: variant.variantName,
+  exportName: variant.exportName,
+  registrationKey: variant.variantName,
+  modulePath: variant.modulePath,
+  relImport: variant.relImport,
+});
 
 /**
  * Walks factories to collect demand/supply pairs, validates named deps and type agreement,
@@ -278,8 +313,15 @@ export const analyzeDemandSupply = (
   factories: readonly DiscoveredFactory[],
   options: AnalyzeDemandSupplyOptions,
 ): DemandSupplyAnalysisResult => {
-  const { program, projectRoot, scanDirs, generatedDir, groupsManifest, scopeProvided } =
-    options;
+  const {
+    program,
+    projectRoot,
+    scanDirs,
+    generatedDir,
+    groupsManifest,
+    scopeProvided,
+    scopeRoots,
+  } = options;
   const checker = program.getTypeChecker();
   const localSupplierKeys = collectLocalSupplierKeys(factories, groupsManifest);
   const scopeProvidedSet = new Set(scopeProvided ?? []);
@@ -296,6 +338,35 @@ export const analyzeDemandSupply = (
 
   const cradleMap = new Map<string, DemandSupplyCradleEntry>();
 
+  /**
+   * key -> the units that demanded it. Recorded for every deps property of every consumer, before
+   * any classification: what supplies a key is a separate question from who asked for it.
+   */
+  const demandersByKey = new Map<string, DemandingUnitRef[]>();
+  const recordDemand = (
+    key: string,
+    unit: ResolvedUnitContext,
+    suppliesCradleKey: boolean,
+  ): void => {
+    const demanders = demandersByKey.get(key) ?? [];
+    if (
+      !demanders.some(
+        (d) =>
+          d.exportName === unit.factory.exportName &&
+          d.modulePath === unit.factory.modulePath,
+      )
+    ) {
+      demanders.push({
+        exportName: unit.factory.exportName,
+        modulePath: unit.factory.modulePath,
+        ...(suppliesCradleKey
+          ? { registrationKey: unit.factory.registrationKey }
+          : {}),
+      });
+    }
+    demandersByKey.set(key, demanders);
+  };
+
   const unitByRegistrationKey = new Map<string, ResolvedUnitContext>();
   for (const factory of factories) {
     const ctx = resolveUnitContext(
@@ -310,11 +381,37 @@ export const analyzeDemandSupply = (
     }
   }
 
+  /**
+   * The walk's consumers, in a fixed order: registration units first (unchanged), then scope-root
+   * variants. `suppliesCradleKey` is the whole difference between the two — a variant demands and
+   * supplies nothing.
+   */
+  const consumers: { unit: ResolvedUnitContext; suppliesCradleKey: boolean }[] =
+    [];
+
   for (const factory of factories) {
     const unit = unitByRegistrationKey.get(factory.registrationKey);
     if (unit === undefined || unit.factory !== factory) {
       continue;
     }
+    consumers.push({ unit, suppliesCradleKey: true });
+  }
+
+  for (const variant of scopeRoots ?? []) {
+    const unit = resolveUnitContext(
+      checker,
+      scopeRootAsDemandConsumer(variant),
+      sourceFileByPath,
+      projectRoot,
+      scanDirs,
+    );
+    if (unit !== undefined) {
+      consumers.push({ unit, suppliesCradleKey: false });
+    }
+  }
+
+  for (const { unit, suppliesCradleKey } of consumers) {
+    const factory = unit.factory;
     const { sourceFile, depsDecl } = unit;
 
     const loc = unitLocation(unit);
@@ -335,7 +432,9 @@ export const analyzeDemandSupply = (
       `${unit.decl.unitKind} ${JSON.stringify(factory.exportName)} contract site`,
     );
 
-    if (supplyTypeForUnit(checker, unit) !== undefined) {
+    // A scope-root variant is a consumer and nothing else: it claims no cradle key, so there is no
+    // supply entry to merge. The opener it emits claims a key, and that key is emitted separately.
+    if (suppliesCradleKey && supplyTypeForUnit(checker, unit) !== undefined) {
       const supplyRef = stampSourceFactory(
         supplyTypeRefForUnit(checker, unit, emitCtx),
         loc,
@@ -376,6 +475,8 @@ export const analyzeDemandSupply = (
     const propTypeNodes = depsPropertyTypeNodeByName(checker, named.depsType);
     const props = collectDepsProperties(checker, named.depsType);
     for (const { name: propName, type: propType } of props) {
+      recordDemand(propName, unit, suppliesCradleKey);
+
       const consumedCradleKey =
         tryParseIocGeneratedCradleIndexedAccessKey(
           checker,
@@ -548,5 +649,5 @@ export const analyzeDemandSupply = (
     .filter((e) => e.classification === "scope-provided")
     .map((e) => e.key);
 
-  return { entries, externalKeys, scopeProvidedKeys };
+  return { entries, externalKeys, scopeProvidedKeys, demandersByKey };
 };

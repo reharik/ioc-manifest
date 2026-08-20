@@ -12,6 +12,7 @@ import type {
   IocContractManifest,
   IocGroupsManifest,
   IocGroupRootManifest,
+  IocScopeRootsManifest,
   ModuleFactoryManifestMetadata,
 } from "../core/manifest.js";
 import {
@@ -20,7 +21,9 @@ import {
   type IocDiscoveryAnalysisFiles,
   type IocDiscoveryOutcome,
 } from "../generator/discoverFactories/discoveryOutcomeTypes.js";
+import { variantNameToOpenerKey } from "../generator/naming.js";
 import type { ResolvedContractRegistration } from "../generator/resolveRegistrationPlan.js";
+import type { ScopeRootSharedSubtreeUnit } from "../generator/scopeRootExternalsExclusion.js";
 import type { DiscoveredScopeRoot } from "../generator/types.js";
 import type {
   ScopeRootVariantVerification,
@@ -48,6 +51,11 @@ export type DiscoveryReportInput =
       scopeRoots?: readonly DiscoveredScopeRoot[];
       /** Stage-2 verification, matched to variants by (modulePath, exportName). Omitted ⇒ unverified. */
       scopeRootVerification?: ScopeRootVerificationResult;
+      /**
+       * Units demanding a declared late-bound value from inside a declaring subtree while also
+       * being reachable from outside it. Recorded, not diagnosed — see the note on the type.
+       */
+      scopeRootSharedUnits?: readonly ScopeRootSharedSubtreeUnit[];
       /**
        * Resolved lifetimes, joined onto discovered rows by (modulePath, exportName). This is what
        * lets a discovered row carry `scoped (lifetime-marker)` instead of a separate lifetime
@@ -103,10 +111,27 @@ export type InspectionContractReport = {
   }[];
 };
 
+/**
+ * One emitted scope-root opener, as the generated manifest carries it.
+ *
+ * Deliberately a separate section rather than a contract row: a scope-rooted contract claims no
+ * cradle key and elects no default, so it has nothing to say in the contracts list. The opener key
+ * is the only key it puts in the cradle, and this is where a reader finds it.
+ */
+export type InspectionOpenerReport = {
+  openerKey: string;
+  contractName: string;
+  variantName: string;
+  /** Declared late-bound values the opener requires at every call, sorted. */
+  lbvKeys: readonly string[];
+};
+
 export type InspectionReport = {
   contracts: readonly InspectionContractReport[];
   manifestIssues: readonly ManifestValidationIssue[];
   groups: readonly InspectionGroupReport[];
+  /** Emitted openers, one per scope-root variant; empty when the manifest declares none. */
+  openers: readonly InspectionOpenerReport[];
   /** Present when a `--contract` filter was applied; rows are a subset, counts are not. */
   filter?: { contract: string };
   /** Contract count over the unfiltered set, so a filtered view still says how much it hid. */
@@ -237,7 +262,23 @@ export const buildGroupReportsFromPlans = (
 export type BuildInspectionReportOptions = {
   /** Group roots read off the generated manifest (top-level non-fixed keys). */
   groups?: IocGroupsManifest;
+  /** Scope roots read off the generated manifest's `scopeRoots` field. */
+  scopeRoots?: IocScopeRootsManifest;
 };
+
+/** Flattens the manifest's scope-root rows into opener rows, sorted by opener key. */
+export const buildOpenerReportsFromManifest = (
+  scopeRoots: IocScopeRootsManifest | undefined,
+): InspectionOpenerReport[] =>
+  Object.values(scopeRoots ?? {})
+    .flatMap((variants) => Object.values(variants))
+    .map((meta) => ({
+      openerKey: meta.openerKey,
+      contractName: meta.contractName,
+      variantName: meta.variantName,
+      lbvKeys: meta.lbvKeys,
+    }))
+    .sort((a, b) => a.openerKey.localeCompare(b.openerKey));
 
 export const buildInspectionReport = (
   contracts: IocContractManifest,
@@ -279,6 +320,7 @@ export const buildInspectionReport = (
     contracts: contractsOut,
     manifestIssues,
     groups: buildGroupReportsFromManifest(options?.groups),
+    openers: buildOpenerReportsFromManifest(options?.scopeRoots),
     totalContractCount: contractsOut.length,
   };
 };
@@ -305,6 +347,11 @@ export type DiscoveryExportReportRow = {
   baseClassName?: string;
   /** Set when this export is a scope-root unit rather than an ordinary registration. */
   isScopeRoot?: true;
+  /**
+   * Scope roots only: the cradle key of the opener emitted for this variant. The variant itself
+   * claims no key — this is the one key the scope root puts in the cradle.
+   */
+  openerKey?: string;
   /** Scope roots only: the declared lbv type argument as written (captured, never resolved). */
   declaredLbv?: string;
   /** Scope roots only: property names read off the declared lbv, when verification supplied them. */
@@ -344,6 +391,8 @@ export type DiscoveryScopeRootVariantRow = {
   variantName: string;
   exportName: string;
   modulePath: string;
+  /** Cradle key of this variant's emitted opener (`authRouter` → `openAuthRouterScope`). */
+  openerKey: string;
   /** The declared lbv type argument as written. The record keeps the raw node; this is its text. */
   declaredLbv: string;
   /** Property names read off the declared lbv, when verification supplied them. */
@@ -388,6 +437,12 @@ export type DiscoveryReport = {
   }[];
   /** Grouped by root contract; empty when the input carried no scope-root rows. */
   scopeRoots: readonly DiscoveryScopeRootRow[];
+  /**
+   * Units reachable both from inside a declaring scope-root subtree and from outside it, which is
+   * why the late-bound value they demand stays in `IocExternals`. Almost always empty; carried so a
+   * migration can find real instances rather than inferring them from an unexpected externals entry.
+   */
+  scopeRootSharedUnits: readonly ScopeRootSharedSubtreeUnit[];
   /** Configured groups with membership and rejections; empty when no group plan was supplied. */
   groups: readonly InspectionGroupReport[];
   /**
@@ -512,7 +567,14 @@ const outcomeToRows = (
         contractName: outcome.contractName,
         registrationKey: outcome.registrationKey,
         ...(lifetime !== undefined ? lifetime : {}),
-        ...(outcome.isScopeRoot === true ? { isScopeRoot: true as const } : {}),
+        ...(outcome.isScopeRoot === true
+          ? {
+              isScopeRoot: true as const,
+              // Derived, not joined: the opener key is a pure function of the variant identity, so
+              // the row can carry it without the report needing an emission plan in hand.
+              openerKey: variantNameToOpenerKey(outcome.implementationName),
+            }
+          : {}),
         ...(outcome.declaredLbv !== undefined
           ? { declaredLbv: outcome.declaredLbv }
           : {}),
@@ -604,6 +666,7 @@ const buildScopeRootRows = (
       variantName: unit.variantName,
       exportName: unit.exportName,
       modulePath: unit.modulePath,
+      openerKey: variantNameToOpenerKey(unit.variantName),
       declaredLbv: unit.lbvTypeText,
       ...(variantVerification !== undefined
         ? {
@@ -748,6 +811,7 @@ export const buildDiscoveryReport = (
       asObject?.scopeRoots ?? [],
       verificationByVariant,
     ),
+    scopeRootSharedUnits: asObject?.scopeRootSharedUnits ?? [],
     groups: buildGroupReportsFromPlans(asObject?.groupPlans ?? []),
     excludedByConfig,
     summary: summarize(scannedFiles, excludedByConfig.length),
@@ -804,6 +868,12 @@ export const filterDiscoveryReportByContract = (
   return {
     files,
     scopeRoots,
+    scopeRootSharedUnits: report.scopeRootSharedUnits.filter(
+      (u) =>
+        containsFold(u.key, needle) ||
+        containsFold(u.exportName, needle) ||
+        u.declaringVariants.some((v) => containsFold(v, needle)),
+    ),
     groups: report.groups.filter((g) => groupMatchesContract(g, needle)),
     // Not narrowed: an excluded file has no contract to match against, and the list is a statement
     // about the config rather than about the rows the filter selected.
@@ -826,6 +896,12 @@ export const filterInspectionReportByContract = (
     ),
     manifestIssues: report.manifestIssues,
     groups: report.groups.filter((g) => groupMatchesContract(g, needle)),
+    openers: report.openers.filter(
+      (o) =>
+        containsFold(o.contractName, needle) ||
+        containsFold(o.variantName, needle) ||
+        containsFold(o.openerKey, needle),
+    ),
     filter: { contract },
     totalContractCount: report.totalContractCount,
   };

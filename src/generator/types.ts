@@ -60,6 +60,11 @@ export type DiscoveredScopeRoot = {
   /** Absolute (normalized) path of the file declaring the root contract type. */
   contractDeclAbsPath: string;
   /**
+   * Module specifier for generated type-only imports of the root contract, resolved by the same
+   * path ordinary factories use. Stage 3 emits the opener's return type by reference through it.
+   */
+  contractTypeRelImport: string;
+  /**
    * Factory identity within the root contract's variant set — the derived implementation name
    * (`buildAuthRouter` → `authRouter`). The variant is ALWAYS the factory identity, never a type
    * parameter.

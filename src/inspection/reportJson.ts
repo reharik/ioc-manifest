@@ -45,6 +45,14 @@
  *       "rejectionsUnavailable": true
  *     }
  *   ],
+ *   "openers": [
+ *     {
+ *       "openerKey": "openAuthRouterScope",
+ *       "contractName": "IRouter",
+ *       "variantName": "authRouter",
+ *       "lbvKeys": ["uow", "viewerId"]
+ *     }
+ *   ],
  *   "totalContractCount": 1
  * }
  * ```
@@ -78,6 +86,7 @@
  *     }
  *   ],
  *   "scopeRoots": [],
+ *   "scopeRootSharedUnits": [],
  *   "groups": [],
  *   "excludedByConfig": ["util/legacyChannel.ts"],
  *   "summary": {
@@ -90,6 +99,7 @@
  * }
  * ```
  */
+import type { ScopeRootSharedSubtreeUnit } from "../generator/scopeRootExternalsExclusion.js";
 import type {
   DiscoveryExportReportRow,
   DiscoveryReport,
@@ -97,6 +107,7 @@ import type {
   DiscoverySummary,
   InspectionContractReport,
   InspectionGroupReport,
+  InspectionOpenerReport,
   InspectionReport,
 } from "./reports.js";
 import type { ManifestValidationIssue } from "./validateManifest.js";
@@ -107,6 +118,8 @@ export type InspectionReportJson = {
   readonly contracts: readonly InspectionContractReport[];
   readonly manifestIssues: readonly ManifestValidationIssue[];
   readonly groups: readonly InspectionGroupReport[];
+  /** Emitted scope-root openers. Always present (empty when the manifest declares none). */
+  readonly openers: readonly InspectionOpenerReport[];
   readonly totalContractCount: number;
   readonly filter?: { readonly contract: string };
 };
@@ -119,6 +132,11 @@ export type DiscoveryReportJson = {
     readonly rows: readonly DiscoveryExportReportRow[];
   }[];
   readonly scopeRoots: readonly DiscoveryScopeRootRow[];
+  /**
+   * Units reachable both inside and outside a declaring scope-root subtree, which is why the
+   * late-bound value they demand stays in `IocExternals`. Always present (usually empty).
+   */
+  readonly scopeRootSharedUnits: readonly ScopeRootSharedSubtreeUnit[];
   readonly groups: readonly InspectionGroupReport[];
   /**
    * Module paths `discovery.excludes` kept out of the scan. Always present (empty when the config
@@ -136,6 +154,7 @@ export const toInspectionReportJson = (
   contracts: report.contracts,
   manifestIssues: report.manifestIssues,
   groups: report.groups,
+  openers: report.openers,
   totalContractCount: report.totalContractCount,
   ...(report.filter !== undefined ? { filter: report.filter } : {}),
 });
@@ -146,6 +165,7 @@ export const toDiscoveryReportJson = (
   kind: "inspect-discovery",
   files: report.files,
   scopeRoots: report.scopeRoots,
+  scopeRootSharedUnits: report.scopeRootSharedUnits,
   groups: report.groups,
   excludedByConfig: report.excludedByConfig,
   summary: report.summary,

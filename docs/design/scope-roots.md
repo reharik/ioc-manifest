@@ -1,6 +1,6 @@
 # Scope-root registration units
 
-**Status:** Staged. Stages 1 (discovery) and 2 (generation-time subtree verification) implemented on the `scope-roots` branch, post-3.0.0. Stage 3 unstarted. Stage 2 verifies and reports only — call-site/ambient enforcement in consumer code needs the emitted builder, which is stage 3.
+**Status:** Staged. Stages 1 (discovery), 2 (generation-time subtree verification) and 3a (opener emission) implemented on the `scope-roots` branch, post-3.0.0. Stage 3b — the consuming-app migration proof, including the deletion of `container: asValue(container)` — is unstarted.
 
 **Date:** August 2026 (against v3.0.0)
 
@@ -171,7 +171,7 @@ Stage 2 left scope-root units invisible to `analyzeDemandSupply` (they are absen
 
 ### Declared lbv keys are scope-supplied; the config need not repeat them
 
-A key is excluded from `Externals` emission when it appears in `config.scopeProvided` **or in any variant's declared lbv**. If a declared lbv already says it, the config never has to say it again. The aggregate is a union across variants, which is legitimate here and only here: it is an aggregation of written declarations — every element traces to an lbv someone typed — and it feeds Externals exclusion exclusively. Satisfaction remains strictly per-variant; no check anywhere consults another variant's lbv. `config.scopeProvided` survives for hand-opened scopes that have no `ScopeRoot` declaration to speak for them, and the existing rules around it (built-and-scope-provided hard error, undemanded-declaration warning) are untouched.
+A key is excluded from `Externals` emission when it appears in `config.scopeProvided`, or when every demand of it in the package sits inside the subtree of a variant that declares it in lbv. An lbv declaration speaks for the declaring variant's subtree and for nothing else; any demand outside such a subtree — an ordinary unit, a class, a variant demanding the key undeclared — keeps the key in `Externals`, so the app is asked for the container constant that outside demander will actually resolve. Shadowing that constant per-open from inside a scope is a supported pattern precisely because the base ask survives it. A unit reachable both inside and outside declaring subtrees counts as an outside demand, conservatively — the cost of the conservative reading is an extra `Externals` entry; the cost of the optimistic one is a runtime hole. If a declared lbv already says it, the config never has to say it again. The aggregate is a union across variants, which is legitimate here and only here: it is an aggregation of written declarations — every element traces to an lbv someone typed — and it feeds Externals exclusion exclusively. Satisfaction remains strictly per-variant; no check anywhere consults another variant's lbv. `config.scopeProvided` survives for hand-opened scopes that have no `ScopeRoot` declaration to speak for them, and the existing rules around it (built-and-scope-provided hard error, undemanded-declaration warning) are untouched.
 
 Per-variant divergence — a key declared in one variant's lbv while another variant of the same root consumes it from the container — is not an error. Under the opener model it has a precise meaning: the declaring variant's opening sites override a container constant per-open; the other variant inherits the constant through the parent chain. Legal, occasionally exactly what is wanted, and worth at most an informational line in `--discovery`.
 
@@ -182,3 +182,7 @@ With emission, the stage-1 exemptions end where they can. A contract that is bot
 ### Consequence accepted
 
 Scope-rooted contracts are opener-only. No variant is reachable through a root-cradle key or an ordinary deps position; a consumer that wants a variant as a plain dependency is asking for an ordinary factory, which is a different declaration. This is the line that keeps the model whole, and it is drawn on purpose.
+
+Open item for post-3b: a root-resolved singleton demanding a key some scope supplies per-open freezes a per-scope-shaped value at first construction, and nothing ranks that today — the lifetime pass has no notion that a key is per-open anywhere but inside the declaring subtree.
+
+Schema note: `scopeRoots` ships as an optional field within schema v3. A runtime predating opener emission that composes a manifest carrying `scopeRoots` fails loudly (the field is rejected as a malformed group root); this is accepted because the lockstep monorepo never mixes tool versions across generation and composition. Revisit if scope-rooted packages are published for consumption by independently versioned runtimes.

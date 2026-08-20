@@ -190,6 +190,7 @@ const main = async (): Promise<void> => {
 
   const full = buildInspectionReport(mainMod.iocManifest.contracts, {
     groups: extractManifestGroupRoots(mainMod.iocManifest),
+    scopeRoots: mainMod.iocManifest.scopeRoots,
   });
   const report =
     cli.contract !== undefined

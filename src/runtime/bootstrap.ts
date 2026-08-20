@@ -6,6 +6,7 @@
 import {
   aliasTo,
   asFunction,
+  asValue,
   Lifetime,
   type AwilixContainer,
   type NameAndRegistrationPair,
@@ -19,7 +20,9 @@ import {
   type IocGroupsManifest,
   type IocModuleNamespace,
   type IocRegisterableManifest,
+  type IocScopeRootsManifest,
   type ModuleFactoryManifestMetadata,
+  type ScopeRootVariantManifestMetadata,
 } from "../core/manifest.js";
 import { contractNameToDefaultRegistrationKey } from "../generator/naming.js";
 import { propagateIocResolutionFailure } from "./iocResolutionError.js";
@@ -359,8 +362,149 @@ const registerGroups = <TCradle extends object>(
 };
 
 /**
+ * Resolution frame for a scope-root variant, in the shape the instrumented path expects.
+ *
+ * A variant is not in `contracts` — it claims no root-cradle key — so it has no
+ * {@link ModuleFactoryManifestMetadata} of its own. This adapts its row to one so that a failure
+ * while opening a scope renders with the same manifest-aware chain a root resolve does.
+ */
+const scopeRootVariantAsFrameMeta = (
+  meta: ScopeRootVariantManifestMetadata,
+): ModuleFactoryManifestMetadata => ({
+  ...(meta.kind !== undefined ? { kind: meta.kind } : {}),
+  exportName: meta.exportName,
+  registrationKey: meta.variantKey,
+  modulePath: meta.modulePath,
+  relImport: meta.relImport,
+  contractName: meta.contractName,
+  implementationName: meta.variantName,
+  lifetime: "scoped",
+  moduleIndex: meta.moduleIndex,
+});
+
+/** What an opener hands back: the eagerly-resolved variant under its own key, plus a disposer. */
+type OpenedScope = Record<string, unknown> & {
+  dispose: () => Promise<void>;
+};
+
+const formatMissingLateBoundValueMessage = (
+  meta: ScopeRootVariantManifestMetadata,
+  key: string,
+): string =>
+  `[ioc] Opening scope ${JSON.stringify(meta.openerKey)} (scope root ${JSON.stringify(meta.contractName)}, variant ${JSON.stringify(meta.variantName)}): the declared late-bound value ${JSON.stringify(key)} was not supplied. Declared late-bound values: ${meta.lbvKeys.join(", ")}. The generated opener signature requires all of them at every call — a caller reaching this message is bypassing it (untyped JavaScript, a cast, or a spread of a partial object).`;
+
+/**
+ * The opener itself, closed over the scope that resolved it.
+ *
+ * Creating the child scope from `resolvingScope` is what makes an opener injectable anywhere: the
+ * chain above it resolves for free through Awilix's parent lookup (registrations, externals), while
+ * the late-bound values are passed explicitly at every call. No `AwilixContainer` reaches the
+ * caller — the container handle stays inside this closure, which is the whole point of the opener
+ * replacing hand-authored `AwilixContainer<RequestScope>` view types.
+ *
+ * Disposal is **async** because `AwilixContainer.dispose()` is: it returns the promise Awilix
+ * returns rather than dropping it, so `await close()` really does wait for the scope's disposers.
+ * Double-dispose is a no-op — the first call's promise is memoized and handed back unchanged, so a
+ * second close neither disposes twice nor resolves before the first one has finished.
+ */
+const createScopeOpener = <TCradle extends object>(
+  resolvingScope: AwilixContainer<TCradle>,
+  meta: ScopeRootVariantManifestMetadata,
+  instantiate: (cradle: unknown) => unknown,
+  keyIndex: RegistrationKeyIndex,
+): ((lbv: Record<string, unknown>) => OpenedScope) => {
+  const frameMeta = scopeRootVariantAsFrameMeta(meta);
+
+  return (lbv: Record<string, unknown>): OpenedScope => {
+    const scope = resolvingScope.createScope();
+    const pair: Record<string, unknown> = {};
+
+    for (const key of meta.lbvKeys) {
+      if (lbv === null || typeof lbv !== "object" || !(key in lbv)) {
+        throw new Error(formatMissingLateBoundValueMessage(meta, key));
+      }
+      pair[key] = asValue(lbv[key]);
+    }
+
+    /* Same routing every registration unit gets, so the instrumented resolution-error path covers
+       the variant exactly as it covers an ordinary factory. Scoped: the variant belongs to the
+       scope that was just opened for it. */
+    pair[meta.variantKey] = asFunction(
+      (cradle: unknown) =>
+        invokeResolvedUnit(
+          instantiate,
+          cradle as object,
+          frameMeta,
+          keyIndex,
+        ),
+      { lifetime: Lifetime.SCOPED },
+    );
+
+    registerPair(scope, pair);
+
+    let disposal: Promise<void> | undefined;
+    return {
+      /* Resolved eagerly: one container, one resolve. A scope that wants a second thing is missing
+         the unit that composes them, so there is no lazy handle and no multi-resolve view here. */
+      [meta.variantKey]: scope.resolve(meta.variantKey),
+      dispose: (): Promise<void> => (disposal ??= scope.dispose()),
+    };
+  };
+};
+
+const registerScopeRootOpeners = <TCradle extends object>(
+  container: AwilixContainer<TCradle>,
+  scopeRoots: IocScopeRootsManifest | undefined,
+  moduleImports: readonly IocModuleNamespace[],
+  keyIndex: RegistrationKeyIndex,
+): void => {
+  for (const variants of Object.values(scopeRoots ?? {})) {
+    for (const meta of Object.values(variants)) {
+      const ns = moduleImports[meta.moduleIndex];
+      if (!ns) {
+        throw new Error(
+          formatMissingModuleImportMessage({
+            moduleIndex: meta.moduleIndex,
+            modulePath: meta.modulePath,
+          }),
+        );
+      }
+
+      const exported = ns[meta.exportName];
+      if (typeof exported !== "function") {
+        throw new Error(
+          formatMissingFactoryExportMessage({
+            modulePath: meta.modulePath,
+            exportName: meta.exportName,
+            contractName: meta.contractName,
+            registrationKey: meta.variantKey,
+          }),
+        );
+      }
+
+      const instantiate = unitInstantiator(
+        exported,
+        scopeRootVariantAsFrameMeta(meta),
+      );
+
+      /* A bare resolver rather than `asFunction`: the opener has to close over the CONTAINER that
+         resolved it, and only a resolver's own `resolve(container)` is handed that. `asFunction`
+         receives the cradle, which cannot create a scope. Transient for the same reason group roots
+         are — the opener is a closure, so caching it would only pin it to the wrong scope. */
+      registerPair<TCradle>(container, {
+        [meta.openerKey]: {
+          lifetime: Lifetime.TRANSIENT,
+          resolve: (resolvingScope: AwilixContainer<object>) =>
+            createScopeOpener(resolvingScope, meta, instantiate, keyIndex),
+        },
+      });
+    }
+  }
+};
+
+/**
  * Registers everything described by a generated container manifest into an Awilix container
- * (implementation factories, default access-key aliases, and group roots).
+ * (implementation factories, default access-key aliases, group roots, and scope-root openers).
  */
 export const registerIocFromManifest = <TCradle extends object>(
   container: AwilixContainer<TCradle>,
@@ -383,4 +527,10 @@ export const registerIocFromManifest = <TCradle extends object>(
     groupBaseTypeNamesFromManifest(groupsManifest),
   );
   registerGroups(container, groupsManifest, keyIndex);
+  registerScopeRootOpeners(
+    container,
+    manifest.scopeRoots,
+    moduleImports,
+    keyIndex,
+  );
 };

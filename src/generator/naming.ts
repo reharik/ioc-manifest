@@ -19,3 +19,20 @@ export const contractNameToDefaultRegistrationKey = (
  */
 export const groupKeyToTypeAliasName = (key: string): string =>
   key.length === 0 ? key : key.charAt(0).toUpperCase() + key.slice(1);
+
+/**
+ * Cradle key of a scope-root variant's emitted opener: `authRouter` → `openAuthRouterScope`.
+ *
+ * Derived from the VARIANT identity (which is the factory identity — never a type parameter) with
+ * the same {@link awilixCamelCase} rule every other key in the library uses, so an acronym variant
+ * spells the same way here as it does in the cradle (`apiRouter` → `openApiRouterScope`).
+ */
+export const variantNameToOpenerKey = (variantName: string): string =>
+  awilixCamelCase(`open_${variantName}_scope`);
+
+/**
+ * The exported type alias for an opener: the opener key with an uppercased first letter
+ * (`openAuthRouterScope` → `OpenAuthRouterScope`), matching the group-alias rule.
+ */
+export const openerKeyToTypeAliasName = (openerKey: string): string =>
+  groupKeyToTypeAliasName(openerKey);

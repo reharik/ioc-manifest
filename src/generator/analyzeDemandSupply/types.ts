@@ -19,6 +19,19 @@ export type DemandSupplyCradleEntry = {
   classification: "local" | "external" | "scope-provided";
 };
 
+/**
+ * One unit that demanded a key, as the walk saw it.
+ *
+ * Identity is (modulePath, exportName) — the same pair every other join in the generator uses —
+ * because a scope-root variant has no registration key to be identified by.
+ */
+export type DemandingUnitRef = {
+  exportName: string;
+  modulePath: string;
+  /** Absent for scope-root variants, which claim no cradle key. */
+  registrationKey?: string;
+};
+
 export type DemandSupplyAnalysisResult = {
   /** Demand/supply-derived cradle properties (alphabetically sorted by key). */
   entries: readonly DemandSupplyCradleEntry[];
@@ -26,4 +39,13 @@ export type DemandSupplyAnalysisResult = {
   externalKeys: readonly string[];
   /** Keys appearing in {@link entries} with `classification: "scope-provided"`. */
   scopeProvidedKeys: readonly string[];
+  /**
+   * Every unit that demanded each key, deduplicated, in walk order.
+   *
+   * The package-wide demand edge set, and the authoritative one: it reads deps through the checker,
+   * so it sees properties a destructuring pattern happens to omit. Externals exclusion consumes it
+   * to ask whether a demand of a declared late-bound value sits outside the declaring variant's
+   * subtree. Nothing else derives a second demand pass from it.
+   */
+  demandersByKey: ReadonlyMap<string, readonly DemandingUnitRef[]>;
 };

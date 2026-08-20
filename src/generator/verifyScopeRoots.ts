@@ -58,6 +58,19 @@ export type ScopeRootFinding = {
   message: string;
 };
 
+/**
+ * One unit inside a variant's resolution subtree.
+ *
+ * Identity is (modulePath, exportName), the pair every other join in the generator uses, because
+ * the variant unit itself has no registration key to be identified by.
+ */
+export type ScopeRootSubtreeUnit = {
+  exportName: string;
+  modulePath: string;
+  /** Absent for the scope-root unit itself, which claims no registration key. */
+  registrationKey?: string;
+};
+
 /** How a scope-demand was resolved against the variant's declaration. */
 export type ScopeDemandSatisfaction =
   | "declared-lbv"
@@ -105,6 +118,15 @@ export type ScopeRootVariantVerification = {
    * key list rather than the whole type text, and this is the same list the walk was seeded with.
    */
   declaredKeys: readonly string[];
+  /**
+   * Every unit this variant's subtree covers, the variant itself first.
+   *
+   * Carried for emission, which needs to know whether a demand of a declared key comes from inside
+   * a declaring variant's subtree or from outside it. Nothing in this file reads it back:
+   * satisfaction is per variant, and a cross-variant question is exactly the kind this record must
+   * not answer for itself.
+   */
+  subtreeUnits: readonly ScopeRootSubtreeUnit[];
   /** Scope-demands of this variant's subtree, sorted by key. */
   scopeDemands: readonly ScopeRootScopeDemand[];
   /**
@@ -185,7 +207,16 @@ const groupMemberRegistrationKeys = (
     ? manifest.members.map((m) => m.registrationKey)
     : Object.values(manifest.members).map((leaf) => leaf.registrationKey);
 
-const buildSupplyIndex = (
+/**
+ * The container's supply side, indexed the way both the subtree walk and Externals exclusion
+ * consume it.
+ *
+ * Exported so exclusion resolves a demanded key to its supplying registrations through the SAME
+ * table verification measures against, rather than growing a second, drifting idea of what supplies
+ * a key. Exclusion reads only the registration-resolution parts; it never reads (and must never
+ * read) `externalKeys` or `scopeProvidedKeys`, which are classification, not graph shape.
+ */
+export const buildScopeRootSupplyIndex = (
   ctx: ScopeRootVerificationContext,
 ): ScopeRootSupplyIndex => {
   const factoryByRegistrationKey = new Map<string, DiscoveredFactory>();
@@ -236,6 +267,29 @@ const buildSupplyIndex = (
 };
 
 /**
+ * The registration keys a demanded key resolves to, in the container's own precedence: a group root
+ * expands to its members, then a registration key, then a contract access key. Empty when nothing
+ * local supplies it (an external, a scope-demand, or a group with no plan).
+ *
+ * The one place that precedence is written down; {@link classifyDemandedKey} and Externals
+ * exclusion both go through it.
+ */
+export const registrationsSupplyingKey = (
+  key: string,
+  index: ScopeRootSupplyIndex,
+): readonly string[] => {
+  const groupMembers = index.groupMemberKeysByGroupKey.get(key);
+  if (groupMembers !== undefined) {
+    return groupMembers;
+  }
+  if (index.factoryByRegistrationKey.has(key)) {
+    return [key];
+  }
+  const viaAccessKey = index.registrationKeyByAccessKey.get(key);
+  return viaAccessKey !== undefined ? [viaAccessKey] : [];
+};
+
+/**
  * What supplies one demanded cradle key under a scope root.
  *
  * `registrations` is the only kind the walk descends through; the rest are leaves.
@@ -276,16 +330,9 @@ const classifyDemandedKey = (
   index: ScopeRootSupplyIndex,
   variantLbvKeys: ReadonlySet<string>,
 ): DemandedKeySupply => {
-  const groupMembers = index.groupMemberKeysByGroupKey.get(key);
-  if (groupMembers !== undefined) {
-    return { kind: "registrations", registrationKeys: groupMembers };
-  }
-  if (index.factoryByRegistrationKey.has(key)) {
-    return { kind: "registrations", registrationKeys: [key] };
-  }
-  const viaAccessKey = index.registrationKeyByAccessKey.get(key);
-  if (viaAccessKey !== undefined) {
-    return { kind: "registrations", registrationKeys: [viaAccessKey] };
+  const registrationKeys = registrationsSupplyingKey(key, index);
+  if (registrationKeys.length > 0) {
+    return { kind: "registrations", registrationKeys };
   }
   // Only reachable without a group plan, i.e. from inspection. Generation matched it above.
   if (index.declaredGroupKeys.has(key)) {
@@ -357,6 +404,16 @@ type DemandEdge = {
 };
 
 type SubtreeWalk = {
+  /**
+   * Every unit this variant's subtree covers, the variant itself included.
+   *
+   * Reported rather than judged: it is the subtree as a graph fact, and it is the same set no
+   * matter what the variant declares (only `registrations` descends, and that classification is
+   * decided before the declaration is consulted). Externals exclusion uses it to ask whether a
+   * demand of a declared key sits inside a declaring subtree; verification does not use it at all,
+   * and must not — satisfaction is decided per variant against that variant's declaration.
+   */
+  subtreeUnits: readonly ScopeRootSubtreeUnit[];
   /** Scope-demand edges: keys that must enter at the boundary. Every occurrence, in BFS order. */
   scopeDemandEdges: readonly DemandEdge[];
   /** Edges whose key resolves to registrations, with the resolved lifetimes (for inversion). */
@@ -383,6 +440,7 @@ const walkSubtree = (
   index: ScopeRootSupplyIndex,
   variantLbvKeys: ReadonlySet<string>,
 ): SubtreeWalk => {
+  const subtreeUnits: ScopeRootSubtreeUnit[] = [];
   const scopeDemandEdges: DemandEdge[] = [];
   const generationResolvedGroupEdges: DemandEdge[] = [];
   const registeredEdges: (DemandEdge & {
@@ -397,6 +455,14 @@ const walkSubtree = (
 
   while (queue.length > 0) {
     const { unit, viaPath } = queue.shift()!;
+
+    subtreeUnits.push({
+      exportName: unit.exportName,
+      modulePath: unit.modulePath,
+      ...(unit.registrationKey !== undefined
+        ? { registrationKey: unit.registrationKey }
+        : {}),
+    });
 
     for (const key of unit.dependencyKeys) {
       const supply = classifyDemandedKey(key, index, variantLbvKeys);
@@ -444,7 +510,12 @@ const walkSubtree = (
     }
   }
 
-  return { scopeDemandEdges, registeredEdges, generationResolvedGroupEdges };
+  return {
+    subtreeUnits,
+    scopeDemandEdges,
+    registeredEdges,
+    generationResolvedGroupEdges,
+  };
 };
 
 /**
@@ -604,7 +675,7 @@ const formatScopeRootInversion = (
 export const verifyScopeRootVariant = (
   variant: DiscoveredScopeRoot,
   ctx: ScopeRootVerificationContext,
-  index: ScopeRootSupplyIndex = buildSupplyIndex(ctx),
+  index: ScopeRootSupplyIndex = buildScopeRootSupplyIndex(ctx),
 ): ScopeRootVariantVerification => {
   const checker = ctx.program.getTypeChecker();
   const findings: ScopeRootFinding[] = [];
@@ -810,6 +881,7 @@ export const verifyScopeRootVariant = (
     modulePath: variant.modulePath,
     declaredLbv: variant.lbvTypeText,
     declaredKeys: [...declaredKeys].sort((a, b) => a.localeCompare(b)),
+    subtreeUnits: walk.subtreeUnits,
     scopeDemands,
     generationResolvedKeys: Array.from(generationResolvedByKey.values()).sort(
       (a, b) => a.key.localeCompare(b.key),
@@ -834,7 +906,7 @@ export const verifyScopeRoots = (
     return { variants: [], errors: [], warnings: [] };
   }
 
-  const index = buildSupplyIndex(ctx);
+  const index = buildScopeRootSupplyIndex(ctx);
   const variants = scopeRoots.map((variant) =>
     verifyScopeRootVariant(variant, ctx, index),
   );

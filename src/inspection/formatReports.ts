@@ -8,11 +8,13 @@
  * Skip-reason and rejection codes are printed verbatim in snake_case — they are the grep handle for
  * humans and agents alike, so they are never prettified.
  */
+import type { ScopeRootSharedSubtreeUnit } from "../generator/scopeRootExternalsExclusion.js";
 import type {
   DiscoveryExportReportRow,
   DiscoveryReport,
   DiscoveryScopeRootVerificationRow,
   InspectionGroupReport,
+  InspectionOpenerReport,
   InspectionReport,
 } from "./reports.js";
 import type { ManifestValidationIssue } from "./validateManifest.js";
@@ -129,6 +131,38 @@ const formatGroupsSection = (
   return lines;
 };
 
+/**
+ * Emitted scope-root openers, one line each.
+ *
+ * Its own section rather than a contract row, because a scope-rooted contract has no contract row
+ * to belong to: it claims no cradle key and elects no default. The opener key is the only key it
+ * puts in the cradle, so this is where the reader looks for it.
+ */
+const formatOpenersSection = (
+  openers: readonly InspectionOpenerReport[],
+  c: Ansi,
+): string[] => {
+  if (openers.length === 0) return [];
+
+  const lines: string[] = [`${c.bold}Openers:${c.reset}`];
+  const keyWidth = Math.min(
+    NAME_COLUMN_CAP,
+    Math.max(0, ...openers.map((o) => o.openerKey.length)),
+  );
+
+  for (const opener of openers) {
+    lines.push(
+      `  ${c.cyan}⬢${c.reset} ${c.bold}${pad(opener.openerKey, keyWidth)}${c.reset}` +
+        ` ${c.dim}→${c.reset} ${opener.contractName}` +
+        `  ${c.dim}variant:${c.reset} ${opener.variantName}` +
+        `  ${c.dim}lbv:${c.reset} ${opener.lbvKeys.length > 0 ? opener.lbvKeys.join(", ") : "—"}`,
+    );
+  }
+
+  lines.push("");
+  return lines;
+};
+
 export type FormatInspectionReportOptions = {
   /** When omitted, uses TTY + NO_COLOR / FORCE_COLOR (same idea as common CLIs). */
   color?: boolean;
@@ -179,6 +213,7 @@ export const formatInspectionReport = (
     lines.push("");
   }
 
+  lines.push(...formatOpenersSection(report.openers, c));
   lines.push(...formatGroupsSection(report.groups, c));
 
   if (report.filter !== undefined) {
@@ -266,9 +301,13 @@ const formatRow = (
         : verification.satisfied
           ? `${c.green}✔ satisfied${c.reset}`
           : `${c.red}✖ unsatisfied${c.reset}`;
+    const opener =
+      row.openerKey !== undefined
+        ? `  ${c.dim}opener:${c.reset} ${row.openerKey}`
+        : "";
     return [
       `  ${c.cyan}⬢${c.reset} ${c.bold}${pad(name, nameWidth)}${c.reset} ${c.dim}→${c.reset} ${row.contractName} ${c.cyan}[scope root]${c.reset}` +
-        `  ${c.dim}lbv:${c.reset} ${keys}  ${verdict}`,
+        `${opener}  ${c.dim}lbv:${c.reset} ${keys}  ${verdict}`,
       ...(verification !== undefined
         ? formatScopeRootDetail(verification, c)
         : []),
@@ -303,6 +342,32 @@ const formatRow = (
       ? [`      ${c.dim}→ ${row.gloss}${c.reset}`]
       : []),
   ];
+};
+
+/**
+ * Units reachable both inside and outside a declaring scope-root subtree.
+ *
+ * One line each, no taxonomy: the point is that a reader (or a migration) can see WHICH unit and
+ * WHICH key caused a late-bound value to stay in `IocExternals`, rather than deducing it from an
+ * externals entry they did not expect.
+ */
+const formatSharedScopeRootUnitsSection = (
+  units: readonly ScopeRootSharedSubtreeUnit[],
+  c: Ansi,
+): string[] => {
+  if (units.length === 0) return [];
+
+  const lines: string[] = [`${c.bold}Shared scope-root units:${c.reset}`];
+  for (const unit of units) {
+    lines.push(
+      `  ${c.yellow}!${c.reset} ${c.bold}${unit.exportName}${c.reset}` +
+        ` ${c.dim}(${unit.modulePath})${c.reset}` +
+        ` demands ${unit.key} inside ${unit.declaringVariants.join(", ")}` +
+        ` ${c.dim}and is reachable from outside it — ${unit.key} stays in IocExternals${c.reset}`,
+    );
+  }
+  lines.push("");
+  return lines;
 };
 
 const formatSummary = (report: DiscoveryReport, c: Ansi): string[] => {
@@ -346,6 +411,9 @@ export const formatDiscoveryReport = (
     lines.push("");
   }
 
+  lines.push(
+    ...formatSharedScopeRootUnitsSection(report.scopeRootSharedUnits, c),
+  );
   lines.push(...formatGroupsSection(report.groups, c));
 
   lines.push(...formatSummary(report, c));

@@ -4,6 +4,8 @@ import {
   formatDiscoveryReport,
   formatInspectionReport,
 } from "./formatReports.js";
+import { buildInspectionReport } from "./reports.js";
+import { formatInspectionReportJson } from "./reportJson.js";
 import type {
   DiscoveryExportReportRow,
   DiscoveryReport,
@@ -27,6 +29,7 @@ const reportOf = (
 ): DiscoveryReport => ({
   files: [{ modulePath: "src/a.ts", rows }],
   scopeRoots: [],
+  scopeRootSharedUnits: [],
   groups: [],
   excludedByConfig: [],
   summary: summary(),
@@ -143,6 +146,7 @@ describe("formatDiscoveryReport", () => {
           { modulePath: "src/only-noise.ts", rows: [notACandidateRow] },
         ],
         scopeRoots: [],
+        scopeRootSharedUnits: [],
         groups: [],
         excludedByConfig: [],
         summary: summary({
@@ -167,6 +171,7 @@ describe("formatDiscoveryReport", () => {
           { modulePath: "src/only-noise.ts", rows: [notACandidateRow] },
         ],
         scopeRoots: [],
+        scopeRootSharedUnits: [],
         groups: [],
         excludedByConfig: [],
         summary: summary({ filesScanned: 2, nearMisses: 0 }),
@@ -219,6 +224,7 @@ describe("formatDiscoveryReport", () => {
           },
         ],
         scopeRoots: [],
+        scopeRootSharedUnits: [],
         groups: [],
         excludedByConfig: ["src/legacy.ts"],
         summary: summary({
@@ -252,6 +258,7 @@ describe("formatDiscoveryReport", () => {
           },
         ],
         scopeRoots: [],
+        scopeRootSharedUnits: [],
         groups: [],
         excludedByConfig: ["src/legacy.ts"],
         summary: summary({
@@ -348,6 +355,7 @@ describe("formatInspectionReport", () => {
     ],
     manifestIssues: [],
     groups: [],
+    openers: [],
     totalContractCount: 1,
   };
 
@@ -394,6 +402,84 @@ describe("formatInspectionReport", () => {
       );
 
       assert.match(text, /Showing 1 of 9 contract\(s\) matching --contract "x"/);
+    });
+  });
+});
+
+describe("inspect — emitted scope-root openers", () => {
+  const scopeRoots = {
+    IRouter: {
+      authRouter: {
+        exportName: "buildAuthRouter",
+        openerKey: "openAuthRouterScope",
+        variantKey: "authRouter",
+        contractName: "IRouter",
+        variantName: "authRouter",
+        modulePath: "routers.ts",
+        relImport: "../routers.js",
+        lbvKeys: ["uow", "viewerId"],
+        moduleIndex: 0,
+      },
+    },
+  };
+
+  describe("When the manifest carries scope roots", () => {
+    it("should report each opener with its contract, variant and lbv keys", () => {
+      const report = buildInspectionReport({}, { scopeRoots });
+
+      assert.deepEqual(report.openers, [
+        {
+          openerKey: "openAuthRouterScope",
+          contractName: "IRouter",
+          variantName: "authRouter",
+          lbvKeys: ["uow", "viewerId"],
+        },
+      ]);
+    });
+
+    it("should render one row per opener", () => {
+      const text = formatInspectionReport(
+        buildInspectionReport({}, { scopeRoots }),
+        { color: false },
+      );
+
+      // A scope-rooted contract has no contract row to hide in — it claims no cradle key and elects
+      // no default — so the opener key is only discoverable here.
+      assert.match(
+        text,
+        /Openers:\n\s+⬢ openAuthRouterScope → IRouter\s+variant: authRouter\s+lbv: uow, viewerId/,
+      );
+    });
+
+    it("should carry the same record into --json", () => {
+      const json = JSON.parse(
+        formatInspectionReportJson(buildInspectionReport({}, { scopeRoots })),
+      ) as { openers: unknown };
+
+      assert.deepEqual(json.openers, [
+        {
+          openerKey: "openAuthRouterScope",
+          contractName: "IRouter",
+          variantName: "authRouter",
+          lbvKeys: ["uow", "viewerId"],
+        },
+      ]);
+    });
+  });
+
+  describe("When the manifest carries none", () => {
+    it("should keep the section off the screen but present in --json", () => {
+      const report = buildInspectionReport({});
+
+      assert.deepEqual(report.openers, []);
+      assert.ok(
+        !formatInspectionReport(report, { color: false }).includes("Openers:"),
+      );
+      // The complete-record rule: the key is always there, empty.
+      const json = JSON.parse(formatInspectionReportJson(report)) as {
+        openers: unknown;
+      };
+      assert.deepEqual(json.openers, []);
     });
   });
 });
