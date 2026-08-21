@@ -1,3 +1,10 @@
 node_modules/
 dist/
 *.tgz
+
+# Fixture packages under src/generator/test-fixtures/**/node_modules are hand-written stand-ins for
+# real dependencies, not installed ones. They must be tracked: the emitter resolves a declaration
+# under node_modules to the BARE package specifier, and reproducing that (a name declared in a
+# subpath being imported from the package root) is the point of the alias-import-closure fixture.
+!src/generator/test-fixtures/**/node_modules/
+!src/generator/test-fixtures/**/node_modules/**

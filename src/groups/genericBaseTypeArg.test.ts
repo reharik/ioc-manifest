@@ -112,7 +112,14 @@ describe("group generic base type-argument gate", () => {
         { demandSupply: emptyDemandSupply, boundedGroupCollectionTypeRefs: refs },
       );
       assert.match(typesSource, /strategies:\s*ReadonlyArray<Strategy</);
-      assert.match(typesSource, /import type \{ Strategy \}/);
+      assert.match(typesSource, /import type \{[^}]*\bStrategy\b/);
+      // The declared arg is the exported alias `SharedEventName`, so it is emitted by reference
+      // and imported alongside the base rather than expanded into its three string literals.
+      assert.match(
+        typesSource,
+        /strategies:\s*ReadonlyArray<Strategy<SharedEventName>>/,
+      );
+      assert.match(typesSource, /import type \{[^}]*\bSharedEventName\b/);
     });
   });
 

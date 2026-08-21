@@ -9,10 +9,16 @@ import {
 import {
   factoryBareImportLocalBindingName,
   factoryImportsTypeAsDefaultBareImport,
+  symbolImportedAsDefaultBareImport,
   tryRecoverPreferredModuleSpecifier,
+  tryRecoverPreferredModuleSpecifierForSymbol,
 } from "./recoverPreferredModuleSpecifier.js";
 import { cradleTypeImportUsesDefaultExport } from "../contractTypeSourceFile.js";
 import type { EmittedTypeReference, TypeImportSpec } from "./types.js";
+import {
+  EmitImportClosureError,
+  verifyImportClosure,
+} from "./verifyImportClosure.js";
 
 const NO_TRUNCATION = ts.TypeFormatFlags.NoTruncation;
 
@@ -518,6 +524,134 @@ const emitNamedTypeImport = (
   };
 };
 
+/**
+ * True when a declaration is reachable by a named `import type { X } from "…"` — i.e. it carries
+ * an `export` modifier. A top-level name that is NOT exported cannot be emitted by reference
+ * however well-named it is, so reference emission declines and the caller falls back to structure
+ * (which import-closure verification then judges on its own merits).
+ */
+const isExportedDeclaration = (decl: ts.Declaration): boolean =>
+  (ts.getCombinedModifierFlags(decl) & ts.ModifierFlags.Export) !== 0;
+
+/**
+ * The type-alias declaration a type's `aliasSymbol` points at, when it is a top-level, exported
+ * alias in real source. `enum`/`interface` are excluded on purpose: neither ever shows up as the
+ * `aliasSymbol` of a compound type, and the non-compound path already handles them by symbol.
+ */
+const exportedAliasDeclaration = (
+  type: ts.Type,
+): { symbol: ts.Symbol; decl: ts.TypeAliasDeclaration } | undefined => {
+  const symbol = type.aliasSymbol;
+  if (symbol === undefined) {
+    return undefined;
+  }
+  for (const decl of symbol.declarations ?? []) {
+    if (ts.isTypeAliasDeclaration(decl) && isExportedDeclaration(decl)) {
+      return { symbol, decl };
+    }
+  }
+  return undefined;
+};
+
+/**
+ * Emit a COMPOUND type by reference to the alias that names it, rather than by expanding it.
+ *
+ * This is the by-reference discipline applied where it used to be silently dropped. `emitNamedTypeImport`
+ * already prefers `aliasSymbol` over the structural symbol, but a union/intersection never reached
+ * it: the compound branches ran first and printed the members. That is how a consumer's
+ * `type ScopedContainerPlugin = Plugin<InitialGraphQLContext | GraphQLContext>` — a named, exported,
+ * import-reachable alias, and the factory's declared return contract — came out as yoga's structural
+ * intersection, carrying names the package root does not export and names local to the consumer's
+ * own file. The alias was on the type the whole time (`typeToString` prints `ScopedContainerPlugin`);
+ * nothing had asked for it.
+ *
+ * Returns `undefined` — never throws — when the alias cannot carry the reference (no alias, not
+ * exported, or a generic whose arguments are not all concrete). The caller then expands as before,
+ * and {@link verifyImportClosure} decides whether that expansion is emittable.
+ */
+const tryEmitCompoundAliasReference = (
+  checker: ts.TypeChecker,
+  type: ts.Type,
+  ctx: EmitTypeReferenceContext,
+  compoundContext?: { compoundDisplay: string },
+): EmitInnerResult | undefined => {
+  const alias = exportedAliasDeclaration(type);
+  if (alias === undefined) {
+    return undefined;
+  }
+  const { symbol, decl } = alias;
+  const importName = decl.name.text;
+  const declSource = decl.getSourceFile();
+
+  // A type declared in the generated registry file itself is a LOCAL reference; importing it would
+  // make the file import itself. Same rule (and same reason) as the named-import path.
+  if (
+    canonicalPath(declSource.fileName) ===
+    canonicalPath(registryTypesFilePath(ctx.generatedDir))
+  ) {
+    return { typeName: importName, imports: [] };
+  }
+
+  // Arity: print the alias's own type parameters, filled from `aliasTypeArguments`. Anything less
+  // than a complete, concrete argument list would emit a reference TypeScript rejects (TS2314), so
+  // decline rather than approximate.
+  const declaredParams = decl.typeParameters?.length ?? 0;
+  const aliasArgs = type.aliasTypeArguments ?? [];
+  let argsText = "";
+  const argImports: TypeImportSpec[] = [];
+  if (declaredParams > 0) {
+    if (aliasArgs.length !== declaredParams) {
+      return undefined;
+    }
+    if (aliasArgs.some((a) => (a.flags & ts.TypeFlags.TypeParameter) !== 0)) {
+      return undefined;
+    }
+    const parts: string[] = [];
+    for (const arg of aliasArgs) {
+      let emittedArg: EmitInnerResult;
+      try {
+        emittedArg = emitTypeReferenceInner(checker, arg, ctx, compoundContext);
+      } catch (err) {
+        if (err instanceof EmitTypeReferenceError) {
+          return undefined;
+        }
+        throw err;
+      }
+      parts.push(emittedArg.typeName);
+      argImports.push(...emittedArg.imports);
+    }
+    argsText = `<${parts.join(", ")}>`;
+  }
+
+  const relImport = computeManifestModuleSpecifier(
+    declSource.fileName,
+    ctx.generatedDir,
+    ctx.scanDirs,
+    {
+      preferredModuleSpecifier: tryRecoverPreferredModuleSpecifierForSymbol(
+        checker,
+        symbol,
+        ctx,
+      ),
+      projectRoot: ctx.projectRoot,
+    },
+  );
+
+  assertNotTypescriptPackageImport(importName, relImport, declSource.fileName);
+
+  const useDefaultImport =
+    symbolImportedAsDefaultBareImport(checker, symbol, ctx) ||
+    (cradleTypeImportUsesDefaultExport(declSource, importName) ?? false);
+
+  return {
+    typeName: `${importName}${argsText}`,
+    imports: mergeImports([
+      { typeName: importName, relImport, useDefaultImport },
+      ...argImports,
+    ]),
+  };
+};
+
 /** Drop duplicate identical rendered members, preserving first-occurrence order. */
 const dedupePartTexts = (parts: string[]): string[] => {
   const seen = new Set<string>();
@@ -563,7 +697,12 @@ const emitCompoundType = (
       parts.push(part.typeName);
       imports.push(...part.imports);
     } catch (err) {
-      if (err instanceof EmitTypeReferenceError) {
+      // A closure violation is a refusal to emit, not a failed lookup: it must reach the caller
+      // as itself rather than be re-labelled "cannot resolve import" and then softened.
+      if (
+        err instanceof EmitTypeReferenceError ||
+        err instanceof EmitImportClosureError
+      ) {
         throw err;
       }
       throw new EmitTypeReferenceError(
@@ -612,6 +751,19 @@ const emitTypeReferenceInner = (
   }
 
   const apparent = checker.getApparentType(type);
+
+  if (apparent.isUnion() || apparent.isIntersection()) {
+    // By reference first. A compound that an exported alias names is emitted as that name — the
+    // structural expansion below is for compounds nothing names (an inline `A | undefined` on a
+    // deps property, an anonymous intersection member), which is the only case with no name to
+    // print. `type` rather than `apparent`: getApparentType can drop the alias on the way through.
+    const byReference =
+      tryEmitCompoundAliasReference(checker, type, ctx, compoundContext) ??
+      tryEmitCompoundAliasReference(checker, apparent, ctx, compoundContext);
+    if (byReference !== undefined) {
+      return byReference;
+    }
+  }
 
   if (apparent.isUnion()) {
     return emitCompoundType(
@@ -663,6 +815,24 @@ export type EmitTypeReferenceContext = FactoryDiscoveryPaths & {
 
 export type TryEmitTypeReferenceOptions = {
   propertyName?: string;
+  /**
+   * Where in the generated file this type is headed ("cradle supply type of …", "deps property of
+   * …", "scope-root opener …"). Carried only for diagnostics: an import-closure refusal names the
+   * position so the offending contract is identifiable without re-deriving it from the type text.
+   */
+  position?: string;
+};
+
+const closurePosition = (
+  options: TryEmitTypeReferenceOptions | undefined,
+): string | undefined => {
+  const parts = [
+    options?.position,
+    options?.propertyName !== undefined
+      ? `property ${JSON.stringify(options.propertyName)}`
+      : undefined,
+  ].filter((p): p is string => p !== undefined);
+  return parts.length > 0 ? parts.join(", ") : undefined;
 };
 
 export const tryEmitTypeReference = (
@@ -673,10 +843,15 @@ export const tryEmitTypeReference = (
 ): { ok: true; value: EmittedTypeReference } | { ok: false; message: string } => {
   try {
     const inner = emitTypeReferenceInner(checker, type, ctx);
-    return {
-      ok: true,
-      value: { typeName: inner.typeName, imports: inner.imports },
+    const value: EmittedTypeReference = {
+      typeName: inner.typeName,
+      imports: inner.imports,
     };
+    // The single seam every emission path funnels through, and therefore the one place the
+    // invariant is enforced: nothing leaves here whose printed text the generated file could not
+    // resolve. A violation throws past every `ok: false` / `?? fallback` on purpose.
+    verifyImportClosure(value, ctx, closurePosition(options));
+    return { ok: true, value };
   } catch (err) {
     if (err instanceof EmitTypeReferenceError) {
       const suffix =
@@ -691,13 +866,18 @@ export const tryEmitTypeReference = (
 
 /**
  * Maps a TypeScript type to an importable type name and module specifier for generated registry types.
+ *
+ * `undefined` means no importable reference exists — a soft outcome callers may fall back from. It
+ * never means "emitted something questionable": text that would not compile throws
+ * {@link EmitImportClosureError} instead of returning.
  */
 export const emitTypeReference = (
   checker: ts.TypeChecker,
   type: ts.Type,
   ctx: EmitTypeReferenceContext,
+  options?: TryEmitTypeReferenceOptions,
 ): EmittedTypeReference | undefined => {
-  const result = tryEmitTypeReference(checker, type, ctx);
+  const result = tryEmitTypeReference(checker, type, ctx, options);
   return result.ok ? result.value : undefined;
 };
 
@@ -710,10 +890,13 @@ export const isUnresolvableDepsPropertyType = (
   checker: ts.TypeChecker,
   type: ts.Type,
   ctx: EmitTypeReferenceContext,
+  options?: TryEmitTypeReferenceOptions,
 ): boolean => {
   const apparent = checker.getApparentType(type);
   if (apparent.flags & (ts.TypeFlags.Any | ts.TypeFlags.TypeParameter)) {
     return true;
   }
-  return !tryEmitTypeReference(checker, type, ctx).ok;
+  // Options are threaded purely so a closure refusal thrown from here names its position; the
+  // boolean answer is unaffected.
+  return !tryEmitTypeReference(checker, type, ctx, options).ok;
 };

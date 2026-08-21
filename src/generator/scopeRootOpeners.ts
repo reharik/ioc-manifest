@@ -183,6 +183,7 @@ const lbvMembersForVariant = (
   return members.map(({ key, type }) => {
     const emitted = tryEmitTypeReference(checker, type, emitCtx, {
       propertyName: key,
+      position: `the declared lbv of scope root ${variant.contractName} variant ${variant.variantName}`,
     });
     if (!emitted.ok) {
       throw new Error(

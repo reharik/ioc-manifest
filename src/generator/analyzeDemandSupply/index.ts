@@ -246,8 +246,9 @@ const supplyTypeRefForUnit = (
     return contractFallbackTypeRef(unit.factory);
   }
   return (
-    emitTypeReference(checker, supplyType, emitCtx) ??
-    contractFallbackTypeRef(unit.factory)
+    emitTypeReference(checker, supplyType, emitCtx, {
+      position: `the cradle supply type of ${unit.factory.exportName} (contract ${unit.factory.contractName}) in ${unit.factory.modulePath}`,
+    }) ?? contractFallbackTypeRef(unit.factory)
   );
 };
 
@@ -634,7 +635,14 @@ export const analyzeDemandSupply = (
         continue;
       }
 
-      if (isUnresolvableDepsPropertyType(checker, propType, emitCtx)) {
+      const depsPosition = `the deps type of ${loc.exportName} in ${loc.modulePath}`;
+
+      if (
+        isUnresolvableDepsPropertyType(checker, propType, emitCtx, {
+          propertyName: propName,
+          position: depsPosition,
+        })
+      ) {
         throw new Error(
           formatUnresolvableDepsError(
             projectRoot,
@@ -647,6 +655,7 @@ export const analyzeDemandSupply = (
 
       const emitted = tryEmitTypeReference(checker, propType, emitCtx, {
         propertyName: propName,
+        position: depsPosition,
       });
       if (!emitted.ok) {
         throw new Error(

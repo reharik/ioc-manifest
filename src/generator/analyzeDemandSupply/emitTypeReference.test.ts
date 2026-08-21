@@ -258,7 +258,7 @@ describe("emitTypeReference", () => {
   describe("When a compound type has a cross-file anonymous member", () => {
     const anonFile = path.join(fixtureDir, "anon-intersection-deps.ts");
 
-    it("should import the named member, inline the anonymous member, and never import __type", () => {
+    it("should emit an exported alias of the intersection by reference rather than expanding it", () => {
       const program = makeProgram([anonFile]);
       const checker = program.getTypeChecker();
       const sf = program.getSourceFile(anonFile)!;
@@ -270,7 +270,34 @@ describe("emitTypeReference", () => {
       );
       assert.ok(ref);
 
-      // Named member imported; anonymous member rendered as an inline object literal.
+      // `MixedCradle` names this intersection, so the name is what gets printed. Expanding it
+      // would spell out members whose own imports are a separate, and separately fallible,
+      // traversal — the emission defect this discipline closes.
+      assert.strictEqual(ref.typeName, "MixedCradle");
+      assert.deepStrictEqual(
+        ref.imports.map((i) => i.typeName),
+        ["MixedCradle"],
+      );
+      assert.match(
+        ref.imports[0]!.relImport,
+        /anon-intersection-contracts\.js$/,
+      );
+    });
+
+    it("should import the named member, inline the anonymous member, and never import __type", () => {
+      const program = makeProgram([anonFile]);
+      const checker = program.getTypeChecker();
+      const sf = program.getSourceFile(anonFile)!;
+      const ctx = emitCtxForFile(program, sf);
+      const ref = emitTypeReference(
+        checker,
+        depsPropertyType(program, sf.fileName, "buildAnon", "inlineCtx"),
+        ctx,
+      );
+      assert.ok(ref);
+
+      // Nothing names this intersection, so structure is printed: named member imported,
+      // anonymous member rendered as an inline object literal.
       assert.strictEqual(
         ref.typeName,
         "AppCradle & { viewerId: EntityId; viewer: User; }",
@@ -330,6 +357,11 @@ describe("emitTypeReference", () => {
       const ctxEntry = result.entries.find((e) => e.key === "ctx");
       assert.ok(ctxEntry);
       assert.ok(!ctxEntry.typeRef.typeName.includes("__type"));
+      assert.strictEqual(ctxEntry.typeRef.typeName, "MixedCradle");
+
+      const inlineEntry = result.entries.find((e) => e.key === "inlineCtx");
+      assert.ok(inlineEntry);
+      assert.ok(!inlineEntry.typeRef.typeName.includes("__type"));
 
       const { typesSource } = buildManifestArtifactSources(
         factories,
@@ -344,7 +376,13 @@ describe("emitTypeReference", () => {
       assert.ok(!typesSource.includes("__type"));
       assert.match(typesSource, /import type \{[^}]*\bEntityId\b/);
       assert.match(typesSource, /import type \{[^}]*\bUser\b/);
-      assert.match(typesSource, /AppCradle & \{ viewerId: EntityId; viewer: User; \}/);
+      assert.match(typesSource, /import type \{[^}]*\bMixedCradle\b/);
+      // The named intersection by reference; the unnamed one still printed structurally.
+      assert.match(typesSource, /ctx: MixedCradle;/);
+      assert.match(
+        typesSource,
+        /inlineCtx: AppCradle & \{ viewerId: EntityId; viewer: User; \};/,
+      );
     });
   });
 

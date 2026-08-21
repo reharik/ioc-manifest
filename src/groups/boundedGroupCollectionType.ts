@@ -84,8 +84,13 @@ export const buildBoundedGroupCollectionTypeRefs = (
       contextSourceFile,
     };
 
-    const baseEmit = emitTypeReference(checker, base.type, emitCtx);
-    const argEmit = emitTypeReference(checker, arg.type, emitCtx);
+    const position = `the bounded collection type of group ${JSON.stringify(groupName)}`;
+    const baseEmit = emitTypeReference(checker, base.type, emitCtx, {
+      position: `${position} (base)`,
+    });
+    const argEmit = emitTypeReference(checker, arg.type, emitCtx, {
+      position: `${position} (declared arg)`,
+    });
     if (baseEmit === undefined || argEmit === undefined) {
       continue;
     }

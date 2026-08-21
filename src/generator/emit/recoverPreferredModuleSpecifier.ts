@@ -159,6 +159,43 @@ export type PreferredSpecifierContext = {
 };
 
 /**
+ * Symbol-directed form of {@link tryRecoverPreferredModuleSpecifier}.
+ *
+ * The type-directed form deliberately bails on unions and intersections, because a compound type
+ * has no single symbol to recover a specifier for. An ALIAS of a compound does — `type P =
+ * Plugin<Ctx>` is one name in one module however structural its target is — so reference emission
+ * for aliases asks by symbol and keeps the same recovery order.
+ */
+export const tryRecoverPreferredModuleSpecifierForSymbol = (
+  checker: ts.TypeChecker,
+  symbol: ts.Symbol,
+  ctx: PreferredSpecifierContext,
+): string | undefined => {
+  const factorySourceFile = ctx.contextSourceFile;
+  const fromSameFile = recoverFromSameFileImport(symbol, factorySourceFile);
+  if (fromSameFile !== undefined) {
+    return fromSameFile;
+  }
+  return recoverFromFactoryBareImports(
+    checker,
+    resolveSymbolIdentity(checker, symbol),
+    factorySourceFile,
+  );
+};
+
+/** True when the factory file default-imports this symbol from a bare module specifier. */
+export const symbolImportedAsDefaultBareImport = (
+  checker: ts.TypeChecker,
+  symbol: ts.Symbol,
+  ctx: PreferredSpecifierContext,
+): boolean =>
+  findFactoryBareImportForSymbol(
+    checker,
+    resolveSymbolIdentity(checker, symbol),
+    ctx.contextSourceFile,
+  )?.useDefaultImport === true;
+
+/**
  * Recovers the module specifier a factory already uses for a type: same-file import re-exports,
  * then any bare-specifier import in the factory file that resolves to the same symbol.
  */

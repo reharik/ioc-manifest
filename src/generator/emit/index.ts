@@ -15,6 +15,11 @@ export {
   type TryEmitTypeReferenceOptions,
 } from "./emitTypeReference.js";
 export {
+  EmitImportClosureError,
+  verifyImportClosure,
+  type VerifyImportClosureContext,
+} from "./verifyImportClosure.js";
+export {
   factoryBareImportLocalBindingName,
   factoryImportsTypeAsDefaultBareImport,
   tryRecoverPreferredModuleSpecifier,

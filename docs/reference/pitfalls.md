@@ -6,6 +6,14 @@
 
 **A contract site isn't a named type** — an inline object literal (`(): { get: () => User } =>`) or an anonymous union (`(): EmailTask | SmsTask =>`) fails generation. Name the type and use the name. Nothing here is skipped silently.
 
+**Codegen refuses to emit a type it cannot import** — the generated file only prints names it can also import. When a demanded or supplied type is anonymous (nothing names it) and its printed shape mentions a name no import binds, or an emitted import names something its module does not export, generation fails naming the contract, the position, and the offending names, and writes nothing:
+
+> `[ioc] Refusing to emit a type the generated registry file could not compile at the deps type of buildReportView in src/reports/buildReportView.ts, property "handlers".`
+> `  emitted type text: { onEvent?: Hook<AppContext> | undefined; }`
+> `  the generated file would reference "AppContext" with no import that binds it (TS2304).`
+
+The fix is almost always to name the type: give the shape an exported alias and annotate with that alias. Named contracts — including aliases of generic instantiations like `type ScopedPlugin = Plugin<AppContext>` — are emitted **by reference** to the alias, so a third-party generic's structural expansion never lands in your generated file. The alternative to this error is a generated file that fails *your* `tsc` instead of ours.
+
 **A class isn't registered** — it needs an `implements` clause of its own. A class that only *inherits* a contract through `extends` is reported with `class_inherited_contract_not_declared`, naming the base and the contract to add. Inheriting a contract deliberately does not inherit registration; see [Class registration](/concepts/classes#the-base-class-pattern).
 
 **Two contracts with the same name** — contract identity is the pair (declaration file, declared name), so two different declarations sharing a name fail generation with both declaration sites named. Rename one.
