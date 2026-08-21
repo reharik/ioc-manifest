@@ -33,7 +33,7 @@ export interface IocGeneratedCradle {
 
 export type MediaStoragesGroup = ReadonlyArray<MediaStorage>;
 
-export type OpenPublicReportScope = (lbv: Record<string, never>) => {
+export type OpenPublicReportScope = () => {
   publicReport: RequestReport;
   dispose: () => Promise<void>;
 };

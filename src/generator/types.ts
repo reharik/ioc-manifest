@@ -75,11 +75,14 @@ export type DiscoveredScopeRoot = {
   relImport: string;
   unitKind: IocUnitKind;
   /**
-   * The declared late-bound-value type argument, captured verbatim. Stage 1 never resolves or
-   * verifies it; stage 2 checks it against the subtree's scope-demands.
+   * The declared late-bound-value type argument, captured verbatim — `undefined` when the
+   * one-argument form (`ScopeRoot<IRouter>`) left it to the marker's default, the empty set. Stage
+   * 1 never resolves or verifies it; stage 2 checks it against the subtree's scope-demands. Read it
+   * through `declaredLbv.ts`, the single seam that turns either case into declared members, so no
+   * consumer has to know which spelling produced the variant.
    */
-  lbvTypeNode: ts.TypeNode;
-  /** `lbvTypeNode` source text, so reporting needs no AST. */
+  lbvTypeNode: ts.TypeNode | undefined;
+  /** `lbvTypeNode` source text, or the default's spelling when it was omitted. */
   lbvTypeText: string;
   /** Always `"scoped"`: a scope root is resolved per scope by construction, not by policy. */
   lifetime: IocLifetime;

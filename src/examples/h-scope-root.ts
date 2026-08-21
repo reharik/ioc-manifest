@@ -72,10 +72,16 @@ type PublicReportDeps = {
   viewer: Viewer;
 };
 
-/** Variant two: a public boundary with an empty lbv set. Same contract, different scope. */
+/**
+ * Variant two: a public boundary with an empty lbv set. Same contract, different scope.
+ *
+ * The lbv type argument is omitted, which DECLARES the empty set — `ScopeRoot<RequestReport>` and
+ * `ScopeRoot<RequestReport, Record<string, never>>` are the same declaration, reported and emitted
+ * identically. Its opener therefore takes no argument: `openPublicReportScope()`.
+ */
 export const buildPublicReport = ({
   viewer,
-}: PublicReportDeps): ScopeRoot<RequestReport, Record<string, never>> => {
+}: PublicReportDeps): ScopeRoot<RequestReport> => {
   return {
     render: () => `public report for ${viewer.id}`,
   };

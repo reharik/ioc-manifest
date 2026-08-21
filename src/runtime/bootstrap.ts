@@ -412,10 +412,14 @@ const createScopeOpener = <TCradle extends object>(
   meta: ScopeRootVariantManifestMetadata,
   instantiate: (cradle: unknown) => unknown,
   keyIndex: RegistrationKeyIndex,
-): ((lbv: Record<string, unknown>) => OpenedScope) => {
+): ((lbv?: Record<string, unknown>) => OpenedScope) => {
   const frameMeta = scopeRootVariantAsFrameMeta(meta);
 
-  return (lbv: Record<string, unknown>): OpenedScope => {
+  // The parameter is optional here because a variant may declare no late-bound values at all: the
+  // emitted signature for that opener takes no argument, so the call arrives with none. Nothing
+  // else changes — the loop below has nothing to register, and every declared key of a variant that
+  // DOES declare some is still checked against what was supplied.
+  return (lbv?: Record<string, unknown>): OpenedScope => {
     const scope = resolvingScope.createScope();
     const pair: Record<string, unknown> = {};
 

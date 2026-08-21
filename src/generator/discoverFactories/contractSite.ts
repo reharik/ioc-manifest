@@ -242,11 +242,19 @@ export const SCOPE_ROOT_MARKER_NAME = "ScopeRoot";
 export const SCOPE_ROOT_MARKER_FORM = `${SCOPE_ROOT_MARKER_NAME}<TContract, TLbv>`;
 
 /**
+ * How the marker's own declaration spells the empty lbv set, and therefore how an omitted second
+ * type argument reports: `ScopeRoot<IRouter>` and `ScopeRoot<IRouter, Record<string, never>>` are
+ * one declaration written two ways, so they must read as one declaration everywhere downstream.
+ */
+export const DEFAULT_EMPTY_LBV_TYPE_TEXT = "Record<string, never>";
+
+/**
  * A contract site read as a `ScopeRoot<...>` reference.
  *
  * `wrong_arity` is a hard error rather than a skip: writing `ScopeRoot` at all is an unambiguous
- * attempt to declare a scope root, and the missing type argument is exactly the declaration this
- * feature refuses to infer.
+ * attempt to declare a scope root, and a contract argument that is missing — or arguments the
+ * marker does not have — is not something this feature guesses at. The lbv argument is the one that
+ * may be omitted, because the marker itself declares what omitting it means (the empty set).
  */
 export type ScopeRootMarker =
   | { kind: "none" }
@@ -254,8 +262,11 @@ export type ScopeRootMarker =
       kind: "scope_root";
       /** First type argument: the root contract site, resolved by the ordinary identity path. */
       contractSite: ts.TypeNode;
-      /** Second type argument, captured verbatim. Stage 1 never resolves or verifies it. */
-      lbvTypeNode: ts.TypeNode;
+      /**
+       * Second type argument, captured verbatim — `undefined` when it was omitted, which declares
+       * the marker's default empty set. Stage 1 never resolves or verifies either case.
+       */
+      lbvTypeNode: ts.TypeNode | undefined;
     }
   | { kind: "wrong_arity"; typeArgumentCount: number };
 
@@ -276,14 +287,16 @@ const readScopeRootMarker = (node: ts.TypeNode): ScopeRootMarker => {
   }
 
   const typeArguments = node.typeArguments ?? [];
-  if (typeArguments.length !== 2) {
+  if (typeArguments.length !== 1 && typeArguments.length !== 2) {
     return { kind: "wrong_arity", typeArgumentCount: typeArguments.length };
   }
 
   return {
     kind: "scope_root",
     contractSite: typeArguments[0]!,
-    lbvTypeNode: typeArguments[1]!,
+    // Absent for the one-argument form. Nothing is synthesized in its place: what the developer
+    // wrote is what is carried, and "wrote nothing" is carried as nothing.
+    lbvTypeNode: typeArguments[1],
   };
 };
 
@@ -397,17 +410,26 @@ export type AnnotationContractResolution =
   /** Keyword/array/inline-intersection/other non-reference forms — skipped, not hard errors. */
   | { kind: "unsupported" }
   | { kind: "unresolved"; writtenName: string }
-  /** `ScopeRoot` written with other than two type arguments — a hard error, never a silent skip. */
+  /**
+   * `ScopeRoot` written with neither one nor two type arguments — a hard error, never a silent skip.
+   */
   | { kind: "scope_root_wrong_arity"; typeArgumentCount: number };
 
 /** The declared scope-root facts read off a contract site, before any verification. */
 export type DeclaredScopeRootSite = {
   /**
-   * The declared late-bound-value type argument, captured verbatim as written. Stage 1 never
-   * resolves, normalizes, or verifies it; stage 2 checks it against the subtree's scope-demands.
+   * The declared late-bound-value type argument, captured verbatim as written — `undefined` when
+   * the one-argument form left it to the marker's default, which declares the empty set. Stage 1
+   * never resolves, normalizes, or verifies it; stage 2 checks it against the subtree's
+   * scope-demands, reading both cases through the one node-to-type seam (`declaredLbv.ts`).
    */
-  lbvTypeNode: ts.TypeNode;
-  /** `lbvTypeNode` source text, so reporting layers need no AST. */
+  lbvTypeNode: ts.TypeNode | undefined;
+  /**
+   * `lbvTypeNode` source text, so reporting layers need no AST. For the one-argument form this is
+   * the default's own spelling ({@link DEFAULT_EMPTY_LBV_TYPE_TEXT}) rather than an empty string:
+   * the two ways of declaring an empty lbv are one declaration, and a report that distinguished
+   * them would be reporting syntax instead of what was declared.
+   */
   lbvTypeText: string;
 };
 
@@ -440,7 +462,8 @@ export const resolveAnnotationContract = (
     marker.kind === "scope_root"
       ? {
           lbvTypeNode: marker.lbvTypeNode,
-          lbvTypeText: marker.lbvTypeNode.getText(),
+          lbvTypeText:
+            marker.lbvTypeNode?.getText() ?? DEFAULT_EMPTY_LBV_TYPE_TEXT,
         }
       : undefined;
 

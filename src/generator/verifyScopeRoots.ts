@@ -11,15 +11,18 @@
  * runs (`AppCradle[K] extends Externals[K]`). The lbv-supplied type must be assignable to the type
  * the subtree demands, never the inverse.
  *
- * lbv resolution discipline: the record keeps the raw `ts.TypeNode` captured at stage 1 and keeps it
- * forever. The checker is applied to it here, at the boundary, and the resolved type never travels
- * back into a {@link DiscoveredScopeRoot}. Demanded types are resolved the same way — lazily, and
- * only for the keys that turn out to be scope-demands.
+ * lbv resolution discipline: the record keeps whatever stage 1 captured — the raw `ts.TypeNode`, or
+ * nothing at all when the declaration was made by omitting the type argument — and keeps it forever.
+ * The checker is applied to it in `declaredLbv.ts`, the single seam both this pass and opener
+ * emission read the declaration through, and the resolved types never travel back into a
+ * {@link DiscoveredScopeRoot}. Demanded types are resolved the same way — lazily, and only for the
+ * keys that turn out to be scope-demands.
  */
 import path from "node:path";
 import ts from "typescript";
 import type { IocConfig, IocLifetime } from "../config/iocConfig.js";
 import type { IocGroupsManifest } from "../core/manifest.js";
+import { readDeclaredLbv } from "./declaredLbv.js";
 import { unitDepsSignatureDecl } from "./discoverFactories/contractSite.js";
 import { collectFileAnalysisForFactoryDiscovery } from "./discoverFactories/scanFactoryFile.js";
 import {
@@ -680,15 +683,14 @@ export const verifyScopeRootVariant = (
   const checker = ctx.program.getTypeChecker();
   const findings: ScopeRootFinding[] = [];
 
-  // The one place the declared lbv meets the checker. The raw node stays on the record; this
-  // resolved type is local to the check and is never written back.
-  const lbvType = checker.getApparentType(
-    checker.getTypeFromTypeNode(variant.lbvTypeNode),
+  // The declared lbv meets the checker in `declaredLbv.ts` and nowhere else. The raw node stays on
+  // the record; the keys are local to this check and are never written back. A variant that
+  // declared its lbv by omission answers with an empty set here, like any other empty declaration.
+  const declaredLbv = readDeclaredLbv(checker, variant);
+  const declaredKeys = declaredLbv.members.map((m) => m.key);
+  const declaredTypeByKey = new Map(
+    declaredLbv.members.map((m) => [m.key, m.type] as const),
   );
-  const declaredKeys = checker
-    .getPropertiesOfType(lbvType)
-    .map((prop) => prop.getName())
-    .filter((name) => !name.startsWith("__"));
 
   // The declaration is read before the walk, because declaring a key IS what makes it a
   // scope-demand for this variant rather than an external the root container supplies.
@@ -698,9 +700,9 @@ export const verifyScopeRootVariant = (
   const seenMismatch = new Set<string>();
 
   for (const edge of walk.scopeDemandEdges) {
-    const declaredProp = checker.getPropertyOfType(lbvType, edge.key);
+    const supplied = declaredTypeByKey.get(edge.key);
 
-    if (declaredProp === undefined) {
+    if (supplied === undefined) {
       if (!demandsByKey.has(edge.key)) {
         demandsByKey.set(edge.key, {
           key: edge.key,
@@ -721,7 +723,6 @@ export const verifyScopeRootVariant = (
       continue;
     }
 
-    const supplied = checker.getTypeOfSymbol(declaredProp);
     const demanded = demandedTypeAtSite(ctx, checker, edge.unit, edge.key);
 
     // supplied extends demanded — the externals-check direction, never the inverse.

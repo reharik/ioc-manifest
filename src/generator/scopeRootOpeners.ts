@@ -27,6 +27,7 @@ import {
   cradleTypeImportUsesDefaultExport,
   resolveContractTypeSourceFile,
 } from "./contractTypeSourceFile.js";
+import { readDeclaredLbv } from "./declaredLbv.js";
 import {
   tryEmitTypeReference,
   type EmitTypeReferenceContext,
@@ -80,24 +81,30 @@ export type ScopeRootOpenerBuildContext = {
  */
 const DISPOSE_MEMBER_TYPE = "dispose: () => Promise<void>";
 
-/** An lbv type argument with no members still takes an argument — an empty object, not `{}`. */
-const EMPTY_LBV_TYPE_TEXT = "Record<string, never>";
-
-const lbvParameterTypeText = (opener: ScopeRootOpener): string =>
+/**
+ * The opener's parameter list: the declared lbv, or nothing at all.
+ *
+ * A boundary that declares no late-bound values takes no argument. The parameter exists to carry
+ * the declaration across the boundary, so with nothing declared there is nothing for it to carry —
+ * an empty object the caller must construct anyway (`open({})`) would be ceremony standing in for a
+ * declaration that says the opposite. Both spellings of the empty declaration land here identically:
+ * emission reads the resolved member set, never the syntax that produced it.
+ */
+const openerParameterListText = (opener: ScopeRootOpener): string =>
   opener.lbvMembers.length === 0
-    ? EMPTY_LBV_TYPE_TEXT
-    : `{ ${opener.lbvMembers.map((m) => `${m.key}: ${m.typeRef.typeName}`).join("; ")} }`;
+    ? ""
+    : `lbv: { ${opener.lbvMembers.map((m) => `${m.key}: ${m.typeRef.typeName}`).join("; ")} }`;
 
 /**
  * The opener's full function type.
  *
- * One parameter (the whole declared lbv — no ambient omission, because an injected opener is closed
- * over a statically anonymous scope), and a return carrying the eagerly-resolved variant plus the
- * disposer. No `AwilixContainer` appears in either position: the opener IS the sanctioned
+ * At most one parameter (the whole declared lbv — no ambient omission, because an injected opener
+ * is closed over a statically anonymous scope), and a return carrying the eagerly-resolved variant
+ * plus the disposer. No `AwilixContainer` appears in either position: the opener IS the sanctioned
  * scope-resolver handle, which is what lets it sit in a deps position at all.
  */
 export const openerFunctionTypeText = (opener: ScopeRootOpener): string =>
-  `(lbv: ${lbvParameterTypeText(opener)}) => { ${opener.variantKey}: ${opener.contractTypeRef.typeName}; ${DISPOSE_MEMBER_TYPE} }`;
+  `(${openerParameterListText(opener)}) => { ${opener.variantKey}: ${opener.contractTypeRef.typeName}; ${DISPOSE_MEMBER_TYPE} }`;
 
 /** Every import the opener's emitted type pulls in, contract first. */
 export const openerTypeImports = (
@@ -151,45 +158,39 @@ const formatUnemittableLbvMemberError = (
  * reference.
  *
  * The raw `ts.TypeNode` on the record is never replaced (the same discipline stage 2 keeps): the
- * checker is applied here, at the emission boundary, and the resolved types stay local.
+ * declaration is resolved through `declaredLbv.ts`, at the emission boundary, and the resolved
+ * types stay local. A variant that declared no lbv — by omitting the type argument or by writing
+ * the empty type — contributes no members, which is what makes its opener parameterless.
  */
 const lbvMembersForVariant = (
   variant: DiscoveredScopeRoot,
   ctx: ScopeRootOpenerBuildContext,
 ): ScopeRootOpenerLbvMember[] => {
   const checker = ctx.program.getTypeChecker();
+  const { declarationSourceFile, members } = readDeclaredLbv(checker, variant);
+  if (declarationSourceFile === undefined) {
+    return [];
+  }
+
   const emitCtx: EmitTypeReferenceContext = {
     program: ctx.program,
     projectRoot: ctx.projectRoot,
     scanDirs: ctx.scanDirs,
     generatedDir: ctx.generatedDir,
-    contextSourceFile: variant.lbvTypeNode.getSourceFile(),
+    contextSourceFile: declarationSourceFile,
   };
 
-  const lbvType = checker.getApparentType(
-    checker.getTypeFromTypeNode(variant.lbvTypeNode),
-  );
-
-  return checker
-    .getPropertiesOfType(lbvType)
-    .map((prop) => prop.getName())
-    .filter((name) => !name.startsWith("__"))
-    .sort((a, b) => a.localeCompare(b))
-    .map((key) => {
-      const prop = checker.getPropertyOfType(lbvType, key)!;
-      const emitted = tryEmitTypeReference(
-        checker,
-        checker.getTypeOfSymbol(prop),
-        emitCtx,
-        { propertyName: key },
-      );
-      if (!emitted.ok) {
-        throw new Error(
-          formatUnemittableLbvMemberError(variant, key, emitted.message),
-        );
-      }
-      return { key, typeRef: emitted.value };
+  return members.map(({ key, type }) => {
+    const emitted = tryEmitTypeReference(checker, type, emitCtx, {
+      propertyName: key,
     });
+    if (!emitted.ok) {
+      throw new Error(
+        formatUnemittableLbvMemberError(variant, key, emitted.message),
+      );
+    }
+    return { key, typeRef: emitted.value };
+  });
 };
 
 /**

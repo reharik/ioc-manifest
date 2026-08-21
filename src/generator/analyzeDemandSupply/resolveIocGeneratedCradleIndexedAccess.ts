@@ -37,30 +37,35 @@ const bindingsForNode = (
 };
 
 /**
- * The generated export named by a namespace-qualified type reference (`Ioc.Channels` → `Channels`),
- * or `undefined` when the entity name is not qualified through a namespace import of the generated
- * file. ENTIRELY SYNTACTIC: the namespace binding is read off the file's import statements, so it
- * resolves on a cold start where the generated module cannot be loaded.
+ * The generated export an entity name in a type position names, read off THIS file's import table
+ * alone — no checker, no module resolution, and no look at what the target actually exports.
+ *
+ * Covers the named form (`import type { OpenAuthRouterScope } …` → `OpenAuthRouterScope`, under an
+ * `as` alias too) and the namespace-qualified form (`Ioc.Channels` → `Channels`). A bare namespace
+ * or default binding names no single export and answers `undefined`.
+ *
+ * Reading the import STATEMENT rather than the imported SYMBOL is what makes a name the current
+ * generation is about to emit resolvable at all: on the run that first discovers a scope root the
+ * generated file demonstrably does not export its opener alias yet, and on a cold start the file
+ * does not exist — so asking the target would answer "no such name" for precisely the names that
+ * are about to become real. What the name MEANS is still the caller's business; each claim parser
+ * reverse-maps it against its own enumeration of the names THIS run emits.
  */
-const namespaceQualifiedGeneratedName = (
+const generatedBindingReferencedName = (
   typeName: ts.EntityName,
   generatedDir: string,
 ): string | undefined => {
-  if (!ts.isQualifiedName(typeName)) {
-    return undefined;
-  }
   const reference = resolveGeneratedBindingReference(
     typeName,
     bindingsForNode(typeName, generatedDir),
   );
-  if (
-    reference === undefined ||
-    reference.overQualified ||
-    reference.binding.kind !== "namespace"
-  ) {
+  if (reference === undefined || reference.overQualified) {
     return undefined;
   }
-  return reference.referencedName;
+  const expectedKind = ts.isIdentifier(typeName) ? "named" : "namespace";
+  return reference.binding.kind === expectedKind
+    ? reference.referencedName
+    : undefined;
 };
 
 const propertyNameText = (name: ts.PropertyName): string | undefined => {
@@ -184,39 +189,40 @@ export const resolveDepsPropertyTypeNode = (
   return typeNode;
 };
 
+/**
+ * True when an entity name in a type position denotes the generated cradle interface: the name
+ * itself, or any local binding imported from the generated file under it — including a rename
+ * (`import type { IocGeneratedCradle as Cradle }`) and the namespace-qualified spelling. Read off
+ * the import table, so it holds against a generated file that is missing, stale, or (as when the
+ * cradle predates a key being indexed off it) simply older than the run reading it.
+ */
 const isIocGeneratedCradleImportBinding = (
   checker: ts.TypeChecker,
   typeName: ts.EntityName,
   generatedDir: string,
 ): boolean => {
-  if (!ts.isIdentifier(typeName)) {
-    return (
-      namespaceQualifiedGeneratedName(typeName, generatedDir) ===
-      IOC_GENERATED_CRADLE_NAME
-    );
-  }
-  if (typeName.text === IOC_GENERATED_CRADLE_NAME) {
+  if (ts.isIdentifier(typeName) && typeName.text === IOC_GENERATED_CRADLE_NAME) {
     return true;
   }
-  const symbol = checker.getSymbolAtLocation(typeName);
-  if (symbol === undefined) {
+  if (
+    generatedBindingReferencedName(typeName, generatedDir) ===
+    IOC_GENERATED_CRADLE_NAME
+  ) {
+    return true;
+  }
+  if (!ts.isIdentifier(typeName)) {
     return false;
   }
-  for (const decl of symbol.declarations ?? []) {
-    if (!ts.isImportSpecifier(decl)) {
-      continue;
-    }
-    const importedName =
-      decl.propertyName !== undefined && ts.isIdentifier(decl.propertyName)
-        ? decl.propertyName.text
-        : ts.isIdentifier(decl.name)
-          ? decl.name.text
-          : undefined;
-    if (importedName === IOC_GENERATED_CRADLE_NAME) {
-      return true;
-    }
-  }
-  return false;
+  // Last resort: a local name the checker says was imported under the cradle's name, from a module
+  // this run does not recognize as the generated file (a stand-in cradle in a test, a generated file
+  // reached through a specifier neither the basename nor the path rule matches). Name-only, so it
+  // stays a recognition of the cradle rather than of a module.
+  const symbol = checker.getSymbolAtLocation(typeName);
+  return (symbol?.declarations ?? []).some(
+    (decl) =>
+      ts.isImportSpecifier(decl) &&
+      (decl.propertyName ?? decl.name).text === IOC_GENERATED_CRADLE_NAME,
+  );
 };
 
 const isIocGeneratedCradleTypeNode = (
@@ -261,39 +267,15 @@ export const tryParseIocGeneratedCradleIndexedAccessKey = (
 };
 
 /**
- * The name imported by an `ImportSpecifier` (`import type { A as B }` → `A`; `import type { A }` → `A`).
- */
-const importSpecifierImportedName = (
-  spec: ts.ImportSpecifier,
-): string | undefined => {
-  if (spec.propertyName !== undefined && ts.isIdentifier(spec.propertyName)) {
-    return spec.propertyName.text;
-  }
-  if (ts.isIdentifier(spec.name)) {
-    return spec.name.text;
-  }
-  return undefined;
-};
-
-/** The `ImportDeclaration` a named binding was imported through, if the symbol is one. */
-const importDeclarationForSpecifier = (
-  spec: ts.ImportSpecifier,
-): ts.ImportDeclaration | undefined =>
-  ts.findAncestor(spec, ts.isImportDeclaration) ?? undefined;
-
-/**
  * The name a deps-position type node reaches INTO the generated registry-types file by, when it is
- * a bare reference to a name exported from that file — `undefined` otherwise.
+ * a bare reference to a name that file is expected to export — `undefined` otherwise.
  *
  * This is the single recognition mechanism behind every by-name claim form (group aliases, and the
- * scope-root opener aliases below). ENTIRELY SYNTACTIC and cold-start-safe: it reads the import
- * specifier node and hands back the name that was imported. It never resolves the alias's
- * underlying type or reads the alias declaration from the generated file — either would reintroduce
- * the chicken-egg where the generated file must already exist for the deps-resolution pass to
- * succeed. The import specifier is present in the factory source even when the target module cannot
- * resolve on a cold start, so the module specifier is matched on BASENAME only (the full path can't
- * be resolved yet). A namespace import (`import type * as Ioc from '…'` → `Ioc.Channels`) is read
- * the same way, straight off the file's import statements.
+ * scope-root opener aliases below). ENTIRELY SYNTACTIC and cold-start-safe: the local name is
+ * matched against the file's own import statements by {@link generatedBindingReferencedName}, which
+ * hands back the name that was imported. Nothing asks whether the target actually exports it, and
+ * the alias's underlying type is never resolved — either would reintroduce the chicken-and-egg
+ * where the generated file must already contain a name before generation may write it.
  *
  * What the name MEANS is the caller's business: each claim parser reverse-maps it against its own
  * enumeration of emitted names, so an unrecognized name stays unclaimed and reaches the backstop.
@@ -311,40 +293,7 @@ const generatedRegistryAliasNameOf = (
   ) {
     return undefined;
   }
-
-  if (!ts.isIdentifier(resolved.typeName)) {
-    return namespaceQualifiedGeneratedName(resolved.typeName, generatedDir);
-  }
-
-  const symbol = checker.getSymbolAtLocation(resolved.typeName);
-  if (symbol === undefined) {
-    return undefined;
-  }
-
-  for (const decl of symbol.declarations ?? []) {
-    if (!ts.isImportSpecifier(decl)) {
-      continue;
-    }
-    const importDecl = importDeclarationForSpecifier(decl);
-    if (
-      importDecl === undefined ||
-      !ts.isStringLiteral(importDecl.moduleSpecifier)
-    ) {
-      continue;
-    }
-    if (
-      moduleSpecifierBasenameStem(importDecl.moduleSpecifier.text) !==
-      REGISTRY_TYPES_BASENAME_STEM
-    ) {
-      continue;
-    }
-    const importedName = importSpecifierImportedName(decl);
-    if (importedName !== undefined) {
-      return importedName;
-    }
-  }
-
-  return undefined;
+  return generatedBindingReferencedName(resolved.typeName, generatedDir);
 };
 
 /**
@@ -417,13 +366,64 @@ export const tryParseConsumedScopeRootOpenerAliasKey = (
     : openerKeysByAliasName.get(aliasName);
 };
 
+/**
+ * The type node a property SYMBOL was WRITTEN with, wherever its declaration lives.
+ *
+ * The route to a deps property whose declaration is not a member of the deps type's own member list:
+ * an intersection member (`type Deps = BaseDeps & { openAuthRouterScope: OpenAuthRouterScope }`) or
+ * a mapped type's source (`Readonly<{ … }>`). The declaration is the source text the developer
+ * wrote, so what comes back is still a syntactic reference — nothing here resolves a type.
+ */
+const symbolDeclaredTypeNode = (symbol: ts.Symbol): ts.TypeNode | undefined => {
+  for (const decl of symbol.declarations ?? []) {
+    if (
+      (ts.isPropertySignature(decl) || ts.isPropertyDeclaration(decl)) &&
+      decl.type !== undefined
+    ) {
+      return decl.type;
+    }
+  }
+  return undefined;
+};
+
+/**
+ * Every deps property's written type node, keyed by property name — the input every claim parser
+ * reads instead of the checker's resolved type.
+ *
+ * Two sources, in order. The deps type's own declaration covers the ordinary shapes (an interface,
+ * or a type alias of an object literal) and is preferred because it is reached without asking the
+ * checker for members at all. Anything the developer composed — an intersection, a mapped type over
+ * an object literal — has no single member list to read, so the remaining properties are picked up
+ * from their own declarations via the property symbols.
+ *
+ * A property MISSING from this map is not a neutral outcome: with no node to read, every claim
+ * parser declines and the property is handed to the checker, which resolves a generated name out of
+ * prior output (stale types on a warm run) or fails to resolve one this generation has not written
+ * yet (the same-generation scope-root opener). The second source exists so that a deps type's outer
+ * shape cannot decide whether a reference is claimed.
+ */
 export const depsPropertyTypeNodeByName = (
   checker: ts.TypeChecker,
   depsType: ts.Type,
 ): Map<string, ts.TypeNode> => {
   const decl = getDepsTypeDeclaration(checker, depsType);
-  if (decl === undefined) {
-    return new Map();
+  const out =
+    decl !== undefined
+      ? collectPropertyTypeNodes(decl)
+      : new Map<string, ts.TypeNode>();
+
+  for (const prop of checker.getPropertiesOfType(
+    checker.getApparentType(depsType),
+  )) {
+    const name = prop.getName();
+    if (out.has(name)) {
+      continue;
+    }
+    const typeNode = symbolDeclaredTypeNode(prop);
+    if (typeNode !== undefined) {
+      out.set(name, typeNode);
+    }
   }
-  return collectPropertyTypeNodes(decl);
+
+  return out;
 };

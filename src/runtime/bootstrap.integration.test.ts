@@ -1,5 +1,8 @@
 import assert from "node:assert";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+import ts from "typescript";
 import { asValue, createContainer, type AwilixContainer } from "awilix";
 import type { MediaStorage } from "../examples/b-multiple-implementations.js";
 import type {
@@ -8,6 +11,47 @@ import type {
 } from "../generated/ioc-registry.types.js";
 import { iocManifest } from "../generated/ioc-manifest.js";
 import { registerIocFromManifest } from "./bootstrap.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const generatedDir = path.join(__dirname, "../generated");
+
+/**
+ * Compiles one statement against the real generated registry types and returns its diagnostics.
+ *
+ * The probe file is written into the generated directory (in memory only) so its relative import
+ * resolves exactly as a consumer's would. `open` is declared, never resolved: what is under test is
+ * the emitted opener TYPE, not the container.
+ */
+const typecheckAgainstGeneratedTypes = (
+  statement: string,
+): readonly ts.Diagnostic[] => {
+  const probePath = path.join(generatedDir, "__opener-arity-probe.ts");
+  const source = [
+    'import type { OpenPublicReportScope } from "./ioc-registry.types.js";',
+    "declare const open: OpenPublicReportScope;",
+    statement,
+  ].join("\n");
+
+  const host = ts.createCompilerHost({});
+  const originalGetSourceFile = host.getSourceFile.bind(host);
+  host.getSourceFile = (fileName, langVersion, onError, shouldCreate) =>
+    path.normalize(fileName) === path.normalize(probePath)
+      ? ts.createSourceFile(fileName, source, langVersion, true)
+      : originalGetSourceFile(fileName, langVersion, onError, shouldCreate);
+
+  const program = ts.createProgram({
+    rootNames: [probePath],
+    options: {
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.ESNext,
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
+      strict: true,
+      noEmit: true,
+    },
+    host,
+  });
+  return program.getSemanticDiagnostics(program.getSourceFile(probePath)!);
+};
 
 describe("registerIocFromManifest", () => {
   describe("When resolving the contract default slot", () => {
@@ -148,7 +192,11 @@ describe("registerIocFromManifest", () => {
       // Empty lbv: everything this boundary needs comes through the parent chain. If the exclusion
       // union had removed `viewer` from `IocExternals`, nothing would have asked the app for it and
       // this would fail at resolution rather than at composition.
-      const opened = container.resolve("openPublicReportScope")({});
+      //
+      // Opened with NO argument: the variant declares no late-bound values, so the emitted opener
+      // takes none. The typecheck probe below is the other half of that claim — this half is that
+      // the registered closure really runs when called with nothing.
+      const opened = container.resolve("openPublicReportScope")();
 
       assert.strictEqual(opened.publicReport.render(), "public report for container");
       await opened.dispose();
@@ -160,7 +208,7 @@ describe("registerIocFromManifest", () => {
       const scoped = container.resolve("openRequestReportScope")({
         viewer: { id: "u_2" },
       });
-      const inherited = container.resolve("openPublicReportScope")({});
+      const inherited = container.resolve("openPublicReportScope")();
 
       // Same key, same container, two boundaries: one overrides per-open, the other inherits.
       assert.match(scoped.requestReport.render(), /^report for u_2 backed by /);
@@ -170,6 +218,33 @@ describe("registerIocFromManifest", () => {
 
       await scoped.dispose();
       await inherited.dispose();
+    });
+
+    /**
+     * The type half of the zero-argument claim, against the REAL generated types.
+     *
+     * The suite itself is not type-checked by `npm run typecheck` (test files are excluded), so a
+     * call that stopped compiling would still run here. This probe compiles a file that imports the
+     * generated registry types and asserts both directions: opening the empty-lbv boundary with no
+     * argument is legal, and handing it one is not.
+     */
+    it("should type the empty-lbv opener as taking no argument", () => {
+      const legal = typecheckAgainstGeneratedTypes(
+        "const opened = open(); void opened.publicReport; void opened.dispose;",
+      );
+      assert.deepStrictEqual(
+        legal.map((d) => ts.flattenDiagnosticMessageText(d.messageText, " ")),
+        [],
+      );
+
+      // Not merely optional: there is no parameter to pass, so passing one is an error. An lbv the
+      // caller is free to invent is exactly the untyped scope-opening the opener exists to retire.
+      const illegal = typecheckAgainstGeneratedTypes("void open({});");
+      assert.strictEqual(illegal.length, 1);
+      assert.match(
+        ts.flattenDiagnosticMessageText(illegal[0]!.messageText, " "),
+        /Expected 0 arguments/,
+      );
     });
   });
 });

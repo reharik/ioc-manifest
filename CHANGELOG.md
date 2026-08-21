@@ -173,6 +173,9 @@ export const buildAuthRouter = (
 ): ScopeRoot<IRouter, { viewerId: ViewerId; uow: UnitOfWork }> => makeRouter(deps);
 ```
 
+Omitting the second type argument (`ScopeRoot<IRouter>`) declares a boundary with no late-bound
+values — the same declaration as writing `Record<string, never>`, and its opener takes no argument.
+
 Generation emits one **opener** per variant — registered in the cradle under its own key,
 injectable as an ordinary dependency, typed from the declared lbv:
 

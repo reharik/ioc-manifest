@@ -97,7 +97,7 @@ export const IOC_DISCOVERY_SKIP_REASON_GLOSS = {
   class_invalid_constructor_shape:
     "the constructor is not the single destructured object parameter PROXY injection needs; take one destructured object",
   scope_root_wrong_arity:
-    "the `ScopeRoot<...>` marker was written with other than two type arguments; supply both the root contract and the late-bound-value type",
+    "the `ScopeRoot<...>` marker was written with neither one nor two type arguments; supply the root contract, and the late-bound-value type unless the boundary declares none",
   class_abstract:
     "the class is abstract, so it is never constructed and never registers; add `implements` to the concrete subclass that should register",
 } as const satisfies Record<

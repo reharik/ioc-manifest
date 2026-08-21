@@ -94,14 +94,16 @@ type ScopeRootOffender = {
 
 /**
  * Wrong-arity `ScopeRoot` is a hard error, not a categorized skip. Writing the marker at all is an
- * unambiguous attempt to declare a scope root; the missing type argument is precisely the
- * declaration the tool refuses to infer, so it must be demanded, not worked around.
+ * unambiguous attempt to declare a scope root; a missing contract argument, or arguments the marker
+ * does not have, is precisely what the tool refuses to guess at, so it must be demanded rather than
+ * worked around. The lbv argument is the one that may be omitted — the marker's own default says
+ * what omitting it declares (the empty set), so nothing is being inferred there.
  */
 const formatScopeRootArityError = (
   offenders: readonly ScopeRootOffender[],
 ): string =>
   [
-    `[ioc] ${offenders.length} factory export(s) annotate a scope root with the wrong number of type arguments. The scope-root marker is written \`${SCOPE_ROOT_MARKER_FORM}\`: the first type argument is the root contract resolved from the scope, the second is the declared object type of the scope's late-bound values (e.g. \`ScopeRoot<IRouter, { viewerId: ViewerId }>\`). The late-bound-value set is declared, never inferred from the resolution subtree — see docs/design/scope-roots.md:`,
+    `[ioc] ${offenders.length} factory export(s) annotate a scope root with the wrong number of type arguments. The scope-root marker is written \`${SCOPE_ROOT_MARKER_FORM}\`: the first type argument is the root contract resolved from the scope, the second is the declared object type of the scope's late-bound values (e.g. \`ScopeRoot<IRouter, { viewerId: ViewerId }>\`). The second may be omitted to declare a boundary with no late-bound values (\`ScopeRoot<IRouter>\`), which is a declaration of the empty set — the set is declared, never inferred from the resolution subtree. See docs/design/scope-roots.md:`,
     ...offenders.map(
       (o) => `  - ${o.modulePath} export "${o.exportName}"`,
     ),
