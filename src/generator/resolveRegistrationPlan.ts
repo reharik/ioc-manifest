@@ -58,6 +58,8 @@ export type ResolvedImplementationEntry = {
   /** Fields present on the matching `ioc.config` registration override for this implementation. */
   configOverridesApplied?: readonly IocConfigOverrideField[];
   dependencyContractNames?: readonly string[];
+  /** Cradle keys this implementation demands (see the manifest metadata field of the same name). */
+  dependencyKeys?: readonly string[];
 };
 
 export type ResolvedContractRegistration = {
@@ -776,6 +778,10 @@ export const buildRegistrationPlan = (
           ...(factory.dependencyContractNames !== undefined &&
           factory.dependencyContractNames.length > 0
             ? { dependencyContractNames: factory.dependencyContractNames }
+            : {}),
+          ...(factory.dependencyKeys !== undefined &&
+          factory.dependencyKeys.length > 0
+            ? { dependencyKeys: factory.dependencyKeys }
             : {}),
         };
       });

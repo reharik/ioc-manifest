@@ -51,6 +51,7 @@ export const iocManifest = {
         moduleIndex: 0,
         default: true,
         discoveredBy: "naming",
+        dependencyKeys: ["config"],
       },
     },
     Logger: {
@@ -66,6 +67,7 @@ export const iocManifest = {
         default: true,
         discoveredBy: "naming",
         dependencyContractNames: ["Logger"],
+        dependencyKeys: ["logger"],
       },
     },
     RequestTracingLogger: {
@@ -95,6 +97,7 @@ export const iocManifest = {
         default: true,
         discoveredBy: "naming",
         dependencyContractNames: ["Logger"],
+        dependencyKeys: ["storage", "logger"],
       },
     },
     ViewerReadService: {
@@ -109,6 +112,7 @@ export const iocManifest = {
         moduleIndex: 4,
         default: true,
         discoveredBy: "naming",
+        dependencyKeys: ["viewerId"],
       },
     },
   },
@@ -128,3 +132,7 @@ export const iocManifest = {
 } as const satisfies IocGeneratedContainerManifest<IocManifestGroupRoots>;
 
 export const IOC_SCOPE_PROVIDED_KEYS = ["viewerId"] as const;
+
+/* Optional manifest data this file is known to carry in full. A composing app reads it to tell
+   "this unit has no dependency keys" apart from "this manifest predates dependency keys". */
+export const IOC_MANIFEST_FEATURES = ["dependencyKeys"] as const;

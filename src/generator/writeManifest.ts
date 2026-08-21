@@ -30,6 +30,10 @@ import type {
   ScopeRootVariantManifestMetadata,
 } from "../core/manifest.js";
 import {
+  IOC_MANIFEST_FEATURES,
+  IOC_MANIFEST_FEATURES_EXPORT_NAME,
+} from "../core/manifest.js";
+import {
   openerFunctionTypeText,
   openerTypeImports,
   openersToManifest,
@@ -244,6 +248,9 @@ const plansToIocContractManifest = (
         impl.dependencyContractNames.length > 0
           ? { dependencyContractNames: impl.dependencyContractNames }
           : {}),
+        ...(impl.dependencyKeys !== undefined && impl.dependencyKeys.length > 0
+          ? { dependencyKeys: impl.dependencyKeys }
+          : {}),
       };
     }
 
@@ -410,6 +417,11 @@ const serializeMetadataBlock = (
       `      dependencyContractNames: ${JSON.stringify(meta.dependencyContractNames)},`,
     );
   }
+  if (meta.dependencyKeys !== undefined) {
+    lines.push(
+      `      dependencyKeys: ${JSON.stringify(meta.dependencyKeys)},`,
+    );
+  }
   if (meta.accessKey !== undefined) {
     lines.push(`      accessKey: ${JSON.stringify(meta.accessKey)},`);
   }
@@ -537,6 +549,10 @@ ${moduleArrayLines.join("\n")}
 } as const satisfies ${satisfiesType};
 
 export const IOC_SCOPE_PROVIDED_KEYS = [${scopeProvidedKeys.map((k) => JSON.stringify(k)).join(", ")}] as const;
+
+/* Optional manifest data this file is known to carry in full. A composing app reads it to tell
+   "this unit has no dependency keys" apart from "this manifest predates dependency keys". */
+export const ${IOC_MANIFEST_FEATURES_EXPORT_NAME} = [${IOC_MANIFEST_FEATURES.map((f) => JSON.stringify(f)).join(", ")}] as const;
 `;
 };
 

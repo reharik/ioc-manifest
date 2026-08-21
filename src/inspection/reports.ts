@@ -378,6 +378,14 @@ export type DiscoveryScopeRootVerificationRow = {
   generationResolvedKeys: readonly { key: string; via: "group"; path: string }[];
   /** Declared lbv keys nothing under the root demands. */
   unusedDeclaredKeys: readonly string[];
+  /**
+   * Composed packages this subtree reaches whose manifests carry no dependency data.
+   *
+   * Non-empty means the verdict on this row covers only the part of the subtree that could be
+   * walked. Rendered next to the verdict rather than tucked into the findings list, because it
+   * qualifies the verdict itself.
+   */
+  blindComposedPackages: readonly string[];
   findings: readonly {
     severity: "error" | "warn";
     code: string;
@@ -635,6 +643,7 @@ const toVerificationRow = (
     path: [...entry.viaPath, entry.key].join(" → "),
   })),
   unusedDeclaredKeys: verification.unusedDeclaredKeys,
+  blindComposedPackages: verification.blindComposedPackages,
   findings: verification.findings.map((finding) => ({
     severity: finding.severity,
     code: finding.code,

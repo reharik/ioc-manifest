@@ -65,6 +65,7 @@ export const iocManifest = {
         moduleIndex: 0,
         default: true,
         discoveredBy: "naming",
+        dependencyKeys: ["config"],
       },
     },
     MediaStorage: {
@@ -83,6 +84,14 @@ export const iocManifest = {
   },
 } as const satisfies IocGeneratedContainerManifest;
 ```
+
+`dependencyKeys` records the cradle keys a unit destructures out of its deps parameter. It exists for **composing apps**: a manifest is all a consumer ever sees of a library, so without the keys a composed unit is a dead end in any demand walk — which is how a scope root whose subtree runs through a composed package used to miss every late-bound value that subtree demands. It is omitted when a unit demands nothing, and omitted entirely for a deps parameter that is not a top-level object binding pattern (the same "prefer omission" rule `dependencyContractNames` follows). Because absence is therefore ambiguous, the manifest also exports `IOC_MANIFEST_FEATURES` — a sibling export, not a manifest property, so that older runtimes (which read every unrecognized top-level manifest property as a group root) are unaffected:
+
+```ts
+export const IOC_MANIFEST_FEATURES = ["dependencyKeys"] as const;
+```
+
+A composed manifest without that export predates the field, and a consuming app says so out loud rather than reporting a confident verdict over a subtree it could not walk.
 
 `kind: "class"` is emitted only for [class units](/concepts/classes); its absence reads as `"factory"`. That matches how every other conventional value here (`default`, `accessKey`, `discoveredBy`) stays out of the output rather than being restated on every entry — and since schema v3 refuses v2 manifests outright, there is no cross-version reader to consider, so the smaller diff wins.
 

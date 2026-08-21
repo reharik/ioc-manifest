@@ -452,6 +452,119 @@ describe("writeManifest", () => {
     });
   });
 
+  describe("When a unit demands cradle keys", () => {
+    it("should write the keys into the manifest and declare the feature", async () => {
+      // What a COMPOSING app reads to walk edges into this package: `dependencyContractNames`
+      // names contract types and is silent about a plain-typed dependency like `viewerId: string`,
+      // so the keys are written alongside it.
+      const tempRoot = await fs.mkdtemp(
+        path.join(os.tmpdir(), "ioc-write-manifest-"),
+      );
+      const generatedDir = path.join(tempRoot, "src", "generated");
+      await fs.mkdir(generatedDir, { recursive: true });
+      const manifestOutPath = path.join(generatedDir, "ioc-manifest.ts");
+
+      const acceptedFactories: DiscoveredFactory[] = [
+        mkFactory({
+          contractName: "Reader",
+          implementationName: "reader",
+          exportName: "buildReader",
+          registrationKey: "reader",
+          dependencyKeys: ["clock", "viewerId"],
+        }),
+      ];
+      const plans: ResolvedContractRegistration[] = [
+        mkPlan({
+          contractName: "Reader",
+          contractTypeRelImport: "../fixtures/contracts.js",
+          contractKey: "reader",
+          defaultImplementationName: "reader",
+          implementations: [
+            {
+              implementationName: "reader",
+              exportName: "buildReader",
+              modulePath: "fixtures/impl.ts",
+              relImport: "../fixtures/impl.js",
+              registrationKey: "reader",
+              lifetime: "scoped",
+              dependencyKeys: ["clock", "viewerId"],
+            },
+          ],
+        }),
+      ];
+
+      await writeWithDemandSupply(
+        acceptedFactories,
+        plans,
+        undefined,
+        manifestOutPath,
+      );
+      const manifestSource = await fs.readFile(manifestOutPath, "utf8");
+
+      assert.match(
+        manifestSource,
+        /dependencyKeys: \["clock","viewerId"\],/,
+      );
+      // The sibling export, not a property of `iocManifest`: every unrecognized top-level property
+      // of the manifest object is read back as a GROUP ROOT, by this runtime and by older ones.
+      assert.match(
+        manifestSource,
+        /export const IOC_MANIFEST_FEATURES = \["dependencyKeys"\] as const;/,
+      );
+      assert.ok(
+        !/^\s*IOC_MANIFEST_FEATURES:/m.test(manifestSource),
+        "the feature list must never become a manifest property",
+      );
+    });
+
+    it("should omit the field entirely for a unit that demands nothing", async () => {
+      const tempRoot = await fs.mkdtemp(
+        path.join(os.tmpdir(), "ioc-write-manifest-"),
+      );
+      const generatedDir = path.join(tempRoot, "src", "generated");
+      await fs.mkdir(generatedDir, { recursive: true });
+      const manifestOutPath = path.join(generatedDir, "ioc-manifest.ts");
+
+      const acceptedFactories: DiscoveredFactory[] = [
+        mkFactory({ contractName: "Svc", implementationName: "svc" }),
+      ];
+      const plans: ResolvedContractRegistration[] = [
+        mkPlan({
+          contractName: "Svc",
+          contractTypeRelImport: "../fixtures/contracts.js",
+          contractKey: "svc",
+          defaultImplementationName: "svc",
+          implementations: [
+            {
+              implementationName: "svc",
+              exportName: "buildX",
+              modulePath: "fixtures/impl.ts",
+              relImport: "../fixtures/impl.js",
+              registrationKey: "svc",
+              lifetime: "singleton",
+            },
+          ],
+        }),
+      ];
+
+      await writeWithDemandSupply(
+        acceptedFactories,
+        plans,
+        undefined,
+        manifestOutPath,
+      );
+      const manifestSource = await fs.readFile(manifestOutPath, "utf8");
+
+      // Same omit-when-empty discipline every other optional field follows. The feature export is
+      // what makes the absence readable — without it, "no keys" and "old manifest" look alike.
+      assert.ok(!/^\s*dependencyKeys:/m.test(manifestSource));
+      assert.match(
+        manifestSource,
+        /export const IOC_MANIFEST_FEATURES = \["dependencyKeys"\] as const;/,
+      );
+    });
+  });
+
   describe("When a contract has only one implementation", () => {
     it("should emit the default contract key but no plural collection property", async () => {
       const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ioc-write-manifest-"));

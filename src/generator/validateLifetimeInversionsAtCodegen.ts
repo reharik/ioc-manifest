@@ -174,9 +174,13 @@ const resolveDepCandidates = (
 /**
  * `allowLifetimeInversion` suppression for one (unit, dep key) pair. Exported so the scope-root
  * subgraph walk honours the same opt-out rather than inventing a second one.
+ *
+ * Takes only the (contract, implementation) pair the override is addressed by, not a whole
+ * `DiscoveredFactory`: the scope-root walk also ranks units carried in by composed manifests, which
+ * are not discovered factories and have no source file here, and they must reach the same opt-out.
  */
 export const isLifetimeInversionSuppressed = (
-  factory: DiscoveredFactory,
+  factory: Pick<DiscoveredFactory, "contractName" | "implementationName">,
   depKey: string,
   config: IocConfig | undefined,
 ): boolean => {

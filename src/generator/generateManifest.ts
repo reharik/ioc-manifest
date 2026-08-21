@@ -44,6 +44,7 @@ import {
   validateGroupBaseTypeAliasKeysAtCodegen,
 } from "./loadComposedManifestGroups.js";
 import { loadComposedManifestOpenerKeys } from "./loadComposedManifestScopeRoots.js";
+import { loadComposedManifestSupply } from "./loadComposedManifestUnits.js";
 import { buildComposedRegistrationOverridesFromConfig } from "./buildComposedRegistrationOverrides.js";
 import {
   buildComposedManifestSource,
@@ -255,6 +256,18 @@ export const generateManifest = async (
         )
       : undefined;
 
+  // Registration units, contract aliases and group roots the composed packages bring with them.
+  // The scope-root subtree walk needs them to cross the package boundary at all: without them a
+  // composed key is a leaf, and everything a composed unit demands under a scope root is invisible.
+  const composedSupply =
+    config !== undefined && isAppMode(config)
+      ? await loadComposedManifestSupply(
+          projectRoot,
+          config.composedManifests!,
+          { customConditions: tsconfigContext.customConditions },
+        )
+      : undefined;
+
   const demandSupply = analyzeDemandSupply(acceptedFactories, {
     program,
     projectRoot,
@@ -290,6 +303,7 @@ export const generateManifest = async (
     groupsManifest: groupResult?.manifest,
     config,
     externalKeys: demandSupply.externalKeys,
+    composedSupply,
   });
 
   // Stage 3 emission. Openers are planned only after verification has passed: an opener's signature
@@ -333,6 +347,7 @@ export const generateManifest = async (
       plans,
       groupsManifest: groupResult?.manifest,
       config,
+      composedSupply,
     }),
   });
   const externalsExcludedKeys = new Set<string>([

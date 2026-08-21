@@ -16,8 +16,11 @@ import {
   createIocProgramForDiscovery,
   getConfigExcludedFiles,
   getDiscoveryTargetFiles,
+  loadIocTsconfigContext,
   logDiscoveryProgramErrorDiagnosticsForFailure,
 } from "../generator/iocProgramContext.js";
+import { isAppMode } from "../config/iocMode.js";
+import { loadComposedManifestSupply } from "../generator/loadComposedManifestUnits.js";
 import { computeDiscoveryModulePath } from "../generator/manifestPaths.js";
 import {
   mergeManifestOptionsWithIocConfig,
@@ -114,6 +117,24 @@ export const resolveDiscoveryManifestContext = async (opts?: {
   return { cfgPath, config, options };
 };
 
+/**
+ * `customConditions` from the project's tsconfig, or none when it has no readable one.
+ *
+ * Inspection has never required a tsconfig and must not start: it builds its program from an
+ * explicit file list precisely so that a project without one can still be reported on. Custom
+ * conditions only sharpen composed-package export resolution; losing them can at worst leave a
+ * package unresolved, which is already a disclosed blind spot rather than a crash.
+ */
+const tsconfigCustomConditions = (
+  projectRoot: string,
+): readonly string[] | undefined => {
+  try {
+    return loadIocTsconfigContext(projectRoot).customConditions;
+  } catch {
+    return undefined;
+  }
+};
+
 const runDiscoveryFromResolution = async (
   resolved: DiscoveryManifestResolution,
 ): Promise<DiscoveryAnalysisResult> => {
@@ -177,6 +198,23 @@ const runDiscoveryFromResolution = async (
     // recognised from `config.groups` and reported as container-supplied, and the externals verdict
     // falls out of the classifier's fallback. Reported, never thrown: the report is a view, and
     // generation remains the authority that fails the run.
+    // Composed supply, so the report's subtree walk crosses package boundaries the same way
+    // generation's does — the false "declared but never demanded" the report used to print for a
+    // key only a composed unit demands came from not having this. Tolerant: a package that cannot
+    // be resolved thins the report (and is disclosed as a blind spot), never crashes it, which is
+    // the same stance every other part of inspection takes.
+    const composedSupply =
+      config !== undefined && config !== null && isAppMode(config)
+        ? await loadComposedManifestSupply(
+            projectRoot,
+            config.composedManifests!,
+            {
+              customConditions: tsconfigCustomConditions(projectRoot),
+              tolerateUnreadablePackages: true,
+            },
+          )
+        : undefined;
+
     const scopeRootVerification = verifyScopeRoots(scopeRoots, {
       program,
       projectRoot,
@@ -184,6 +222,7 @@ const runDiscoveryFromResolution = async (
       acceptedFactories,
       plans: registrationPlan,
       config: config ?? undefined,
+      composedSupply,
     });
 
     const scopeRootSharedUnits =
@@ -204,6 +243,7 @@ const runDiscoveryFromResolution = async (
               acceptedFactories,
               plans: registrationPlan,
               config: config ?? undefined,
+              composedSupply,
             }),
           }).sharedSubtreeUnits;
 

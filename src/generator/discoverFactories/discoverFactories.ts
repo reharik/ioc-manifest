@@ -220,7 +220,12 @@ const enrichDependencyContracts = (
   discoveryPaths: FactoryDiscoveryPaths,
   sourceFileByPath: Map<string, ts.SourceFile>,
 ): void => {
-  if (contractNames.size === 0 || acceptedFactories.length === 0) {
+  // Only the unit list can make this a no-op. `contractNames` narrows which dependencies are named
+  // as CONTRACTS; it says nothing about the cradle KEYS, which are binding names and are inferred
+  // whether or not any of them happens to resolve to a discovered contract. Gating on it as well
+  // used to leave a package with no local contracts — a thin composition app, say — with no
+  // dependency keys at all, and therefore with a scope-root subtree walk that never left the root.
+  if (acceptedFactories.length === 0) {
     return;
   }
 

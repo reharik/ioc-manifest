@@ -63,6 +63,23 @@ export type ModuleFactoryManifestMetadata = {
    */
   dependencyContractNames?: readonly string[];
   /**
+   * CRADLE KEYS this unit demands — the destructured deps property names, verbatim.
+   *
+   * Distinct from {@link dependencyContractNames}, which names contract TYPES and is silent about
+   * anything whose type is not a discovered contract: a `viewerId: string` dependency contributes a
+   * key here and nothing there. Keys are the vocabulary every demand walk in the tool speaks, so
+   * this is what a COMPOSING app needs to walk edges into this package — without it a composed unit
+   * is a leaf, and a scope root whose subtree runs through this package cannot see what that subtree
+   * demands (see `docs/design/scope-roots.md`, cross-package subtree demand).
+   *
+   * Omitted when empty, and omitted entirely for a unit whose deps parameter is not a top-level
+   * object binding pattern — the same "prefer omission" rule {@link dependencyContractNames}
+   * follows. Absence is therefore ambiguous on its own; {@link IOC_MANIFEST_FEATURES_EXPORT_NAME}
+   * is what tells a reader "this manifest emits keys and this unit has none" apart from "this
+   * manifest predates the field".
+   */
+  dependencyKeys?: readonly string[];
+  /**
    * When set, Awilix default-slot / cradle key for this contract (singular). Omitted when equal to
    * the convention key (camel-cased contract name).
    */
@@ -73,6 +90,38 @@ export type IocContractManifest = Record<
   string,
   Record<string, ModuleFactoryManifestMetadata>
 >;
+
+/**
+ * Optional data a generated manifest is known to carry IN FULL.
+ *
+ * The problem this solves is that every optional field in this metadata is omitted when empty, so
+ * absence never distinguishes "there is none" from "the generator that wrote this file did not know
+ * about the field". For a field a composing app reasons about — `dependencyKeys`, which decides
+ * whether a cross-package subtree walk can see anything at all — that difference is the difference
+ * between a real verdict and a blind one, so it is declared positively.
+ *
+ * `"dependencyKeys"`: every unit in `contracts` that has demandable cradle keys carries them.
+ */
+export type IocManifestFeature = "dependencyKeys";
+
+/**
+ * The name of the sibling export a generated manifest declares its features under.
+ *
+ * A SIBLING export, deliberately, rather than a property of `iocManifest` — exactly like
+ * `IOC_SCOPE_PROVIDED_KEYS`. Every top-level property of `iocManifest` that is not in
+ * {@link IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS} is read back as a GROUP ROOT, by this
+ * version of the runtime and by every earlier one. Putting the marker inside the object would make
+ * a manifest written today unreadable by an older runtime that has not learned the new fixed key —
+ * a library publishing to apps it does not control cannot risk that. Outside the object, an older
+ * runtime never sees it, and generation (which parses this file as SOURCE, not as an import) reads
+ * it with no trouble at all.
+ */
+export const IOC_MANIFEST_FEATURES_EXPORT_NAME = "IOC_MANIFEST_FEATURES";
+
+/** The features the CURRENT generator writes. Emitted verbatim into every generated manifest. */
+export const IOC_MANIFEST_FEATURES: readonly IocManifestFeature[] = [
+  "dependencyKeys",
+];
 
 /**
  * One scope-root variant's emitted opener (scope-roots stage 3).

@@ -190,3 +190,40 @@ Scope-rooted contracts are opener-only. No variant is reachable through a root-c
 Open item for post-3b: a root-resolved singleton demanding a key some scope supplies per-open freezes a per-scope-shaped value at first construction, and nothing ranks that today — the lifetime pass has no notion that a key is per-open anywhere but inside the declaring subtree.
 
 Schema note: `scopeRoots` ships as an optional field within schema v3. A runtime predating opener emission that composes a manifest carrying `scopeRoots` fails loudly (the field is rejected as a malformed group root); this is accepted because the lockstep monorepo never mixes tool versions across generation and composition. Revisit if scope-rooted packages are published for consumption by independently versioned runtimes.
+
+## Cross-package subtree demands
+
+The subtree under a scope root does not stop at the package boundary. A root declared in an app routinely resolves through units that live in a composed library — directly, or through a composed group root whose members do — and every late-bound value those units demand is a demand of the boundary as surely as a local one is.
+
+Until the manifest carried them, none of those demands were visible to the composing app. Discovery only sees local sources; a composed key resolved to nothing local, classified as an external, and became a leaf. Two failures followed, and they are not symmetrical:
+
+- **Loud and wrong.** A key the app declares in lbv, demanded only by composed units, was reported "declared but never demanded" — a warning telling the developer to delete the one declaration holding the boundary together.
+- **Silent and wrong.** A key demanded only by composed units, declared in no lbv and supplied by nothing, verified ✔ satisfied. The failure surfaced at the first `container.resolve` in production. This is the same silent class stage 2 exists to remove, and closing it — not the false warning — is the point.
+
+### What the manifest carries
+
+Each unit in `contracts` carries `dependencyKeys`: the cradle keys its deps parameter destructures. This is deliberately **keys, not contract names**. `dependencyContractNames` names contract TYPES and is silent about anything whose type is not a discovered contract, which is exactly the shape a late-bound value usually has — `viewerId: string` contributes a contract name to nothing and a key to the walk. Keys are also the vocabulary every demand walk already speaks, so no translation layer sits between the two sides of the boundary.
+
+A composing app reconstructs the same supply `registerIocFromManifest` will register from the same file — implementation keys, contract default-slot aliases, group roots merged across manifests — and walks composed units as demand-bearing nodes indistinguishable from local ones. The one thing it cannot do is resolve a composed demand's TYPE: the source is in another package and not in this program. Assignability is therefore unchecked across the boundary, the same "cannot resolve, do not judge" stance the pass already takes for a local unit whose deps node it fails to find.
+
+Composed units also join the externals-exclusion predicate. "Every demand of the key in the package" has always meant every demand the assembled container will make; a composed unit demanding a declared key from outside every declaring subtree holds that key in `Externals`, exactly as a local one does. Omitting them was a hole of the same silent kind the predicate exists to prevent.
+
+### The degraded mode is explicit
+
+`dependencyKeys` is omitted when a unit demands nothing, so absence alone cannot distinguish "no dependencies" from "written by a generator that predates the field". The manifest therefore declares its capabilities positively, through a sibling export:
+
+```ts
+export const IOC_MANIFEST_FEATURES = ["dependencyKeys"] as const;
+```
+
+A **sibling export**, not a property of `iocManifest`. Every unrecognized top-level property of that object is read back as a group root — by this runtime and by every earlier one — so a marker inside it would make a manifest written today unreadable by an app on an older runtime. A library publishing to consumers it does not control cannot take that risk; outside the object, an older runtime never sees it, and generation (which parses the manifest as source, never as an import) reads it without trouble. `IOC_SCOPE_PROVIDED_KEYS` set the precedent.
+
+When a variant's subtree **reaches** a package whose manifest lacks the declaration, that variant carries a per-variant advisory (`lbv_composed_blind_spot`, warn severity, rendered in the report and in `--discovery` beside the verdict):
+
+> the resolution subtree reaches composed package(s) "X" whose manifest carries no dependency data, so late-bound-value verification is INCOMPLETE for that part of the subtree.
+
+Advisory, never an error. Nothing is known to be wrong; what is known is that the verdict does not cover the whole subtree. Failing the run would tax every app whose libraries have not regenerated yet, and staying silent restores the false confidence being removed — a ✔ with a stated blind spot is the honest middle. It is raised on reach rather than on composition: an advisory on every variant of every app that merely depends on one stale package is noise nobody reads.
+
+Composed units are ranked for lifetime inversion like local ones. The lifetime in a composed manifest is not a guess — it is what `composeManifests` will register — and a library singleton freezing a per-scope value is the same production bug wherever the file lives. The `allowLifetimeInversion` opt-out reaches them, because an app addresses composed contracts by the same (contract, implementation) pair it uses for local ones.
+
+Known gap, out of scope here and queued with the emitter work: a factory that injects a composed registration key still sees that key land in its own `IocExternals`, asking the app to supply something composition already supplies. Composed OPENER keys are already exempt for exactly this reason; composed registration and group keys are not yet.

@@ -124,6 +124,7 @@ describe("formatDiscoveryReport", () => {
               scopeDemands: [],
               generationResolvedKeys: [],
               unusedDeclaredKeys: [],
+              blindComposedPackages: [],
               findings: [],
             },
           },

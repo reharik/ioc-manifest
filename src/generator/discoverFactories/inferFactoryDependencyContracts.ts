@@ -98,10 +98,11 @@ export const inferFactoryDependencies = (
 ): InferredFactoryDependencies => {
   const empty: InferredFactoryDependencies = { contractNames: [] };
 
-  if (knownContractNames.size === 0) {
-    return empty;
-  }
-
+  // No early return on an empty `knownContractNames`. It narrows which dependencies are named as
+  // CONTRACTS and has no bearing on the cradle KEYS, which are binding names: gating the whole
+  // inference on it left a package with no local contracts — a thin composition app whose graph
+  // lives entirely in composed libraries — with no dependency keys at all, and therefore with a
+  // scope-root subtree walk that never got past its own root.
   const signature = checker.getSignatureFromDeclaration(factoryDecl);
   if (!signature) {
     return empty;

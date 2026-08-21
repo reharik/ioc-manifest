@@ -278,6 +278,15 @@ const formatScopeRootDetail = (
     );
   }
 
+  // The stated blind spot. Printed last and unconditionally — including under a ✔ — because that is
+  // the row it changes the meaning of: a satisfied verdict over a subtree that was only partly
+  // walked is exactly the false confidence this line exists to qualify.
+  if (verification.blindComposedPackages.length > 0) {
+    lines.push(
+      `      ${c.yellow}!${c.reset} ${c.dim}subtree reaches composed ${verification.blindComposedPackages.join(", ")} — no dependency data in their manifests, lbv verification incomplete for that subtree${c.reset}`,
+    );
+  }
+
   return lines;
 };
 

@@ -26,6 +26,11 @@ import { readDeclaredLbv } from "./declaredLbv.js";
 import { unitDepsSignatureDecl } from "./discoverFactories/contractSite.js";
 import { collectFileAnalysisForFactoryDiscovery } from "./discoverFactories/scanFactoryFile.js";
 import {
+  EMPTY_COMPOSED_MANIFEST_SUPPLY,
+  type ComposedManifestSupply,
+  type ComposedManifestUnit,
+} from "./loadComposedManifestUnits.js";
+import {
   resolveFactorySourceAbsPath,
   type FactoryDiscoveryPaths,
 } from "./manifestPaths.js";
@@ -51,7 +56,13 @@ export type ScopeRootFindingCode =
   | "lbv_missing_key"
   | "lbv_type_mismatch"
   | "lbv_unused_key"
-  | "lifetime_inversion";
+  | "lifetime_inversion"
+  /**
+   * The subtree reaches a composed package whose manifest carries no dependency data, so part of
+   * this variant's subtree could not be walked. Advisory, never an error — see
+   * {@link formatComposedBlindSpotAdvisory}.
+   */
+  | "lbv_composed_blind_spot";
 
 export type ScopeRootFinding = {
   severity: "error" | "warn";
@@ -69,9 +80,12 @@ export type ScopeRootFinding = {
  */
 export type ScopeRootSubtreeUnit = {
   exportName: string;
+  /** Package-qualified for a composed unit (see {@link ComposedManifestUnit.modulePath}). */
   modulePath: string;
   /** Absent for the scope-root unit itself, which claims no registration key. */
   registrationKey?: string;
+  /** Set when the unit came from a composed package manifest rather than local discovery. */
+  packageName?: string;
 };
 
 /** How a scope-demand was resolved against the variant's declaration. */
@@ -90,7 +104,7 @@ export type ScopeRootGenerationResolvedKey = {
   via: "group";
   /** Variant name first, then the registration keys walked to reach the demanding unit. */
   viaPath: readonly string[];
-  demandedBy: { exportName: string; modulePath: string };
+  demandedBy: { exportName: string; modulePath: string; packageName?: string };
 };
 
 /**
@@ -101,7 +115,7 @@ export type ScopeRootScopeDemand = {
   key: string;
   /** Variant name first, then the registration keys walked to reach the demanding unit. */
   viaPath: readonly string[];
-  demandedBy: { exportName: string; modulePath: string };
+  demandedBy: { exportName: string; modulePath: string; packageName?: string };
   satisfiedBy: ScopeDemandSatisfaction;
   /** Demanded type as text, when the checker could resolve it at the demand site. */
   demandedTypeText?: string;
@@ -139,6 +153,14 @@ export type ScopeRootVariantVerification = {
   generationResolvedKeys: readonly ScopeRootGenerationResolvedKey[];
   /** Declared lbv keys the subtree never demands (dead weight on the boundary contract). */
   unusedDeclaredKeys: readonly string[];
+  /**
+   * Composed packages this variant's subtree reaches whose manifests carry no dependency data,
+   * sorted.
+   *
+   * The stated blind spot behind this variant's verdict. Non-empty means `satisfied` is a verdict
+   * over the part of the subtree that could be walked, not over the whole of it.
+   */
+  blindComposedPackages: readonly string[];
   findings: readonly ScopeRootFinding[];
   /** True when the variant produced no error-severity finding. */
   satisfied: boolean;
@@ -172,6 +194,17 @@ export type ScopeRootVerificationContext = {
    * therefore different: empty means "generation found no externals", not "unknown".
    */
   externalKeys?: readonly string[];
+  /**
+   * Registration units, contract aliases and group roots carried in by composed package manifests
+   * (app mode).
+   *
+   * Without this the walk stops at the package boundary: a composed key resolves to nothing local,
+   * falls through to `external`, and everything the composed unit itself demands is invisible —
+   * which reports a declared key as never demanded when a composed unit demands it, and, worse,
+   * reports a variant satisfied when a composed unit demands a key nothing supplies. Unset means
+   * "this package composes nothing", which is the library-mode and single-package case.
+   */
+  composedSupply?: ComposedManifestSupply;
 };
 
 const normalizePath = (p: string): string => path.normalize(p);
@@ -184,6 +217,18 @@ const relModulePath = (projectRoot: string, modulePath: string): string =>
 /** Manifest-registration supply, indexed the way the walk consumes it. */
 export type ScopeRootSupplyIndex = {
   factoryByRegistrationKey: Map<string, DiscoveredFactory>;
+  /**
+   * Units a composed package manifest supplies, by registration key.
+   *
+   * Kept apart from {@link factoryByRegistrationKey} rather than synthesized into it: a composed
+   * unit is not a discovered factory and has no source file in this program, so half the fields of
+   * a `DiscoveredFactory` would have to be invented. Provenance is also exactly what the walk needs
+   * to report — an error naming a unit in another package reads very differently from one naming a
+   * local file — so the two are never conflated. A key can appear in at most one of the two maps:
+   * a local registration and a composed one under the same key is a composition collision the
+   * runtime already rejects, and locals win here so this pass never disagrees with discovery.
+   */
+  composedUnitByRegistrationKey: Map<string, ComposedManifestUnit>;
   registrationKeyByAccessKey: Map<string, string>;
   lifetimeByRegistrationKey: Map<string, IocLifetime>;
   groupMemberKeysByGroupKey: Map<string, readonly string[]>;
@@ -201,6 +246,14 @@ export type ScopeRootSupplyIndex = {
    * elimination — see {@link classifyDemandedKey}.
    */
   externalKeys: ReadonlySet<string> | undefined;
+  /**
+   * Composed packages whose manifest carries no dependency data, sorted.
+   *
+   * Carried on the index because it travels with the supply it qualifies: every verdict drawn from
+   * this index over a subtree touching one of these packages is incomplete, and the caller has to
+   * be able to say so.
+   */
+  packagesWithoutDependencyData: readonly string[];
 };
 
 const groupMemberRegistrationKeys = (
@@ -244,6 +297,28 @@ export const buildScopeRootSupplyIndex = (
     }
   }
 
+  const composed = ctx.composedSupply ?? EMPTY_COMPOSED_MANIFEST_SUPPLY;
+
+  // Composed units join the container's supply exactly where `registerIocFromManifest` will put
+  // them: under their own registration key, plus the contract default-slot alias. A LOCAL
+  // registration under the same key wins — locals are what discovery actually saw, and a genuine
+  // collision between the two is composition's error to raise, not this pass's.
+  const composedUnitByRegistrationKey = new Map<string, ComposedManifestUnit>();
+  for (const unit of composed.units) {
+    if (factoryByRegistrationKey.has(unit.registrationKey)) {
+      continue;
+    }
+    composedUnitByRegistrationKey.set(unit.registrationKey, unit);
+    if (!lifetimeByRegistrationKey.has(unit.registrationKey)) {
+      lifetimeByRegistrationKey.set(unit.registrationKey, unit.lifetime);
+    }
+  }
+  for (const [accessKey, registrationKey] of composed.accessKeys) {
+    if (!registrationKeyByAccessKey.has(accessKey)) {
+      registrationKeyByAccessKey.set(accessKey, registrationKey);
+    }
+  }
+
   const groupMemberKeysByGroupKey = new Map<string, readonly string[]>();
   for (const [groupKey, manifest] of Object.entries(
     ctx.groupsManifest ?? {},
@@ -253,12 +328,24 @@ export const buildScopeRootSupplyIndex = (
       groupMemberRegistrationKeys(manifest),
     );
   }
+  // Group roots MERGE across composed manifests rather than shadow one another (see
+  // `composeManifests`), so a group key present both locally and in a composed package resolves to
+  // the union of both member lists — which is the collection the cradle will actually hand out.
+  for (const [groupKey, members] of composed.groupMembersByGroupKey) {
+    const local = groupMemberKeysByGroupKey.get(groupKey) ?? [];
+    groupMemberKeysByGroupKey.set(groupKey, [
+      ...local,
+      ...members.filter((member) => !local.includes(member)),
+    ]);
+  }
 
   return {
     factoryByRegistrationKey,
+    composedUnitByRegistrationKey,
     registrationKeyByAccessKey,
     lifetimeByRegistrationKey,
     groupMemberKeysByGroupKey,
+    packagesWithoutDependencyData: composed.packagesWithoutDependencyData,
     declaredGroupKeys: new Set(Object.keys(ctx.config?.groups ?? {})),
     scopeProvidedKeys: new Set(ctx.config?.scopeProvided ?? []),
     // `undefined` and empty are NOT the same thing here: unset means "no authoritative set was
@@ -285,7 +372,10 @@ export const registrationsSupplyingKey = (
   if (groupMembers !== undefined) {
     return groupMembers;
   }
-  if (index.factoryByRegistrationKey.has(key)) {
+  if (
+    index.factoryByRegistrationKey.has(key) ||
+    index.composedUnitByRegistrationKey.has(key)
+  ) {
     return [key];
   }
   const viaAccessKey = index.registrationKeyByAccessKey.get(key);
@@ -376,6 +466,8 @@ type DemandingUnit = {
   registrationKey?: string;
   lifetime: IocLifetime;
   dependencyKeys: readonly string[];
+  /** Set when the unit came from a composed package manifest rather than local discovery. */
+  packageName?: string;
 };
 
 const scopeRootAsDemandingUnit = (
@@ -396,6 +488,26 @@ const factoryAsDemandingUnit = (
   registrationKey: factory.registrationKey,
   lifetime,
   dependencyKeys: factory.dependencyKeys ?? [],
+});
+
+/**
+ * A composed unit in the walk's terms.
+ *
+ * Its demand set comes from the manifest and nowhere else — there is no source file here to read,
+ * which is the whole reason generation has to write the keys down. `dependencyKeys: undefined`
+ * (an old manifest) reads as no edges, the same shape a unit with no dependencies has; the
+ * DIFFERENCE between those two is carried separately, by the blind-spot advisory, because a walk
+ * cannot represent "I don't know" as an edge.
+ */
+const composedUnitAsDemandingUnit = (
+  unit: ComposedManifestUnit,
+): DemandingUnit => ({
+  exportName: unit.exportName,
+  modulePath: unit.modulePath,
+  registrationKey: unit.registrationKey,
+  lifetime: unit.lifetime,
+  dependencyKeys: unit.dependencyKeys ?? [],
+  packageName: unit.packageName,
 });
 
 /** One (demanding unit, key) pair discovered by the walk. */
@@ -426,6 +538,15 @@ type SubtreeWalk = {
   })[];
   /** Group root keys generation resolves that this caller could not expand (inspection). */
   generationResolvedGroupEdges: readonly DemandEdge[];
+  /**
+   * Composed packages this subtree actually reached whose manifests carry no dependency data,
+   * sorted.
+   *
+   * Reached, not merely composed: a package the app depends on but whose units this subtree never
+   * resolves puts no blind spot in THIS variant's verdict, and saying otherwise would train readers
+   * to ignore the advisory.
+   */
+  blindComposedPackages: readonly string[];
 };
 
 /**
@@ -450,6 +571,10 @@ const walkSubtree = (
     depRegistrationKey: string;
     depLifetime: IocLifetime;
   })[] = [];
+  const blindPackages = new Set<string>();
+  const packagesWithoutDependencyData = new Set(
+    index.packagesWithoutDependencyData,
+  );
 
   const expanded = new Set<string>();
   const queue: { unit: DemandingUnit; viaPath: readonly string[] }[] = [
@@ -465,7 +590,17 @@ const walkSubtree = (
       ...(unit.registrationKey !== undefined
         ? { registrationKey: unit.registrationKey }
         : {}),
+      ...(unit.packageName !== undefined
+        ? { packageName: unit.packageName }
+        : {}),
     });
+
+    if (
+      unit.packageName !== undefined &&
+      packagesWithoutDependencyData.has(unit.packageName)
+    ) {
+      blindPackages.add(unit.packageName);
+    }
 
     for (const key of unit.dependencyKeys) {
       const supply = classifyDemandedKey(key, index, variantLbvKeys);
@@ -502,13 +637,23 @@ const walkSubtree = (
         expanded.add(target);
 
         const factory = index.factoryByRegistrationKey.get(target);
-        if (factory === undefined) {
+        if (factory !== undefined) {
+          queue.push({
+            unit: factoryAsDemandingUnit(factory, depLifetime ?? "singleton"),
+            viaPath: [...viaPath, target],
+          });
           continue;
         }
-        queue.push({
-          unit: factoryAsDemandingUnit(factory, depLifetime ?? "singleton"),
-          viaPath: [...viaPath, target],
-        });
+
+        // Not local — a composed package supplies it. Same descent, same edges: what makes a unit
+        // walkable is having a demand set, not having a source file in this program.
+        const composedUnit = index.composedUnitByRegistrationKey.get(target);
+        if (composedUnit !== undefined) {
+          queue.push({
+            unit: composedUnitAsDemandingUnit(composedUnit),
+            viaPath: [...viaPath, target],
+          });
+        }
       }
     }
   }
@@ -518,6 +663,9 @@ const walkSubtree = (
     scopeDemandEdges,
     registeredEdges,
     generationResolvedGroupEdges,
+    blindComposedPackages: [...blindPackages].sort((a, b) =>
+      a.localeCompare(b),
+    ),
   };
 };
 
@@ -582,6 +730,13 @@ const demandedTypeAtSite = (
   unit: DemandingUnit,
   key: string,
 ): ts.Type | undefined => {
+  // A composed unit's source is in another package and is not in this program — the manifest
+  // carries its demand KEYS, never its demand types. No type means no assignability check for that
+  // demand, which is the same "cannot resolve, do not judge" stance this function already takes for
+  // a local unit whose deps node it fails to find.
+  if (unit.packageName !== undefined) {
+    return undefined;
+  }
   const depsTypeNode = depsTypeNodeForUnit(ctx, unit);
   if (depsTypeNode === undefined) {
     return undefined;
@@ -602,11 +757,43 @@ const variantLabel = (
 ): string =>
   `Scope root "${variant.contractName}" variant "${variant.variantName}" (export ${JSON.stringify(variant.exportName)} in ${relModulePath(ctx.projectRoot, variant.modulePath)})`;
 
+/**
+ * Where a demand was made, in the reader's terms.
+ *
+ * A composed unit is called out as such and by package: the reader cannot open that file in this
+ * repository, and "this comes from a library you compose" is the single most useful fact about the
+ * demand — without it the path names an export nobody here wrote.
+ */
 const demandSiteLabel = (
   ctx: ScopeRootVerificationContext,
   edge: DemandEdge,
+): string => {
+  const site =
+    edge.unit.packageName !== undefined
+      ? `${edge.unit.modulePath} (composed package ${JSON.stringify(edge.unit.packageName)})`
+      : relModulePath(ctx.projectRoot, edge.unit.modulePath);
+  return `demanded by ${JSON.stringify(edge.unit.exportName)} in ${site} (via ${[...edge.viaPath, edge.key].join(" → ")})`;
+};
+
+/**
+ * The advisory a variant carries when part of its subtree could not be walked.
+ *
+ * Advisory and never an error, deliberately. Nothing is known to be wrong — what is known is that
+ * the verdict does not cover the whole subtree, and a ✔ with a stated blind spot is honest where a
+ * bare ✔ is not. Upgrading it to a failure would break every app composing a package that has not
+ * regenerated yet, which is a bootstrap tax on the innocent; downgrading it to silence is the
+ * false confidence this whole check exists to remove.
+ */
+const formatComposedBlindSpotAdvisory = (
+  ctx: ScopeRootVerificationContext,
+  variant: DiscoveredScopeRoot,
+  packageNames: readonly string[],
 ): string =>
-  `demanded by ${JSON.stringify(edge.unit.exportName)} in ${relModulePath(ctx.projectRoot, edge.unit.modulePath)} (via ${[...edge.viaPath, edge.key].join(" → ")})`;
+  [
+    `[ioc] ${variantLabel(ctx, variant)}: the resolution subtree reaches composed package(s) ${packageNames.map((name) => JSON.stringify(name)).join(", ")} whose manifest carries no dependency data, so late-bound-value verification is INCOMPLETE for that part of the subtree.`,
+    `    Anything those packages' units demand is invisible here: a declared key they demand may be reported as never demanded, and an undeclared key they demand cannot be reported at all.`,
+    `    Fix: regenerate those packages with a version of ioc-manifest that writes "dependencyKeys" into the manifest, then re-run generation here.`,
+  ].join("\n");
 
 const formatMissingKeyError = (
   ctx: ScopeRootVerificationContext,
@@ -655,7 +842,10 @@ const formatScopeRootInversion = (
 ): string => {
   const consumerLabel =
     consumer.registrationKey ?? `${variant.variantName} (scope root)`;
-  const consumerSite = `${JSON.stringify(consumer.exportName)} in ${relModulePath(ctx.projectRoot, consumer.modulePath)}`;
+  const consumerSite =
+    consumer.packageName !== undefined
+      ? `${JSON.stringify(consumer.exportName)} in ${consumer.modulePath} (composed package ${JSON.stringify(consumer.packageName)})`
+      : `${JSON.stringify(consumer.exportName)} in ${relModulePath(ctx.projectRoot, consumer.modulePath)}`;
   const depPhrase = lbvDeclared
     ? `'${depKey}' (late-bound value of scope root "${variant.contractName}" variant "${variant.variantName}", per-scope)`
     : `'${depKey}' (${depLifetime})`;
@@ -667,6 +857,52 @@ const formatScopeRootInversion = (
   const trail = ` via ${[...viaPath, depKey].join(" → ")}. Register '${consumerLabel}' as scoped (or shorter), or mark it intentional with registrations['<Contract>'].<impl>.allowLifetimeInversion.`;
   return `[ioc] ${head}${detail}${trail}`;
 };
+
+/**
+ * Whether `registrations[<contract>].<impl>.allowLifetimeInversion` silences this edge.
+ *
+ * Composed units are ranked for inversion exactly like local ones — the lifetime in a composed
+ * manifest is not a guess, it is the lifetime `composeManifests` will register — and a singleton in
+ * a library freezing a per-scope value is the same production bug wherever the file lives. The
+ * suppression path has to work for them too, and it does: an app's `registrations` block addresses
+ * composed contracts by the same (contract, implementation) pair it uses for local ones, so the
+ * escape hatch is reachable rather than nominal. Lookup goes through whichever map holds the unit.
+ */
+const inversionSuppressedForEdge = (
+  edge: DemandEdge,
+  index: ScopeRootSupplyIndex,
+  config: IocConfig | undefined,
+): boolean => {
+  const registrationKey = edge.unit.registrationKey;
+  if (registrationKey === undefined) {
+    return false;
+  }
+  const local = index.factoryByRegistrationKey.get(registrationKey);
+  if (local !== undefined) {
+    return isLifetimeInversionSuppressed(local, edge.key, config);
+  }
+  const composed = index.composedUnitByRegistrationKey.get(registrationKey);
+  if (composed === undefined) {
+    return false;
+  }
+  return isLifetimeInversionSuppressed(
+    {
+      contractName: composed.contractName,
+      implementationName: composed.implementationName,
+    },
+    edge.key,
+    config,
+  );
+};
+
+/** A demanding unit reduced to the identity a reported demand carries. */
+const demandedByOf = (
+  unit: DemandingUnit,
+): { exportName: string; modulePath: string; packageName?: string } => ({
+  exportName: unit.exportName,
+  modulePath: unit.modulePath,
+  ...(unit.packageName !== undefined ? { packageName: unit.packageName } : {}),
+});
 
 /**
  * Verifies ONE variant's declared lbv against ONE variant's subtree.
@@ -707,10 +943,7 @@ export const verifyScopeRootVariant = (
         demandsByKey.set(edge.key, {
           key: edge.key,
           viaPath: edge.viaPath,
-          demandedBy: {
-            exportName: edge.unit.exportName,
-            modulePath: edge.unit.modulePath,
-          },
+          demandedBy: demandedByOf(edge.unit),
           satisfiedBy: "undeclared",
         });
         findings.push({
@@ -750,10 +983,7 @@ export const verifyScopeRootVariant = (
       demandsByKey.set(edge.key, {
         key: edge.key,
         viaPath: edge.viaPath,
-        demandedBy: {
-          exportName: edge.unit.exportName,
-          modulePath: edge.unit.modulePath,
-        },
+        demandedBy: demandedByOf(edge.unit),
         satisfiedBy: assignable ? "declared-lbv" : "type-mismatch",
         suppliedTypeText: typeText(checker, supplied),
         ...(demanded !== undefined
@@ -784,6 +1014,24 @@ export const verifyScopeRootVariant = (
     });
   }
 
+  // The blind spot behind every verdict above. Emitted once per variant regardless of how many
+  // keys it touches — it is a statement about the walk, not about a key — and keyed on the empty
+  // string for the same reason. It is deliberately raised even when the variant looks clean: a
+  // clean verdict over a subtree that could not be fully walked is exactly the false confidence
+  // this advisory exists to qualify.
+  if (walk.blindComposedPackages.length > 0) {
+    findings.push({
+      severity: "warn",
+      code: "lbv_composed_blind_spot",
+      key: "",
+      message: formatComposedBlindSpotAdvisory(
+        ctx,
+        variant,
+        walk.blindComposedPackages,
+      ),
+    });
+  }
+
   // Lifetime-inversion walk over the subgraph (design doc: deferred by stage 1, owned by stage 2).
   //
   // Two edge kinds matter here and are not already covered by the global check:
@@ -801,13 +1049,7 @@ export const verifyScopeRootVariant = (
     if (severity === undefined) {
       continue;
     }
-    const owner = index.factoryByRegistrationKey.get(
-      edge.unit.registrationKey ?? "",
-    );
-    if (
-      owner !== undefined &&
-      isLifetimeInversionSuppressed(owner, edge.key, ctx.config)
-    ) {
+    if (inversionSuppressedForEdge(edge, index, ctx.config)) {
       continue;
     }
     findings.push({
@@ -868,10 +1110,7 @@ export const verifyScopeRootVariant = (
       key: edge.key,
       via: "group",
       viaPath: edge.viaPath,
-      demandedBy: {
-        exportName: edge.unit.exportName,
-        modulePath: edge.unit.modulePath,
-      },
+      demandedBy: demandedByOf(edge.unit),
     });
   }
 
@@ -888,6 +1127,7 @@ export const verifyScopeRootVariant = (
       (a, b) => a.key.localeCompare(b.key),
     ),
     unusedDeclaredKeys,
+    blindComposedPackages: walk.blindComposedPackages,
     findings,
     satisfied: !findings.some((f) => f.severity === "error"),
   };
