@@ -1,6 +1,10 @@
 import type ts from "typescript";
 import type { ParsedManifestSlice, ValidateContext, ValidationIssue } from "../types.js";
 import {
+  buildSkippedComparisonsIssue,
+  type SkippedComparison,
+} from "./registryIntegrity.js";
+import {
   createValidateTypeChecker,
   findFirstMismatchedPropertyAcrossSuppliers,
   formatCheckerType,
@@ -200,15 +204,36 @@ const buildUnverifiedKeyWarning = (
   details: [caveat],
 });
 
+export type CheckExternalsOptions = {
+  /**
+   * The program `checkRegistryIntegrity` already built and inspected. Shared so the gate and the
+   * comparisons reason over the SAME program — a second program could disagree with the one whose
+   * health was just adjudicated — and so validate builds it once.
+   */
+  readonly typeCheckerCtx?: ValidateTypeCheckerContext | undefined;
+  /**
+   * Types files that do not compile. Comparisons reading from one are skipped.
+   *
+   * Omitting this runs every comparison, which is only correct when the program is known healthy.
+   * Production always goes through `runAllValidationChecks`, which supplies it.
+   */
+  readonly brokenTypesPaths?: ReadonlySet<string>;
+};
+
 export const checkExternalsSatisfaction = (
   validateCtx: ValidateContext,
+  options?: CheckExternalsOptions,
 ): ValidationIssue[] => {
-  const typeCheckerCtx = createValidateTypeChecker(
-    validateCtx.projectRoot,
-    validateCtx.slices.map((slice) => slice.typesPath),
-  );
+  const typeCheckerCtx =
+    options?.typeCheckerCtx ??
+    createValidateTypeChecker(
+      validateCtx.projectRoot,
+      validateCtx.slices.map((slice) => slice.typesPath),
+    );
+  const brokenTypesPaths = options?.brokenTypesPaths ?? new Set<string>();
 
   const issues: ValidationIssue[] = [];
+  const skipped: SkippedComparison[] = [];
   const checkerUnavailable = typeCheckerCtx === undefined;
 
   for (const slice of validateCtx.slices) {
@@ -216,6 +241,28 @@ export const checkExternalsSatisfaction = (
       slice.externals,
     )) {
       const suppliers = findSuppliersForKey(validateCtx.slices, externalKey);
+
+      // Precise tainting: a key's verdict reads the DEMANDING slice's `IocExternals` and each
+      // SUPPLYING slice's `IocGeneratedCradle`, and both file sets are already on the slices — so
+      // the taint set is a lookup, not an analysis. A broken package therefore only withholds
+      // verdicts on keys whose types it actually contributes; keys it has nothing to do with are
+      // still adjudicated normally.
+      const taintedByPaths = [
+        slice.typesPath,
+        ...suppliers.map((s) => s.typesPath),
+      ].filter(
+        (p, i, all) => brokenTypesPaths.has(p) && all.indexOf(p) === i,
+      );
+      if (taintedByPaths.length > 0) {
+        // No verdict of any kind — satisfied, unsatisfied, or unverified. The types this key
+        // would be judged on are not trustworthy, so the honest report is that nothing was judged.
+        skipped.push({
+          externalKey,
+          demandedBy: slice.packageLabel,
+          taintedByPaths,
+        });
+        continue;
+      }
 
       if (suppliers.length === 0) {
         issues.push({
@@ -276,6 +323,14 @@ export const checkExternalsSatisfaction = (
           `Align the IocGeneratedCradle type for key ${JSON.stringify(externalKey)} with the demanded ${demandedText}, or adjust the external declaration in ${slice.packageLabel}.`,
       });
     }
+  }
+
+  const skippedIssue = buildSkippedComparisonsIssue(
+    validateCtx.projectRoot,
+    skipped,
+  );
+  if (skippedIssue !== undefined) {
+    issues.push(skippedIssue);
   }
 
   return issues;

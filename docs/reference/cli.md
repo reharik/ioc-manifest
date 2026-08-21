@@ -27,6 +27,10 @@ A separate command from `generate` because they have different audiences. `gener
 
 `validate` loads every composed manifest, runs every cross-manifest check at once, and reports all issues — not just the first. It does not modify any files; pure inspection. Exit code is non-zero if any error-severity issue is reported.
 
+Issue categories, as they appear in text output and in the `category` field of `--json`: `registry-integrity`, `externals`, `schema-version`, `same-key-conflict`, `group-kind`, `group-base-type`, `group-key-conflict`, `default-ambiguity`, `app-config`, `unused-config`.
+
+`registry-integrity` runs first and gates the type comparisons: if a generated registry-types file does not compile, validate says so and skips the comparisons that read types out of it, rather than adjudicating them against error types (which pass unconditionally). Comparisons whose types come only from healthy files still get their verdict.
+
 Typical output for a failing run:
 
 ```

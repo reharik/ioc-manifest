@@ -5,6 +5,7 @@
 /** Public CLI categories — keep stable when adding checks. */
 export type ValidationIssueCategory =
   | "externals"
+  | "registry-integrity"
   | "schema-version"
   | "same-key-conflict"
   | "group-kind"

@@ -12,6 +12,8 @@ Errors are designed to tell you exactly what went wrong and what to do about it.
 
 **Validation errors** are prefixed by category (`[externals]`, `[same-key-conflict]`, `[group-base-type]`, etc.) and emitted by `ioc validate`. Validate aggregates: a failing run reports every issue at once, not just the first.
 
+`[registry-integrity]` is the one that gates the others: before comparing types, validate checks that the generated registry-types files it reads types out of actually compile. A name that does not resolve there becomes an error type, and comparisons against an error type pass regardless of what they are asked — so a broken file is reported as an error, and the comparisons that read from it are skipped and listed as skipped rather than reported satisfied. The usual cause is generated output that predates a source change; re-run `ioc generate` (or regenerate the composed package named in the issue). Errors that survive regeneration mean the file was emitted broken — that is an ioc-manifest bug worth reporting.
+
 **Runtime resolution errors** use `IocResolutionError` with structured dependency chains:
 
 ```

@@ -147,6 +147,82 @@ describe("runValidate", () => {
       }
     });
   });
+
+  describe("When the local generated registry file on disk does not compile", () => {
+    it("should report registry-integrity and exit nonzero end to end", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "ioc-validate-broken-registry-"));
+      const libDir = path.join(root, "node_modules", "@test", "lib");
+      mkdirSync(libDir, { recursive: true });
+      writeMinimalAppHost(root);
+      writeFileSync(
+        path.join(libDir, "package.json"),
+        JSON.stringify({
+          name: "@test/lib",
+          exports: {
+            "./iocManifest": "./ioc-manifest.ts",
+            "./iocTypes": "./ioc-registry.types.ts",
+          },
+        }),
+      );
+      writeFileSync(
+        path.join(libDir, "ioc-manifest.ts"),
+        manifestSource(`Storage: { s: { registrationKey: "storage" } }`),
+      );
+      writeFileSync(
+        path.join(libDir, "ioc-registry.types.ts"),
+        typesSource("", "app: string"),
+      );
+
+      mkdirSync(path.join(root, "src", "generated"), { recursive: true });
+      writeFileSync(
+        path.join(root, "src", "generated", "ioc-manifest.ts"),
+        manifestSource(`App: { a: { registrationKey: "app" } }`),
+      );
+      // The closure-breaking shape, as it would land on disk: a cradle property typed with a name
+      // the file never imports. Before the gate, `app: MissingAppType` resolved to an error type,
+      // the assignability comparison against the composed package's `app: string` passed, and this
+      // whole run reported success.
+      writeFileSync(
+        path.join(root, "src", "generated", "ioc-registry.types.ts"),
+        "export interface IocGeneratedCradle { app: MissingAppType; }\nexport interface IocExternals {}",
+      );
+
+      const config = {
+        discovery: { scanDirs: "src", generatedDir: "src/generated" },
+        composedManifests: ["@test/lib"],
+      } as IocConfig;
+
+      const result = await runValidate({
+        projectRoot: root,
+        configPath: path.join(root, "src", "ioc.config.ts"),
+        config,
+        json: false,
+      });
+
+      assert.strictEqual(result.kind, "report");
+      if (result.kind === "report") {
+        const integrity = result.report.issues.filter(
+          (i) => i.category === "registry-integrity" && i.severity === "error",
+        );
+        assert.strictEqual(integrity.length, 1);
+        assert.match(
+          integrity[0]!.details.join("\n"),
+          /TS2304: Cannot find name 'MissingAppType'\./,
+        );
+        assert.match(
+          integrity[0]!.details.join("\n"),
+          /src[\\/]generated[\\/]ioc-registry\.types\.ts/,
+        );
+        // No verdict either way on the key whose types live in the broken file.
+        assert.deepEqual(
+          result.report.issues.filter((i) => i.category === "externals"),
+          [],
+        );
+      }
+
+      assert.strictEqual(printValidateResult(result, false), 1);
+    });
+  });
 });
 
 describe("LIBRARY_MODE_VALIDATE_MESSAGE", () => {

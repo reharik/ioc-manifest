@@ -10,8 +10,10 @@ import { checkAppConfigSanity } from "./checks/appConfig.js";
 import { checkDefaultAmbiguity } from "./checks/defaultAmbiguity.js";
 import { checkExternalsSatisfaction } from "./checks/externals.js";
 import { checkGroupConsistency } from "./checks/groups.js";
+import { checkRegistryIntegrity } from "./checks/registryIntegrity.js";
 import { checkSameKeyConflicts } from "./checks/sameKeyConflict.js";
 import { checkSchemaVersions } from "./checks/schemaVersion.js";
+import { createValidateTypeChecker } from "./externalsTypeChecker.js";
 import {
   buildValidationReport,
   formatValidationReportJson,
@@ -39,14 +41,28 @@ export const LIBRARY_MODE_VALIDATE_MESSAGE =
 export const runAllValidationChecks = (
   config: IocConfig,
   ctx: import("./types.js").ValidateContext,
-): ValidationIssue[] => [
-  ...checkSchemaVersions(ctx),
-  ...checkExternalsSatisfaction(ctx),
-  ...checkSameKeyConflicts(ctx),
-  ...checkGroupConsistency(ctx),
-  ...checkDefaultAmbiguity(ctx),
-  ...checkAppConfigSanity(config, ctx),
-];
+): ValidationIssue[] => {
+  // Built once, here, and shared: the integrity gate must adjudicate the SAME program the
+  // comparisons then read types out of, or it is vouching for something else.
+  const typeCheckerCtx = createValidateTypeChecker(
+    ctx.projectRoot,
+    ctx.slices.map((slice) => slice.typesPath),
+  );
+  const integrity = checkRegistryIntegrity(ctx, typeCheckerCtx);
+
+  return [
+    ...checkSchemaVersions(ctx),
+    ...integrity.issues,
+    ...checkExternalsSatisfaction(ctx, {
+      typeCheckerCtx,
+      brokenTypesPaths: integrity.brokenTypesPaths,
+    }),
+    ...checkSameKeyConflicts(ctx),
+    ...checkGroupConsistency(ctx),
+    ...checkDefaultAmbiguity(ctx),
+    ...checkAppConfigSanity(config, ctx),
+  ];
+};
 
 export const runValidate = async (
   input: RunValidateInput,
