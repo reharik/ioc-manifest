@@ -342,6 +342,7 @@ describe("formatInspectionReport", () => {
             modulePath: "src/a.ts",
             exportName: "buildA",
             isDefault: true,
+            claimsDefault: true,
           },
           {
             implementationName: "b",
@@ -350,6 +351,7 @@ describe("formatInspectionReport", () => {
             modulePath: "src/b.ts",
             exportName: "buildB",
             isDefault: false,
+            claimsDefault: false,
           },
         ],
       },
@@ -481,6 +483,223 @@ describe("inspect — emitted scope-root openers", () => {
         openers: unknown;
       };
       assert.deepEqual(json.openers, []);
+    });
+  });
+});
+
+/**
+ * The default marker only earns its place where the default was actually contested.
+ *
+ * A project's contracts are overwhelmingly single-implementation, and those default by arithmetic.
+ * Badging them puts the same mark on every healthy row, which is how a real ambiguity — two
+ * implementations of one contract, neither winning — ends up looking exactly like the twenty-five
+ * rows above it.
+ */
+describe("formatInspectionReport default marker", () => {
+  const impl = (
+    implementationName: string,
+    overrides?: { isDefault?: boolean; claimsDefault?: boolean },
+  ): InspectionReport["contracts"][number]["implementations"][number] => ({
+    implementationName,
+    registrationKey: `${implementationName}Key`,
+    lifecycle: "singleton",
+    modulePath: `src/${implementationName}.ts`,
+    exportName: `build${implementationName}`,
+    isDefault: overrides?.isDefault ?? false,
+    claimsDefault: overrides?.claimsDefault ?? false,
+  });
+
+  const contractReport = (
+    contract: InspectionReport["contracts"][number],
+  ): InspectionReport => ({
+    contracts: [contract],
+    manifestIssues: [],
+    groups: [],
+    openers: [],
+    totalContractCount: 1,
+  });
+
+  const render = (contract: InspectionReport["contracts"][number]): string =>
+    formatInspectionReport(contractReport(contract), { color: false });
+
+  describe("When a contract has a single implementation", () => {
+    it("should render no default marker at all", () => {
+      const text = render({
+        contractName: "Logger",
+        defaultImplementationName: "sole",
+        defaultRegistrationKey: "soleKey",
+        implementations: [impl("sole", { isDefault: true, claimsDefault: true })],
+      });
+
+      assert.ok(!text.includes("★"));
+      assert.ok(!/default/u.test(text));
+      assert.match(text, /sole\s+key: soleKey/u);
+    });
+  });
+
+  describe("When a contract has several implementations and one default", () => {
+    it("should mark the winner and leave the others unmarked", () => {
+      const text = render({
+        contractName: "Reader",
+        defaultImplementationName: "rest",
+        defaultRegistrationKey: "restKey",
+        implementations: [
+          impl("graph"),
+          impl("rest", { isDefault: true, claimsDefault: true }),
+        ],
+      });
+
+      assert.match(text, /★ rest\s+key: restKey/u);
+      assert.ok(!/★ graph/u.test(text));
+      assert.ok(!text.includes("AMBIGUOUS"));
+    });
+
+    it("should mark a winner elected by the contract key rather than by a flag", () => {
+      // Nobody set `default: true`, yet generation elects the contract-key registration. Calling
+      // that a conflict would report a failure generation does not have.
+      const text = render({
+        contractName: "Reader",
+        defaultImplementationName: "reader",
+        defaultRegistrationKey: "reader",
+        implementations: [impl("graph"), impl("reader", { isDefault: true })],
+      });
+
+      assert.match(text, /★ reader/u);
+      assert.ok(!text.includes("no default among"));
+    });
+  });
+
+  describe("When several implementations claim the default", () => {
+    it("should shout the ambiguity on every claiming row", () => {
+      const text = render({
+        contractName: "AuthMiddleware",
+        defaultImplementationName: undefined,
+        defaultRegistrationKey: undefined,
+        implementations: [
+          impl("jwtAuth", { claimsDefault: true }),
+          impl("sessionAuth", { claimsDefault: true }),
+        ],
+      });
+
+      const lines = text
+        .split("\n")
+        .filter((line) => /jwtAuth|sessionAuth/u.test(line));
+      assert.strictEqual(lines.length, 2);
+      for (const line of lines) {
+        assert.match(line, /✖/u);
+        assert.match(line, /\(default: AMBIGUOUS — 2 of 2 claim it\)/u);
+      }
+    });
+
+    it("should leave a non-claiming sibling out of the conflict", () => {
+      const text = render({
+        contractName: "AuthMiddleware",
+        defaultImplementationName: undefined,
+        defaultRegistrationKey: undefined,
+        implementations: [
+          impl("basicAuth"),
+          impl("jwtAuth", { claimsDefault: true }),
+          impl("sessionAuth", { claimsDefault: true }),
+        ],
+      });
+
+      const lineFor = (name: string): string =>
+        text.split("\n").find((line) => line.includes(name))!;
+
+      assert.match(lineFor("jwtAuth"), /\(default: AMBIGUOUS — 2 of 3 claim it\)/u);
+      assert.match(lineFor("sessionAuth"), /\(default: AMBIGUOUS — 2 of 3 claim it\)/u);
+      assert.ok(!/AMBIGUOUS/u.test(lineFor("basicAuth")));
+      assert.ok(!lineFor("basicAuth").includes("✖"));
+    });
+  });
+
+  describe("When several implementations exist and none is elected", () => {
+    it("should say so loudly on every row", () => {
+      const text = render({
+        contractName: "AuthMiddleware",
+        defaultImplementationName: undefined,
+        defaultRegistrationKey: undefined,
+        implementations: [impl("jwtAuth"), impl("sessionAuth")],
+      });
+
+      const lines = text
+        .split("\n")
+        .filter((line) => /jwtAuth|sessionAuth/u.test(line));
+      assert.strictEqual(lines.length, 2);
+      for (const line of lines) {
+        assert.match(line, /✖/u);
+        assert.match(line, /\(no default among 2\)/u);
+      }
+      assert.ok(!text.includes("AMBIGUOUS"));
+    });
+  });
+
+  describe("When the same reports are rendered as JSON", () => {
+    it("should carry isDefault and claimsDefault per row regardless of the marker rule", () => {
+      // The marker rule is a human-rendering decision. The record stays complete: a single
+      // implementation still reports `isDefault: true` in JSON even though it prints no marker.
+      const single = contractReport({
+        contractName: "Logger",
+        defaultImplementationName: "sole",
+        defaultRegistrationKey: "soleKey",
+        implementations: [impl("sole", { isDefault: true, claimsDefault: true })],
+      });
+
+      const json = JSON.parse(formatInspectionReportJson(single)) as {
+        contracts: readonly {
+          implementations: readonly {
+            isDefault: boolean;
+            claimsDefault?: boolean;
+          }[];
+        }[];
+      };
+
+      assert.strictEqual(
+        json.contracts[0]!.implementations[0]!.isDefault,
+        true,
+      );
+      assert.ok(!formatInspectionReport(single, { color: false }).includes("★"));
+    });
+  });
+});
+
+describe("formatDiscoveryReport default marker", () => {
+  const row = (
+    exportName: string,
+    overrides?: Partial<DiscoveryExportReportRow>,
+  ): DiscoveryExportReportRow => ({
+    modulePath: "src/a.ts",
+    exportName,
+    status: "discovered",
+    contractName: "Reader",
+    registrationKey: exportName,
+    lifetime: "singleton",
+    ...overrides,
+  });
+
+  describe("When a contract had more than one implementation to choose between", () => {
+    it("should mark only the elected one", () => {
+      const text = formatDiscoveryReport(
+        reportOf([row("graphReader"), row("restReader", { isDefault: true })]),
+        { color: false },
+      );
+
+      const lineFor = (name: string): string =>
+        text.split("\n").find((line) => line.includes(name))!;
+
+      assert.match(lineFor("restReader"), /★ default/u);
+      assert.ok(!/★ default/u.test(lineFor("graphReader")));
+    });
+  });
+
+  describe("When a contract has a single implementation", () => {
+    it("should render no default marker", () => {
+      // `buildPlanJoin` never sets `isDefault` for a sole implementation, so nothing to mark.
+      const text = formatDiscoveryReport(reportOf([row("soleReader")]), {
+        color: false,
+      });
+
+      assert.ok(!text.includes("★"));
     });
   });
 });

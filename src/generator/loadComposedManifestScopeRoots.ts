@@ -11,77 +11,25 @@
  * which is the same string `composeManifests` claims at runtime.
  */
 import fs from "node:fs";
-import ts from "typescript";
+import { parseGeneratedManifestSource } from "./parseGeneratedManifestSource.js";
 import { resolvePackageExportPath } from "./resolveComposedPackageExport.js";
 
-const unwrapObjectLiteral = (
-  expr: ts.Expression,
-): ts.ObjectLiteralExpression | undefined => {
-  if (ts.isObjectLiteralExpression(expr)) {
-    return expr;
-  }
-  if (ts.isAsExpression(expr) || ts.isSatisfiesExpression(expr)) {
-    return unwrapObjectLiteral(expr.expression);
-  }
-  return undefined;
-};
-
-/** Every `openerKey: "…"` assignment under the manifest's `scopeRoots` property. */
+/**
+ * Every `scopeRoots[Contract][variant].openerKey` a generated manifest states.
+ *
+ * A projection of {@link parseGeneratedManifestSource}, the one parser `ioc inspect` and the
+ * composed-supply loader also read through, so an opener field the generator starts emitting cannot
+ * reach one reader and miss another.
+ */
 const extractOpenerKeysFromManifestSource = (
   content: string,
   manifestPath: string,
-): string[] => {
-  const sourceFile = ts.createSourceFile(
-    manifestPath,
-    content,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
+): string[] =>
+  Object.values(
+    parseGeneratedManifestSource(content, manifestPath).scopeRoots ?? {},
+  ).flatMap((variants) =>
+    Object.values(variants).map((variant) => variant.openerKey),
   );
-  const keys: string[] = [];
-
-  const collectOpenerKeys = (node: ts.Node): void => {
-    if (
-      ts.isPropertyAssignment(node) &&
-      ts.isIdentifier(node.name) &&
-      node.name.text === "openerKey" &&
-      ts.isStringLiteral(node.initializer)
-    ) {
-      keys.push(node.initializer.text);
-    }
-    ts.forEachChild(node, collectOpenerKeys);
-  };
-
-  const visit = (node: ts.Node): void => {
-    if (ts.isVariableStatement(node)) {
-      for (const decl of node.declarationList.declarations) {
-        const manifestObject =
-          decl.initializer !== undefined
-            ? unwrapObjectLiteral(decl.initializer)
-            : undefined;
-        if (
-          ts.isIdentifier(decl.name) &&
-          decl.name.text === "iocManifest" &&
-          manifestObject !== undefined
-        ) {
-          for (const prop of manifestObject.properties) {
-            if (
-              ts.isPropertyAssignment(prop) &&
-              ts.isIdentifier(prop.name) &&
-              prop.name.text === "scopeRoots"
-            ) {
-              collectOpenerKeys(prop.initializer);
-            }
-          }
-        }
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-
-  visit(sourceFile);
-  return keys;
-};
 
 /**
  * Opener keys contributed by every composed package, sorted and de-duplicated.

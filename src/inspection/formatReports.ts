@@ -13,6 +13,7 @@ import type {
   DiscoveryExportReportRow,
   DiscoveryReport,
   DiscoveryScopeRootVerificationRow,
+  InspectionContractReport,
   InspectionGroupReport,
   InspectionOpenerReport,
   InspectionReport,
@@ -163,6 +164,63 @@ const formatOpenersSection = (
   return lines;
 };
 
+/**
+ * How each implementation row of one contract renders its relationship to the default slot.
+ *
+ * The rule is that the marker must only appear where it DISCRIMINATES. A contract with a single
+ * implementation defaults to it by arithmetic — badging that row says nothing, and badging every
+ * such row (which is most of them, in most projects) is what makes the one contract with a real
+ * default problem look exactly like the twenty-five healthy ones above it.
+ *
+ * So: nothing at all for a sole implementation; the winner marked when there was a field to win;
+ * and when the election produced no winner, a loud note on every row that contended for it, in the
+ * flavour that says which way it failed. That last case is the discovery-level counterpart of the
+ * ambiguity error composition raises — the same fact, visible before the build dies of it.
+ *
+ * Election outcome decides this, never a raw count of `default: true` flags: an implementation
+ * registered under the contract key wins the slot with no flag at all, and calling that contract
+ * conflicted would report a failure generation does not have.
+ */
+const defaultMarking = (
+  contract: InspectionContractReport,
+  c: Ansi,
+): ((impl: InspectionContractReport["implementations"][number]) => {
+  marker: string;
+  note: string;
+}) => {
+  const blank = { marker: " ", note: "" };
+  const implementations = contract.implementations;
+
+  if (implementations.length < 2) {
+    return () => blank;
+  }
+
+  if (contract.defaultImplementationName !== undefined) {
+    return (impl) =>
+      impl.isDefault ? { marker: `${c.green}★${c.reset}`, note: "" } : blank;
+  }
+
+  const claimants = implementations.filter((impl) => impl.claimsDefault);
+  const conflict =
+    claimants.length > 0
+      ? {
+          contenders: claimants,
+          text: `(default: AMBIGUOUS — ${claimants.length} of ${implementations.length} claim it)`,
+        }
+      : {
+          contenders: implementations,
+          text: `(no default among ${implementations.length})`,
+        };
+
+  return (impl) =>
+    conflict.contenders.includes(impl)
+      ? {
+          marker: `${c.red}✖${c.reset}`,
+          note: `  ${c.red}${conflict.text}${c.reset}`,
+        }
+      : blank;
+};
+
 export type FormatInspectionReportOptions = {
   /** When omitted, uses TTY + NO_COLOR / FORCE_COLOR (same idea as common CLIs). */
   color?: boolean;
@@ -200,13 +258,15 @@ export const formatInspectionReport = (
       ),
     );
 
+    const defaults = defaultMarking(contract, c);
+
     for (const impl of contract.implementations) {
-      const marker = impl.isDefault ? `${c.green}★${c.reset}` : " ";
+      const { marker, note } = defaults(impl);
       lines.push(
         `  ${marker} ${c.bold}${pad(impl.implementationName, nameWidth)}${c.reset}` +
           `  ${c.dim}key:${c.reset} ${impl.registrationKey}` +
           `  ${impl.lifecycle}` +
-          `  ${c.dim}${impl.modulePath}#${impl.exportName}${c.reset}`,
+          `  ${c.dim}${impl.modulePath}#${impl.exportName}${c.reset}${note}`,
       );
     }
 
@@ -328,9 +388,15 @@ const formatRow = (
       row.lifetime !== undefined
         ? `  ${row.lifetime}${row.lifetimeSource !== undefined ? ` ${c.dim}(${row.lifetimeSource})${c.reset}` : ""}`
         : "";
+    // Set only for a contract that had more than one implementation to choose between — see
+    // `buildPlanJoin`. The contested cases `inspect` shouts about have no counterpart here: a
+    // contract whose default cannot be elected fails the registration plan, and `--discovery`
+    // builds that plan before it has any rows to print.
+    const isDefault =
+      row.isDefault === true ? `  ${c.green}★ default${c.reset}` : "";
     return [
       `  ${c.green}✔${c.reset} ${c.bold}${pad(name, nameWidth)}${c.reset} ${c.dim}→${c.reset} ${row.contractName}` +
-        `  ${c.dim}key:${c.reset} ${row.registrationKey}${lifetime}`,
+        `  ${c.dim}key:${c.reset} ${row.registrationKey}${lifetime}${isDefault}`,
     ];
   }
 

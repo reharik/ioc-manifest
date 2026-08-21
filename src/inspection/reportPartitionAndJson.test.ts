@@ -451,3 +451,114 @@ describe("--json output", () => {
     });
   });
 });
+
+/**
+ * Which discovered row, if any, carries the elected default.
+ *
+ * The join is the registration plan, the same source the row's lifetime comes from. The rule the
+ * rows encode is that a default is only worth reporting when there was a field to win: a contract
+ * with one implementation elects it by arithmetic, and marking that is what drowns the contract
+ * whose default was genuinely contested.
+ */
+describe("discovery report default election", () => {
+  const twoImplFiles: IocDiscoveryAnalysisFiles = [
+    {
+      modulePath: "src/readers.ts",
+      outcomes: [
+        {
+          scope: "export",
+          exportName: "buildGraphReader",
+          status: IocDiscoveryStatus.DISCOVERED,
+          contractName: "Reader",
+          implementationName: "graphReader",
+          registrationKey: "graphReader",
+          discoveredBy: "naming",
+        },
+        {
+          scope: "export",
+          exportName: "buildRestReader",
+          status: IocDiscoveryStatus.DISCOVERED,
+          contractName: "Reader",
+          implementationName: "restReader",
+          registrationKey: "restReader",
+          discoveredBy: "naming",
+        },
+      ],
+    },
+  ];
+
+  const planFor = (
+    overrides?: Partial<{ contractDefaultElected: boolean }>,
+  ) => [
+    {
+      contractName: "Reader",
+      contractTypeRelImport: "../readers.js",
+      contractKey: "reader",
+      accessKey: "reader",
+      defaultImplementationName: "restReader",
+      ...(overrides ?? {}),
+      implementations: [
+        {
+          implementationName: "graphReader",
+          registrationKey: "graphReader",
+          exportName: "buildGraphReader",
+          modulePath: "src/readers.ts",
+          relImport: "../readers.js",
+          lifetime: "singleton" as const,
+        },
+        {
+          implementationName: "restReader",
+          registrationKey: "restReader",
+          exportName: "buildRestReader",
+          modulePath: "src/readers.ts",
+          relImport: "../readers.js",
+          lifetime: "singleton" as const,
+        },
+      ],
+    },
+  ];
+
+  const rowsOf = (plan: ReturnType<typeof planFor>) =>
+    buildDiscoveryReport({
+      discoveryFiles: twoImplFiles,
+      excludedFiles: [],
+      registrationPlan: plan,
+    }).files.flatMap((file) => file.rows);
+
+  describe("When a contract has several implementations", () => {
+    it("should set isDefault on the elected row only", () => {
+      const rows = rowsOf(planFor());
+
+      assert.equal(
+        rows.find((r) => r.exportName === "buildRestReader")?.isDefault,
+        true,
+      );
+      assert.equal(
+        rows.find((r) => r.exportName === "buildGraphReader")?.isDefault,
+        undefined,
+      );
+    });
+  });
+
+  describe("When a group base elected no default of its own", () => {
+    it("should mark nobody, since no singular default key is emitted", () => {
+      const rows = rowsOf(planFor({ contractDefaultElected: false }));
+
+      assert.deepEqual(
+        rows.map((r) => r.isDefault),
+        [undefined, undefined],
+      );
+    });
+  });
+
+  describe("When a contract has a single implementation", () => {
+    it("should not mark it, because nothing was contested", () => {
+      const rows = buildBaseReport().files.flatMap((file) => file.rows);
+
+      assert.equal(
+        rows.find((r) => r.exportName === "buildEmailChannel")?.isDefault,
+        undefined,
+      );
+    });
+  });
+});

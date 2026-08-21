@@ -107,7 +107,17 @@ export type InspectionContractReport = {
     lifecycle: string;
     modulePath: string;
     exportName: string;
+    /** True for the implementation that ACTUALLY backs the contract's default slot. */
     isDefault: boolean;
+    /**
+     * True when this implementation CLAIMS the default (`default: true` in the manifest).
+     *
+     * Distinct from {@link isDefault}, and only distinguishable from it when election went wrong:
+     * two claimants elect nobody, so both carry `claimsDefault` and neither carries `isDefault`.
+     * That is exactly the case the human report has to shout about, and it is unreadable from
+     * `isDefault` alone — which is why the record carries the claim too.
+     */
+    claimsDefault: boolean;
   }[];
 };
 
@@ -310,6 +320,7 @@ export const buildInspectionReport = (
             modulePath: m.modulePath,
             exportName: m.exportName,
             isDefault: selected?.name === m.implementationName,
+            claimsDefault: m.default === true,
           };
         }),
       };
@@ -345,6 +356,15 @@ export type DiscoveryExportReportRow = {
   lifetimeSource?: string;
   /** Set for `class_inherited_contract_not_declared`: the base whose contract was not restated. */
   baseClassName?: string;
+  /**
+   * Set on the discovered implementation that backs its contract's default slot.
+   *
+   * Joined from the registration plan, the same way {@link lifetime} is. Absent on every other row,
+   * including every row of a single-implementation contract: a contract with one implementation
+   * defaults trivially, and saying so on all of them is what buries the contract where the default
+   * was actually contested.
+   */
+  isDefault?: true;
   /** Set when this export is a scope-root unit rather than an ordinary registration. */
   isScopeRoot?: true;
   /**
@@ -503,24 +523,45 @@ const classifySkip = (
     : "not_a_candidate";
 };
 
-type LifetimeJoin = ReadonlyMap<
+type PlanJoin = ReadonlyMap<
   string,
-  { lifetime: string; lifetimeSource?: string }
+  { lifetime: string; lifetimeSource?: string; isDefault?: true }
 >;
 
 const factoryJoinKey = (modulePath: string, exportName: string): string =>
   `${modulePath} ${exportName}`;
 
-const buildLifetimeJoin = (
+/**
+ * Per-unit facts the registration plan settles: resolved lifetime, and whether this unit won its
+ * contract's default slot.
+ *
+ * `isDefault` is set only where a contract has more than one implementation. A sole implementation
+ * defaults by arithmetic rather than by decision, and marking it would put the same badge on every
+ * healthy row in the report — leaving the one contested contract indistinguishable from the rest.
+ * `contractDefaultElected: false` (a group base that elected nobody) marks nobody either: the plan
+ * still names a deterministic pick there, but no singular default key is emitted for it, so
+ * claiming one would report a key the container will not have.
+ */
+const buildPlanJoin = (
   plan: readonly ResolvedContractRegistration[] | undefined,
-): LifetimeJoin => {
-  const map = new Map<string, { lifetime: string; lifetimeSource?: string }>();
+): PlanJoin => {
+  const map = new Map<
+    string,
+    { lifetime: string; lifetimeSource?: string; isDefault?: true }
+  >();
   for (const contract of plan ?? []) {
+    const marksDefault =
+      contract.implementations.length > 1 &&
+      contract.contractDefaultElected !== false;
     for (const impl of contract.implementations) {
       map.set(factoryJoinKey(impl.modulePath, impl.exportName), {
         lifetime: impl.lifetime,
         ...(impl.lifetimeSource !== undefined
           ? { lifetimeSource: impl.lifetimeSource }
+          : {}),
+        ...(marksDefault &&
+        impl.implementationName === contract.defaultImplementationName
+          ? { isDefault: true as const }
           : {}),
       });
     }
@@ -530,7 +571,7 @@ const buildLifetimeJoin = (
 
 type RowBuildContext = {
   registeredByConcreteClasses: ReadonlySet<string>;
-  lifetimes: LifetimeJoin;
+  plan: PlanJoin;
   verificationByVariant: ReadonlyMap<string, ScopeRootVariantVerification>;
 };
 
@@ -557,9 +598,7 @@ const outcomeToRows = (
   }
 
   if (outcome.status === "discovered") {
-    const lifetime = ctx.lifetimes.get(
-      factoryJoinKey(modulePath, outcome.exportName),
-    );
+    const planned = ctx.plan.get(factoryJoinKey(modulePath, outcome.exportName));
     const verification =
       outcome.isScopeRoot === true
         ? ctx.verificationByVariant.get(
@@ -574,7 +613,7 @@ const outcomeToRows = (
         status: "discovered",
         contractName: outcome.contractName,
         registrationKey: outcome.registrationKey,
-        ...(lifetime !== undefined ? lifetime : {}),
+        ...(planned !== undefined ? planned : {}),
         ...(outcome.isScopeRoot === true
           ? {
               isScopeRoot: true as const,
@@ -789,7 +828,7 @@ export const buildDiscoveryReport = (
   const ctx: RowBuildContext = {
     registeredByConcreteClasses:
       contractsRegisteredByConcreteClasses(discoveryFiles),
-    lifetimes: buildLifetimeJoin(asObject?.registrationPlan),
+    plan: buildPlanJoin(asObject?.registrationPlan),
     verificationByVariant,
   };
 

@@ -3,7 +3,9 @@
  * @fileoverview `ioc` CLI: generates and inspects Awilix manifests.
  *
  * - `ioc generate` — runs the full generation pipeline (discover, plan, emit).
- * - `ioc inspect` — human-readable contract / implementation summary + manifest validation.
+ * - `ioc inspect` — human-readable contract / implementation summary + manifest validation. Reads
+ *   the generated manifest by PARSING it (see `loadManifestForInspection`), never by importing it:
+ *   the CLI runs under plain `node`, which cannot import a `.ts` file at all.
  * - `ioc inspect --discovery` — re-runs source discovery (no manifest read) for drift analysis.
  * - `ioc validate` — app mode only: cross-manifest composition checks without writing files (CI gate).
  *
@@ -11,7 +13,6 @@
  * (or `--project`) to find `ioc.config.ts` in a monorepo.
  */
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { IOC_CLI_HELP_TEXT, parseIocCliArgv } from "./parseIocCli.js";
 import { generateManifest } from "../generator/generateManifest.js";
 import {
@@ -19,15 +20,6 @@ import {
   resolveProjectRootFromIocConfigPath,
   tryLoadIocConfig,
 } from "../config/loadIocConfig.js";
-import {
-  IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS,
-  type IocGeneratedContainerManifest,
-  type IocGroupsManifest,
-} from "../core/manifest.js";
-import {
-  mergeManifestOptionsWithIocConfig,
-  resolveManifestOptions,
-} from "../generator/manifestOptions.js";
 import type { ResolvedScanDir } from "../generator/manifestPaths.js";
 import {
   buildDiscoveryReport,
@@ -39,6 +31,7 @@ import {
   formatInspectionReport,
   formatInspectionReportJson,
 } from "../inspection/index.js";
+import { loadManifestForInspection } from "../inspection/loadManifestForInspection.js";
 import {
   resolveDiscoveryManifestContext,
   runDiscoveryAnalysis,
@@ -47,26 +40,6 @@ import {
   printValidateResult,
   runValidate,
 } from "../validate/runValidate.js";
-
-type GeneratedMainManifestModule = {
-  iocManifest: IocGeneratedContainerManifest;
-};
-
-/**
- * Group roots live as extra top-level manifest properties alongside the fixed keys, so reading them
- * back is "everything that is not fixed". Shape-checked in `buildGroupReportsFromManifest`.
- */
-const extractManifestGroupRoots = (
-  manifest: IocGeneratedContainerManifest,
-): IocGroupsManifest => {
-  const groups: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(manifest)) {
-    if (!IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS.has(key)) {
-      groups[key] = value;
-    }
-  }
-  return groups as IocGroupsManifest;
-};
 
 const formatResolvedScanDir = (e: ResolvedScanDir): string => {
   if (e.scope !== undefined) {
@@ -77,36 +50,12 @@ const formatResolvedScanDir = (e: ResolvedScanDir): string => {
 
 const logInspectContext = (
   cfgPath: string,
-  scanDirs: ResolvedScanDir[],
+  scanDirs: readonly ResolvedScanDir[],
 ): void => {
   console.error(`[ioc inspect] resolved config: ${cfgPath}`);
   console.error(
     `[ioc inspect] resolved discovery scanDirs: ${scanDirs.map(formatResolvedScanDir).join("; ")}`,
   );
-};
-
-const loadGeneratedManifestModule = async (
-  iocConfigPath?: string,
-  searchStartDir?: string,
-): Promise<GeneratedMainManifestModule> => {
-  const searchStart = path.resolve(searchStartDir ?? process.cwd());
-  const cfgPath = resolveIocConfigPath(searchStart, iocConfigPath);
-  const config = await tryLoadIocConfig(cfgPath);
-  const projectRoot = config
-    ? resolveProjectRootFromIocConfigPath(cfgPath)
-    : searchStart;
-  const base = resolveManifestOptions({
-    paths: { projectRoot },
-  });
-  const options = config
-    ? mergeManifestOptionsWithIocConfig(base, config)
-    : base;
-  logInspectContext(cfgPath, options.paths.scanDirs);
-  const manifestPath = path.resolve(options.paths.manifestOutPath);
-  const main = (await import(
-    pathToFileURL(manifestPath).href
-  )) as GeneratedMainManifestModule;
-  return main;
 };
 
 const main = async (): Promise<void> => {
@@ -183,14 +132,15 @@ const main = async (): Promise<void> => {
     return;
   }
 
-  const mainMod = await loadGeneratedManifestModule(
+  const manifest = await loadManifestForInspection(
     cli.iocConfigPath,
     searchStart,
   );
+  logInspectContext(manifest.cfgPath, manifest.scanDirs);
 
-  const full = buildInspectionReport(mainMod.iocManifest.contracts, {
-    groups: extractManifestGroupRoots(mainMod.iocManifest),
-    scopeRoots: mainMod.iocManifest.scopeRoots,
+  const full = buildInspectionReport(manifest.contracts, {
+    groups: manifest.groups,
+    scopeRoots: manifest.scopeRoots,
   });
   const report =
     cli.contract !== undefined
