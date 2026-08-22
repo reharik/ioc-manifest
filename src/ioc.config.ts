@@ -36,10 +36,17 @@ export default defineIocConfig({
     ArchiveMediaStorage: { allowDivergentFileName: true },
   },
   groups: {
-    /** All implementations whose contract is assignable to MediaStorage. */
-    mediaStoragesGroup: {
-      kind: "collection",
-      baseType: "MediaStorage",
+    /**
+     * Every contract declaring heritage to `NotificationChannel`, keyed by contract.
+     *
+     * Grouped ⇒ group-only: `EmailChannel` and `SmsChannel` are consumed through this key and
+     * nowhere else — no contract keys, no member registration keys in the cradle. `MediaStorage`
+     * is deliberately NOT grouped, because lessons b/c/f/g/h consume it singularly; a contract is
+     * a family or a singular, never both.
+     */
+    notificationChannels: {
+      kind: "object",
+      baseType: "NotificationChannel",
     },
   },
 });

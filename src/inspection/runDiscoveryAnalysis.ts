@@ -12,6 +12,8 @@ import {
   tryLoadIocConfig,
 } from "../config/loadIocConfig.js";
 import { discoverFactories } from "../generator/discoverFactories/discoverFactories.js";
+import { resolveGroupedContracts } from "../groups/groupedContracts.js";
+import { resolveLifetimeMarkerTypes } from "../generator/resolveLifetimeMarkers.js";
 import {
   createIocProgramForDiscovery,
   getConfigExcludedFiles,
@@ -186,11 +188,45 @@ const runDiscoveryFromResolution = async (
       { program, projectRoot, scanDirs },
     );
 
-    const registrationPlan = buildRegistrationPlan(contractMap, config, {
-      projectRoot,
-      scanDirs,
-      markerLifetimesByFactoryKey,
-    });
+    // Grouped ⇒ group-only reaches inspection too, and it has to: a grouped contract is never put
+    // through default election, so a report that built plans without this would abort on exactly
+    // the shape a group exists for — several implementations, no `default: true`. The report is a
+    // view and must never fail where generation succeeds.
+    const groupedContracts = resolveGroupedContracts(
+      config?.groups,
+      acceptedFactories.map((factory) => ({
+        contractName: factory.contractName,
+        contractTypeRelImport: factory.contractTypeRelImport,
+      })),
+      { program, generatedDir, scanDirs },
+      {
+        markers:
+          config?.lifetimeMarkers !== undefined &&
+          Object.keys(config.lifetimeMarkers).length > 0
+            ? resolveLifetimeMarkerTypes(program, config.lifetimeMarkers)
+            : [],
+      },
+    );
+
+    const registrationPlan = buildRegistrationPlan(
+      contractMap,
+      config,
+      {
+        projectRoot,
+        scanDirs,
+        markerLifetimesByFactoryKey,
+      },
+      {
+        groupedContractNames: new Set(groupedContracts.byContractName.keys()),
+        groupNameByContractName: new Map(
+          [...groupedContracts.byContractName].map(([name, membership]) => [
+            name,
+            membership.groupName,
+          ]),
+        ),
+        baseMarkerLifetimeByGroup: groupedContracts.baseMarkerLifetimeByGroup,
+      },
+    );
 
     // Inspection has no group plan (groups are a codegen artifact) and no demand/supply pass, so it
     // cannot expand a group root key into its members and has no authoritative externals set. It is

@@ -38,6 +38,11 @@ export type {
 // Phantom — nothing here exists at runtime. See `docs/design/scope-roots.md`.
 export type { ScopeRoot } from "./scopeRoots/scopeRoot.js";
 
+// Deps authoring surface: the marker that declares a demand for one SPECIFIC implementation rather
+// than its contract's elected default. Transparent to TypeScript (`Named<T>` is `T`); read
+// syntactically by the generator. See `docs/design/per-package-manifest.md` §4.6.
+export type { Named } from "./named/named.js";
+
 // Runtime registration entry point and its override types.
 export { registerIocFromManifest } from "./runtime/bootstrap.js";
 export type {

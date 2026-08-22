@@ -19,6 +19,7 @@ import ts from "typescript";
 import { analyzeDemandSupply } from "./analyzeDemandSupply/index.js";
 import { discoverFactories } from "./discoverFactories/discoverFactories.js";
 import { buildRegistrationPlan } from "./resolveRegistrationPlan.js";
+import { contractSlotsForPlans } from "./contractSlotKeys.js";
 import { buildScopeRootOpeners } from "./scopeRootOpeners.js";
 import { resolveExternalsExclusion } from "./scopeRootExternalsExclusion.js";
 import {
@@ -86,6 +87,7 @@ const generate = (spelling: Spelling) => {
     scanDirs,
     generatedDir,
     scopeRoots,
+    contractSlots: contractSlotsForPlans(plans),
   });
   const verification = verifyScopeRoots(scopeRoots, {
     program,

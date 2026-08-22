@@ -100,8 +100,8 @@ describe("group membership rejection recording", () => {
     });
   });
 
-  describe("When a non-default implementation sits on the contract default-slot key", () => {
-    it("should record the implementation-level rejection with its registration key", () => {
+  describe("When an implementation sits on its contract's would-be contract key", () => {
+    it("should be an ordinary member — grouped contracts have no slot to duplicate", () => {
       const config = {
         registrations: {
           PrimaryMember: { altPrimaryMember: { default: true } },
@@ -110,20 +110,19 @@ describe("group membership rejection recording", () => {
 
       const plan = planGroup("group-rejections", "RejectBase", config);
 
+      // Both implementations are members. The retired filter dropped `primaryMember` because its
+      // key equalled the camel-cased contract name and it was not the elected default — a guard
+      // against duplicating default-slot semantics. Grouped ⇒ group-only removed the slot, so
+      // there is nothing to duplicate, and dropping a member would be a group that looks complete
+      // and is not.
       assert.deepStrictEqual(
         plan.members.map((m) => m.registrationKey).sort(),
-        ["altPrimaryMember"],
+        ["altPrimaryMember", "primaryMember"],
       );
-      const slotRejections = plan.rejections.filter(
-        (r) => r.reason === "non_default_impl_at_contract_slot",
+      assert.deepStrictEqual(
+        plan.rejections.filter((r) => r.registrationKey !== undefined),
+        [],
       );
-      assert.deepStrictEqual(slotRejections, [
-        {
-          contractName: "PrimaryMember",
-          registrationKey: "primaryMember",
-          reason: "non_default_impl_at_contract_slot",
-        },
-      ]);
     });
   });
 

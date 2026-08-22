@@ -7,7 +7,7 @@ import {
   type PackageIdentifierCollision,
   findPackageIdentifierCollisions,
 } from "../config/packageIdentifier.js";
-import { parseInterfacePropertyNames } from "../validate/parseGeneratedSource.js";
+import { parseInterfacePropertyNames } from "../composition/parseRegistryInterface.js";
 import { resolvePackageExportPath } from "./resolveComposedPackageExport.js";
 import type { ComposedPackageSpec } from "./writeComposedManifest.js";
 

@@ -1,7 +1,8 @@
+import type { Named } from "../../../named/named.js";
 import type { MediaStorage, RequestAuditor } from "./contracts.js";
 
 type RequestAuditorImplDeps = {
-  s3MediaStorage: MediaStorage;
+  s3MediaStorage: Named<MediaStorage>;
 };
 
 /**

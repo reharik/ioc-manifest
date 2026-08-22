@@ -58,6 +58,17 @@ const albumFactories = [
   },
 ] as const;
 
+/**
+ * The `AlbumRepository` contract slot. The convention puts it on the implementation's own key, so
+ * `buildAlbumService`'s bare `albumRepository` demand is the contract-key row of the demand model.
+ */
+const albumRepositorySlot = {
+  accessKey: "albumRepository",
+  contractName: "AlbumRepository",
+  contractTypeRelImport: "../test-fixtures/demand-supply/contracts.js",
+  electedRegistrationKey: "albumRepository",
+} as const;
+
 const captureWarnings = (fn: () => void): string[] => {
   const warnings: string[] = [];
   const prevWarn = console.warn;
@@ -128,6 +139,7 @@ describe("validateScopeProvidedAtCodegen", () => {
         scanDirs,
         generatedDir,
         scopeProvided: ["albumRepository"],
+        contractSlots: [albumRepositorySlot],
       });
 
       assert.strictEqual(

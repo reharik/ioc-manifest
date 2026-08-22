@@ -926,8 +926,8 @@ describe("registerIocFromManifest", () => {
       });
     });
 
-    describe("When a group base explicitly elects a default (default: true)", () => {
-      it("should still register the default and stay resolvable by the singular key", () => {
+    describe("When a grouped contract declares a default anyway (default: true)", () => {
+      it("should register no singular alias — grouped contracts have no contract key", () => {
         const manifest: IocContractManifest = {
           PublicReadServiceBase: {
             albumRead: {
@@ -986,21 +986,23 @@ describe("registerIocFromManifest", () => {
           },
         ]);
 
-        // Singular default slot still resolves to the elected default.
-        assert.strictEqual(
-          container.resolve("publicReadServiceBase").tag,
-          "album",
-        );
-        // Group still resolves too.
+        // Grouped ⇒ group-only, and runtime mirrors generation: no contract-key alias is
+        // registered, so the container never answers to a name the emitted cradle does not carry.
+        assert.throws(() => container.resolve("publicReadServiceBase"));
+        // The group is how the family is consumed, and it resolves.
         assert.deepStrictEqual(
           container.resolve("publicReads").map((r) => r.tag),
           ["album", "photo"],
         );
+        // Member registration keys stay REGISTERED — the group resolver hands its members out by
+        // registration key, so the container must hold them even though the typed surface hides
+        // them. The asymmetry is the ruling: what changes is what a consumer may name.
+        assert.strictEqual(container.resolve("albumRead").tag, "album");
       });
     });
 
     describe("When a normal (non-group-base) contract has two impls and no default", () => {
-      it("should STILL throw — only group bases are exempt from default election", () => {
+      it("should STILL throw — only grouped contracts are exempt from default election", () => {
         const manifest: IocContractManifest = {
           MediaStorage: {
             local: {

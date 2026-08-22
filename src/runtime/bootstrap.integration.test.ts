@@ -10,6 +10,13 @@ import type {
   IocGeneratedCradle,
 } from "../generated/ioc-registry.types.js";
 import { iocManifest } from "../generated/ioc-manifest.js";
+import { resolveManifestAccessKey } from "../core/contractAccessKey.js";
+import { selectDefaultImplementationName } from "../core/defaultImplementationSelection.js";
+import { groupedContractNamesFromManifest } from "../core/groupedContractNames.js";
+import {
+  IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS,
+  type IocGroupsManifest,
+} from "../core/manifest.js";
 import { registerIocFromManifest } from "./bootstrap.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -60,7 +67,61 @@ describe("registerIocFromManifest", () => {
       registerIocFromManifest(container, [iocManifest]);
       const media = container.resolve("mediaStorage") as MediaStorage;
       await media.put("k");
-      assert.strictEqual(media.label, "direct-contract");
+      // The ELECTEE, per `ioc.config`'s `MediaStorage.s3MediaStorage.default: true`. This assertion
+      // used to read "direct-contract": an implementation exported as `buildMediaStorage` owned the
+      // slot key outright, so the key handed out the occupant while the election named someone
+      // else. That shape is a generation error now, so the slot can only mean the election.
+      assert.strictEqual(media.label, "s3");
+    });
+  });
+
+  describe("When reading the dogfood manifest's slot keys", () => {
+    /**
+     * Runtime parity for the slot-occupancy rule: the shadow-divergent shape cannot reach boot from
+     * anything this tool generates, so `registerContractDefaultAliases` needs no branch that decides
+     * between "the occupant" and "the electee" — they are the same registration whenever both exist.
+     *
+     * Asserted against the real generated manifest rather than a fixture, because the corner this
+     * closes lived HERE: `buildMediaStorage` owned `mediaStorage` while `ioc.config` elected
+     * `s3MediaStorage`, and the assertion two blocks up read "direct-contract" as though that were
+     * the elected default.
+     */
+    it("should never register a slot-key occupant that is not the electee", () => {
+      const groupRoots = Object.fromEntries(
+        Object.entries(iocManifest as Record<string, unknown>).filter(
+          ([key]) => !IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS.has(key),
+        ),
+      ) as IocGroupsManifest;
+      const grouped = groupedContractNamesFromManifest(groupRoots);
+
+      for (const [contractName, impls] of Object.entries(
+        iocManifest.contracts,
+      )) {
+        if (grouped.has(contractName)) {
+          continue;
+        }
+        const implList = Object.values(impls);
+        const accessKey = resolveManifestAccessKey(contractName, implList);
+        const occupant = implList.find(
+          (meta) => meta.registrationKey === accessKey,
+        );
+        if (occupant === undefined) {
+          continue;
+        }
+        const electedName = selectDefaultImplementationName(
+          contractName,
+          implList.map((meta) => ({
+            implementationName: meta.implementationName,
+            registrationKey: meta.registrationKey,
+            ...(meta.default === true ? { default: true as const } : {}),
+          })),
+        );
+        assert.strictEqual(
+          occupant.implementationName,
+          electedName,
+          `${contractName}: ${occupant.implementationName} occupies slot key "${accessKey}" but ${electedName} is elected`,
+        );
+      }
     });
   });
 
@@ -74,7 +135,7 @@ describe("registerIocFromManifest", () => {
       const albumService = container.resolve("albumService") as {
         describe: () => string;
       };
-      assert.match(albumService.describe(), /albums backed by direct-contract/i);
+      assert.match(albumService.describe(), /albums backed by s3/i);
     });
   });
 
@@ -94,18 +155,37 @@ describe("registerIocFromManifest", () => {
   });
 
   describe("When resolving generated groups", () => {
-    it("should register group roots and resolve collection members from the cradle", () => {
+    it("should register the group root and resolve its members through it", () => {
       const container = createContainer<IocGeneratedCradle>();
       registerIocFromManifest(container, [iocManifest]);
 
-      const mediaGroup = container.resolve("mediaStoragesGroup") as MediaStorage[];
-      assert.ok(Array.isArray(mediaGroup));
-      assert.strictEqual(mediaGroup.length, 3);
-      const labels = mediaGroup.map((m) => m.label).sort();
-      assert.deepStrictEqual(labels, ["archive", "local", "s3"]);
+      // A record group: the value is keyed by contract, so every member is reachable — through the
+      // group, which is the only way in. Neither member has a cradle key of its own.
+      const channels = container.resolve("notificationChannels");
+      assert.deepStrictEqual(Object.keys(channels).sort(), [
+        "emailChannel",
+        "smsChannel",
+      ]);
+      assert.strictEqual(channels.emailChannel.deliver("x"), "email:x");
+      assert.strictEqual(channels.smsChannel.deliver("x"), "sms:x");
+    });
+
+    it("should register no contract-key alias for the grouped base", () => {
+      const container = createContainer<IocGeneratedCradle>();
+      registerIocFromManifest(container, [iocManifest]);
+
+      // Grouped ⇒ group-only, and runtime mirrors it: the name the base's slot WOULD have had is
+      // not registered, so nothing resolves under a key the emitted cradle does not carry.
+      assert.throws(() =>
+        (container as unknown as { resolve: (k: string) => unknown }).resolve(
+          "notificationChannel",
+        ),
+      );
+      // Member registration keys stay registered — the group resolver needs them.
       assert.ok(
-        new Set(mediaGroup.map((m) => m.label)).size === mediaGroup.length,
-        "collection group should not duplicate implementations",
+        (container as unknown as { resolve: (k: string) => unknown }).resolve(
+          "emailChannel",
+        ),
       );
     });
   });

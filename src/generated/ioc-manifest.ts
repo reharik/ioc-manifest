@@ -16,24 +16,20 @@ import * as ioc_examples_g_class_registration from "../examples/g-class-registra
 import * as ioc_examples_h_scope_root from "../examples/h-scope-root.js";
 
 type IocManifestGroupRoots = {
-  readonly mediaStoragesGroup: {
-    readonly kind: "collection";
-    readonly baseType: "MediaStorage";
-    readonly baseTypeId: "ioc-manifest/src/examples/b-multiple-implementations.ts:MediaStorage";
-    readonly members: readonly [
-      {
-        readonly contractName: "MediaStorage";
-        readonly registrationKey: "archiveMediaStorage";
-      },
-      {
-        readonly contractName: "MediaStorage";
-        readonly registrationKey: "localMediaStorage";
-      },
-      {
-        readonly contractName: "MediaStorage";
-        readonly registrationKey: "s3MediaStorage";
-      },
-    ];
+  readonly notificationChannels: {
+    readonly kind: "object";
+    readonly baseType: "NotificationChannel";
+    readonly baseTypeId: "ioc-manifest/src/examples/d-grouping.ts:NotificationChannel";
+    readonly members: {
+      readonly emailChannel: {
+        readonly contractName: "EmailChannel";
+        readonly registrationKey: "emailChannel";
+      };
+      readonly smsChannel: {
+        readonly contractName: "SmsChannel";
+        readonly registrationKey: "smsChannel";
+      };
+    };
   };
 };
 
@@ -81,6 +77,34 @@ export const iocManifest = {
         discoveredBy: "naming",
       },
     },
+    DispatchService: {
+      dispatchService: {
+        exportName: "buildDispatchService",
+        registrationKey: "dispatchService",
+        modulePath: "examples/d-grouping.ts",
+        relImport: "../examples/d-grouping.js",
+        contractName: "DispatchService",
+        implementationName: "dispatchService",
+        lifetime: "singleton",
+        moduleIndex: 3,
+        default: true,
+        discoveredBy: "naming",
+        dependencyKeys: ["notificationChannels"],
+      },
+    },
+    EmailChannel: {
+      emailChannel: {
+        exportName: "buildEmailChannel",
+        registrationKey: "emailChannel",
+        modulePath: "examples/d-grouping.ts",
+        relImport: "../examples/d-grouping.js",
+        contractName: "EmailChannel",
+        implementationName: "emailChannel",
+        lifetime: "singleton",
+        moduleIndex: 3,
+        discoveredBy: "naming",
+      },
+    },
     Logger: {
       consoleLogger: {
         exportName: "buildConsoleLogger",
@@ -111,6 +135,17 @@ export const iocManifest = {
         dependencyContractNames: ["MediaStorage"],
         dependencyKeys: ["mediaStorage"],
       },
+      auditedMediaStorage: {
+        exportName: "buildAuditedMediaStorage",
+        registrationKey: "auditedMediaStorage",
+        modulePath: "examples/c-default-selection.ts",
+        relImport: "../examples/c-default-selection.js",
+        contractName: "MediaStorage",
+        implementationName: "auditedMediaStorage",
+        lifetime: "singleton",
+        moduleIndex: 2,
+        discoveredBy: "naming",
+      },
       localMediaStorage: {
         exportName: "buildLocalMediaStorage",
         registrationKey: "localMediaStorage",
@@ -120,17 +155,6 @@ export const iocManifest = {
         implementationName: "localMediaStorage",
         lifetime: "singleton",
         moduleIndex: 1,
-        discoveredBy: "naming",
-      },
-      mediaStorage: {
-        exportName: "buildMediaStorage",
-        registrationKey: "mediaStorage",
-        modulePath: "examples/c-default-selection.ts",
-        relImport: "../examples/c-default-selection.js",
-        contractName: "MediaStorage",
-        implementationName: "mediaStorage",
-        lifetime: "singleton",
-        moduleIndex: 2,
         discoveredBy: "naming",
       },
       s3MediaStorage: {
@@ -162,6 +186,19 @@ export const iocManifest = {
         dependencyKeys: ["openRequestReportScope"],
       },
     },
+    SmsChannel: {
+      smsChannel: {
+        exportName: "buildSmsChannel",
+        registrationKey: "smsChannel",
+        modulePath: "examples/d-grouping.ts",
+        relImport: "../examples/d-grouping.js",
+        contractName: "SmsChannel",
+        implementationName: "smsChannel",
+        lifetime: "singleton",
+        moduleIndex: 3,
+        discoveredBy: "naming",
+      },
+    },
     Widget: {
       primaryWidget: {
         exportName: "buildPrimaryWidget",
@@ -186,6 +223,22 @@ export const iocManifest = {
         lifetime: "singleton",
         moduleIndex: 2,
         discoveredBy: "naming",
+      },
+    },
+    WidgetInspector: {
+      widgetInspector: {
+        exportName: "buildWidgetInspector",
+        registrationKey: "widgetInspector",
+        modulePath: "examples/c-default-selection.ts",
+        relImport: "../examples/c-default-selection.js",
+        contractName: "WidgetInspector",
+        implementationName: "widgetInspector",
+        lifetime: "singleton",
+        moduleIndex: 2,
+        default: true,
+        discoveredBy: "naming",
+        dependencyContractNames: ["Widget"],
+        dependencyKeys: ["widget", "secondaryWidget"],
       },
     },
   },
@@ -215,26 +268,21 @@ export const iocManifest = {
       },
     },
   },
-  // mediaStoragesGroup
-  mediaStoragesGroup: {
-    kind: "collection",
-    baseType: "MediaStorage",
-    baseTypeId:
-      "ioc-manifest/src/examples/b-multiple-implementations.ts:MediaStorage",
-    members: [
-      {
-        contractName: "MediaStorage",
-        registrationKey: "archiveMediaStorage",
+  // notificationChannels
+  notificationChannels: {
+    kind: "object",
+    baseType: "NotificationChannel",
+    baseTypeId: "ioc-manifest/src/examples/d-grouping.ts:NotificationChannel",
+    members: {
+      emailChannel: {
+        contractName: "EmailChannel",
+        registrationKey: "emailChannel",
       },
-      {
-        contractName: "MediaStorage",
-        registrationKey: "localMediaStorage",
+      smsChannel: {
+        contractName: "SmsChannel",
+        registrationKey: "smsChannel",
       },
-      {
-        contractName: "MediaStorage",
-        registrationKey: "s3MediaStorage",
-      },
-    ],
+    },
   },
 } as const satisfies IocGeneratedContainerManifest<IocManifestGroupRoots>;
 

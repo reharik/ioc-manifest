@@ -24,6 +24,8 @@ export interface IocExternals {
 
 `IocExternals` lists every dependency the package consumes from outside — keys destructured by factory deps types where no local factory supplies them. `IocGeneratedCradle` contains only what the package itself supplies. The two interfaces together describe the package's full contract: what it provides and what it needs.
 
+`IocGeneratedCradle` carries three kinds of key: each implementation's own registration key, each group root key, and each contract's **slot key** — the camel-cased contract name (or a configured `$contract.accessKey`) under which the contract's elected default is reachable. A slot key is typed as the *contract*, because it means "whichever implementation is elected". A contract that elects no default has no slot key at all. Which of them a dependency wants is declared at the deps site; see [Demanding a dependency](/concepts/conventions#demanding-a-dependency-the-five-things-a-deps-property-can-be).
+
 When a package declares `scopeProvided`, those keys are emitted into a separate `IocScopeProvided` interface rather than `IocExternals`, with a JSDoc banner reminding you to register them onto a child scope:
 
 ```ts

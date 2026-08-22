@@ -7,6 +7,7 @@
  * fixtures each add exactly one outside demander; the difference in emitted output between this
  * file alone and this file plus one of them IS the predicate.
  */
+import type { Named } from "../../../named/named.js";
 import type { ScopeRoot } from "../../../scopeRoots/scopeRoot.js";
 import type { IAuditLog, IRequestRouter } from "./deps-contracts.js";
 
@@ -26,7 +27,7 @@ export const buildTaggedAudit = ({
   },
 });
 
-type ScopedRouterDeps = { taggedAudit: IAuditLog };
+type ScopedRouterDeps = { taggedAudit: Named<IAuditLog> };
 
 export const buildScopedRouter = ({
   taggedAudit,

@@ -39,6 +39,8 @@ import {
   openersToManifest,
   type ScopeRootOpener,
 } from "./scopeRootOpeners.js";
+import { aliasContractSlotKeys } from "./contractSlotKeys.js";
+import { groupedMemberRegistrationKeysFromManifest } from "../core/groupedContractNames.js";
 import {
   formatRelativeImportEscapesPackageRootWarning,
   IOC_REGISTRY_TYPES_BASENAME,
@@ -676,6 +678,33 @@ const buildCradleTypeSource = (
   const grouped = new Map<string, TypeImportBucket>();
 
   /**
+   * Contract slot keys that are genuine ALIASES — no registration of this package claims the name.
+   *
+   * Those properties are owned by the plan loop below and typed as the CONTRACT, by reference: the
+   * slot means "whichever implementation is elected", so naming the elected implementation's own
+   * supply type there would print a name that stops being right the moment the election moves. A
+   * slot key that IS a registration key (the convention case, `buildMediaStorage` → `mediaStorage`
+   * for `MediaStorage`) is not in this set: there is no alias at runtime either, and the
+   * registration's own supply type is the honest one — including when it is a `Promise<T>`. That
+   * occupant is guaranteed to be the ELECTEE (`validateContractSlotOccupancyAtCodegen` refuses
+   * anything else), so the two typings agree on which implementation the key means; they differ
+   * only in whether the name is printed as the contract or as that implementation's own supply.
+   */
+  const aliasSlotKeys = aliasContractSlotKeys(plans);
+
+  /**
+   * Registration keys claimed by group members — read straight off the group manifest this run is
+   * about to write, so emission and the manifest cannot disagree about who is in a group.
+   *
+   * Grouped ⇒ group-only. These keys stay REGISTERED at runtime (the group resolver hands out its
+   * members by registration key, so they must be), but they are not part of the typed surface: a
+   * collection group's members are individually anonymous by declaration, and a record group
+   * already exposes each member as a property of the group value. The asymmetry is deliberate —
+   * what changes is what a consumer may NAME, not what the container holds.
+   */
+  const groupedMemberKeys = groupedMemberRegistrationKeysFromManifest(groupsManifest);
+
+  /**
    * A demanded key a declaration already claims as scope-supplied (`config.scopeProvided`, or any
    * variant's declared lbv) is not emitted as an external. Its imports must go with it: an emitted
    * import with nothing left referencing it is a dangling name in the generated file.
@@ -684,7 +713,11 @@ const buildCradleTypeSource = (
     entry.classification === "external" && externalsExcludedKeys.has(entry.key);
 
   for (const entry of demandSupply.entries) {
-    if (isExternalsExcluded(entry)) {
+    if (
+      isExternalsExcluded(entry) ||
+      aliasSlotKeys.has(entry.key) ||
+      groupedMemberKeys.has(entry.key)
+    ) {
       continue;
     }
     for (const imp of entry.typeRef.imports) {
@@ -734,7 +767,11 @@ const buildCradleTypeSource = (
   const cradleProperties: { key: string; line: string }[] = [];
 
   for (const entry of demandSupply.entries) {
-    if (entry.classification !== "local") {
+    if (
+      entry.classification !== "local" ||
+      aliasSlotKeys.has(entry.key) ||
+      groupedMemberKeys.has(entry.key)
+    ) {
       continue;
     }
     cradleProperties.push({
@@ -756,10 +793,17 @@ const buildCradleTypeSource = (
       continue;
     }
     const typeName = plan.contractName;
-    if (!demandSupplyKeys.has(plan.accessKey)) {
+    // An alias slot is emitted here unconditionally, even when the demand/supply pass also produced
+    // an entry for the key. That entry carries whatever a DEMAND SITE wrote; the property means the
+    // contract, so the contract is what is printed — by reference, through the import registered
+    // for every plan above.
+    if (
+      aliasSlotKeys.has(plan.accessKey) ||
+      !demandSupplyKeys.has(plan.accessKey)
+    ) {
       cradleProperties.push({
         key: plan.accessKey,
-        line: `  ${plan.accessKey}: ${typeName};`,
+        line: `  ${tsIdentifierOrQuoted(plan.accessKey)}: ${typeName};`,
       });
       demandSupplyKeys.add(plan.accessKey);
     }

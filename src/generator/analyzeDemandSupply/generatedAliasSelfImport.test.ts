@@ -6,6 +6,7 @@ import ts from "typescript";
 import type { IocConfig } from "../../config/iocConfig.js";
 import { discoverFactories } from "../discoverFactories/discoverFactories.js";
 import { buildRegistrationPlan } from "../resolveRegistrationPlan.js";
+import { contractSlotsForPlans } from "../contractSlotKeys.js";
 import { buildManifestArtifactSources } from "../writeManifest.js";
 import { buildGroupPlan, type IocGroupsConfig } from "../../groups/resolveGroupPlan.js";
 import { buildBoundedGroupCollectionTypeRefs } from "../../groups/boundedGroupCollectionType.js";
@@ -115,6 +116,7 @@ const buildTypesSource = (
     scanDirs,
     generatedDir: gd,
     groupsManifest: groupResult?.manifest,
+    contractSlots: contractSlotsForPlans(plans),
   });
   const boundedGroupCollectionTypeRefs = buildBoundedGroupCollectionTypeRefs(
     groupResult?.manifest,

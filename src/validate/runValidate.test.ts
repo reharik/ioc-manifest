@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import type { IocConfig } from "../config/iocConfig.js";
 import {
+  implSource,
   manifestSource,
   typesSource,
 } from "../test-support/manifestFixtures.js";
@@ -63,7 +64,7 @@ describe("runValidate", () => {
       mkdirSync(path.join(root, "src", "generated"), { recursive: true });
       writeFileSync(
         path.join(root, "src", "generated", "ioc-manifest.ts"),
-        manifestSource(`Local: { l: { registrationKey: "l" } }`),
+        manifestSource(`Local: { l: ${implSource("l")} }`),
       );
       writeFileSync(
         path.join(root, "src", "generated", "ioc-registry.types.ts"),
@@ -112,7 +113,7 @@ describe("runValidate", () => {
       );
       writeFileSync(
         path.join(libDir, "ioc-manifest.ts"),
-        manifestSource(`Storage: { s: { registrationKey: "storage" } }`),
+        manifestSource(`Storage: { s: ${implSource("storage")} }`),
       );
       writeFileSync(
         path.join(libDir, "ioc-registry.types.ts"),
@@ -122,7 +123,7 @@ describe("runValidate", () => {
       mkdirSync(path.join(root, "src", "generated"), { recursive: true });
       writeFileSync(
         path.join(root, "src", "generated", "ioc-manifest.ts"),
-        manifestSource(`App: { a: { registrationKey: "app" } }`),
+        manifestSource(`App: { a: ${implSource("app")} }`),
       );
       writeFileSync(
         path.join(root, "src", "generated", "ioc-registry.types.ts"),
@@ -166,7 +167,7 @@ describe("runValidate", () => {
       );
       writeFileSync(
         path.join(libDir, "ioc-manifest.ts"),
-        manifestSource(`Storage: { s: { registrationKey: "storage" } }`),
+        manifestSource(`Storage: { s: ${implSource("storage")} }`),
       );
       writeFileSync(
         path.join(libDir, "ioc-registry.types.ts"),
@@ -176,7 +177,7 @@ describe("runValidate", () => {
       mkdirSync(path.join(root, "src", "generated"), { recursive: true });
       writeFileSync(
         path.join(root, "src", "generated", "ioc-manifest.ts"),
-        manifestSource(`App: { a: { registrationKey: "app" } }`),
+        manifestSource(`App: { a: ${implSource("app")} }`),
       );
       // The closure-breaking shape, as it would land on disk: a cradle property typed with a name
       // the file never imports. Before the gate, `app: MissingAppType` resolved to an error type,

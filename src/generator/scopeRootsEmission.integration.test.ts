@@ -16,6 +16,7 @@ import type { IocConfig } from "../config/iocConfig.js";
 import { analyzeDemandSupply } from "./analyzeDemandSupply/index.js";
 import { discoverFactories } from "./discoverFactories/discoverFactories.js";
 import { buildRegistrationPlan } from "./resolveRegistrationPlan.js";
+import { contractSlotsForPlans } from "./contractSlotKeys.js";
 import {
   buildScopeRootOpeners,
   validateScopeRootEmissionAtCodegen,
@@ -94,6 +95,7 @@ const generate = (files: string[], config?: IocConfig) => {
     generatedDir,
     scopeProvided: config?.scopeProvided,
     scopeRoots,
+    contractSlots: contractSlotsForPlans(plans),
   });
   const verification = verifyScopeRoots(scopeRoots, {
     program,

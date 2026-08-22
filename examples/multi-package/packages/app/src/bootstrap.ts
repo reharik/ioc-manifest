@@ -28,14 +28,10 @@ const main = (): void => {
   archiveStorage.put("photo.jpg");
   console.log(`Class unit archiveStorage resolved; label ${archiveStorage.label}`);
 
-  const storages = container.resolve("storages");
-  console.log(
-    `Storages in group: ${storages
-      .map((s) => s.label)
-      .sort((a, b) => a.localeCompare(b))
-      .join(", ")}`,
-  );
-
+  // `LoggingService` is grouped, so `loggers` is the ONLY way in: neither `storageEventLogger` nor
+  // `auditEventLogger` has a cradle key, and there is no `loggingService` contract key either.
+  // `Storage` is not grouped, which is why `storage` and `archiveStorage` above still resolve — a
+  // contract is a family or a singular, never both.
   const loggers = container.resolve("loggers");
   const loggerIds = loggers
     .map((l) => l.id)

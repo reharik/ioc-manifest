@@ -8,6 +8,7 @@ import type {
 } from "ioc-manifest";
 
 import * as ioc_ArchiveStorage from "../factories/ArchiveStorage.js";
+import * as ioc_buildAuditEventLogger from "../factories/buildAuditEventLogger.js";
 import * as ioc_buildLocalStorage from "../factories/buildLocalStorage.js";
 import * as ioc_buildS3Storage from "../factories/buildS3Storage.js";
 import * as ioc_buildStorageEventLogger from "../factories/buildStorageEventLogger.js";
@@ -20,26 +21,11 @@ type IocManifestGroupRoots = {
     readonly members: readonly [
       {
         readonly contractName: "LoggingService";
+        readonly registrationKey: "auditEventLogger";
+      },
+      {
+        readonly contractName: "LoggingService";
         readonly registrationKey: "storageEventLogger";
-      },
-    ];
-  };
-  readonly storages: {
-    readonly kind: "collection";
-    readonly baseType: "Storage";
-    readonly baseTypeId: "@example/lib-storage/src/types/Storage.ts:Storage";
-    readonly members: readonly [
-      {
-        readonly contractName: "Storage";
-        readonly registrationKey: "archiveStorage";
-      },
-      {
-        readonly contractName: "Storage";
-        readonly registrationKey: "localStorage";
-      },
-      {
-        readonly contractName: "Storage";
-        readonly registrationKey: "s3Storage";
       },
     ];
   };
@@ -50,6 +36,7 @@ export const iocManifest = {
 
   moduleImports: [
     ioc_ArchiveStorage,
+    ioc_buildAuditEventLogger,
     ioc_buildLocalStorage,
     ioc_buildS3Storage,
     ioc_buildStorageEventLogger,
@@ -57,6 +44,17 @@ export const iocManifest = {
 
   contracts: {
     LoggingService: {
+      auditEventLogger: {
+        exportName: "buildAuditEventLogger",
+        registrationKey: "auditEventLogger",
+        modulePath: "buildAuditEventLogger.ts",
+        relImport: "../factories/buildAuditEventLogger.js",
+        contractName: "LoggingService",
+        implementationName: "auditEventLogger",
+        lifetime: "scoped",
+        moduleIndex: 1,
+        discoveredBy: "naming",
+      },
       storageEventLogger: {
         exportName: "buildStorageEventLogger",
         registrationKey: "storageEventLogger",
@@ -64,8 +62,8 @@ export const iocManifest = {
         relImport: "../factories/buildStorageEventLogger.js",
         contractName: "LoggingService",
         implementationName: "storageEventLogger",
-        lifetime: "singleton",
-        moduleIndex: 3,
+        lifetime: "scoped",
+        moduleIndex: 4,
         discoveredBy: "naming",
       },
     },
@@ -92,7 +90,7 @@ export const iocManifest = {
         contractName: "Storage",
         implementationName: "localStorage",
         lifetime: "singleton",
-        moduleIndex: 1,
+        moduleIndex: 2,
         default: true,
         discoveredBy: "naming",
         configOverridesApplied: ["default"],
@@ -105,7 +103,7 @@ export const iocManifest = {
         contractName: "Storage",
         implementationName: "s3Storage",
         lifetime: "singleton",
-        moduleIndex: 2,
+        moduleIndex: 3,
         discoveredBy: "naming",
       },
     },
@@ -119,28 +117,11 @@ export const iocManifest = {
     members: [
       {
         contractName: "LoggingService",
+        registrationKey: "auditEventLogger",
+      },
+      {
+        contractName: "LoggingService",
         registrationKey: "storageEventLogger",
-      },
-    ],
-  },
-
-  // storages
-  storages: {
-    kind: "collection",
-    baseType: "Storage",
-    baseTypeId: "@example/lib-storage/src/types/Storage.ts:Storage",
-    members: [
-      {
-        contractName: "Storage",
-        registrationKey: "archiveStorage",
-      },
-      {
-        contractName: "Storage",
-        registrationKey: "localStorage",
-      },
-      {
-        contractName: "Storage",
-        registrationKey: "s3Storage",
       },
     ],
   },

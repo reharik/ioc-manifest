@@ -31,6 +31,14 @@ const makeProgram = (extraRoots: string[] = []): ts.Program => {
 const generatedDir = path.join(projectRoot, "generated");
 const scanDirs = [{ absPath: fixtureDir }];
 
+/** The `AlbumRepository` contract slot, which the convention puts on the implementation's own key. */
+const albumRepositorySlot = {
+  accessKey: "albumRepository",
+  contractName: "AlbumRepository",
+  contractTypeRelImport: "../test-fixtures/demand-supply/contracts.js",
+  electedRegistrationKey: "albumRepository",
+} as const;
+
 const userServiceFactory = {
   contractName: "UserService",
   contractTypeRelImport: "../test-fixtures/demand-supply/contracts.js",
@@ -91,6 +99,10 @@ describe("analyzeDemandSupply", () => {
         projectRoot,
         scanDirs,
         generatedDir,
+        // `albumRepository` is both the implementation's own registration key and the contract slot
+        // key of `AlbumRepository`, so the bare demand for it is the contract-key row of the demand
+        // model, not a bare implementation demand.
+        contractSlots: [albumRepositorySlot],
       });
 
       const albumRepository = result.entries.find(
@@ -353,6 +365,7 @@ describe("analyzeDemandSupply", () => {
         scanDirs,
         generatedDir,
         scopeProvided: ["albumRepository"],
+        contractSlots: [albumRepositorySlot],
       });
 
       const albumRepository = result.entries.find(

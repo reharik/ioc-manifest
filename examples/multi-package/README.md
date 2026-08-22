@@ -22,6 +22,7 @@ From this directory after a root build: `npm run setup` (prints reminders), `npm
 - `packages/app/src/factories/buildConfig.ts` and `lib-services` `buildConfigProbe` — subset external: lib-services demands `AppConfigSlice` on key `config`; app supplies full `AppConfig` (extra fields allowed).
 - `packages/app/src/bootstrap.ts` — `registerIocFromManifest(container, composedManifests, composedRegistrationOverrides)`.
 - `packages/lib-contracts` — shared `LoggingService` base type; `lib-storage` and `lib-services` both declare `groups.loggers` and contribute implementations merged at app composition (see bootstrap output `Loggers in group: ...`).
-- `packages/app-externals-broken/` — no local logger factory; typecheck fails at `_LibServicesExternalsAssert` in generated `ioc-composed.ts`. Run `npm run typecheck:broken-expect-fail` (expects failure).
+- `packages/app-externals-broken/` — no local logger factory, so app-mode `ioc generate` runs the composition suite, refuses to emit, and names both unsatisfied keys in one report. Run `npm run gen:broken-expect-fail` (expects failure). It has no committed generated output because the tool will not produce any.
+- `npm run typecheck:broken-expect-fail` — the rebuilt-dependency case, which is what the emitted `_IocExpect` assertions and `ioc validate` are for now that `generate` catches everything it can see: `lib-services` gains a new external and is regenerated, the app is not touched, and both `tsc` (at the assertion in the committed `ioc-composed.ts`) and `ioc validate` catch it without regenerating the app. The mutation is undone afterwards.
 
 Library `package.json` exports point at `./src/generated/*.ts` because this is a dev workspace; published packages would typically expose `dist/`-compiled paths.

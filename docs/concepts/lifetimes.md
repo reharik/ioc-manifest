@@ -50,7 +50,7 @@ export interface LoggingService extends IScoped {
 }
 ```
 
-**On a group base type** — the cleanest pattern when implementations are already collected as a group. Every implementation in the group inherits the lifetime automatically:
+**On a group base type** — and for a group, the *only* place. Lifetime is a property of the family, so a grouped member may not declare its own (a marker on the member's contract that the base lacks, or a per-implementation `lifetime` override, is a hard error). Every implementation in the group inherits the base's lifetime, reported with provenance `group-base-marker`:
 
 ```ts
 export interface DiscountStrategy extends IScoped {
@@ -69,6 +69,10 @@ For any unit, the lifetime resolves in this order (highest first):
 2. Lifetime marker on the contract (return annotation or `implements` clause)
 3. `discovery.scanDirs[].scope` — folder-scoped default
 4. Default: `singleton`
+
+For a **grouped** contract this chain does not run at all: the group's base declares the lifetime and the member ranks it. Rows 1 and 2 are not outranked there — they are refused, because a member is not entitled to make the claim. See [Groups](/concepts/groups#lifetime-belongs-to-the-group).
+
+A lifetime marker never induces group membership, and a group base carrying one does not change membership semantics. Grouping is decided by `config.groups` base types; lifetimes by `lifetimeMarkers`. A contract extending both a group base and a marker joins the group and ranks the lifetime; a contract extending only a marker joins nothing.
 
 ### Multiple markers is a hard error
 

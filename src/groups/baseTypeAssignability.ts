@@ -2,10 +2,7 @@ import path from "node:path";
 import ts from "typescript";
 import { resolveContractTypeSourceFile } from "../generator/contractTypeSourceFile.js";
 import type { ResolvedScanDir } from "../generator/manifestPaths.js";
-import type {
-  ResolvedContractRegistration,
-  ResolvedImplementationEntry,
-} from "../generator/resolveRegistrationPlan.js";
+import type { ResolvedContractRegistration } from "../generator/resolveRegistrationPlan.js";
 
 export type BaseTypeResolution =
   | { ok: true; type: ts.Type }
@@ -25,13 +22,7 @@ export type AssignableImplementationMember = {
 export type GroupMembershipRejectionReason =
   | NominalAssignabilityRejectionReason
   /** The contract's declared type could not be loaded from the program, so it was never compared. */
-  | "contract_type_unresolved"
-  /**
-   * Collection groups only: the contract passed, but this implementation is a non-default one
-   * sitting on the contract's default-slot key, which {@link shouldIncludeImplInCollectionGroup}
-   * drops so the group does not carry a second "default slot" entry.
-   */
-  | "non_default_impl_at_contract_slot";
+  | "contract_type_unresolved";
 
 /** One considered-and-rejected candidate, recorded for the inspection report only. */
 export type GroupMembershipRejection = {
@@ -51,8 +42,6 @@ export const IOC_GROUP_REJECTION_GLOSS = {
     "the contract declares no `extends` heritage to the group's base type; membership is nominal, so matching the base's shape is not enough",
   contract_type_unresolved:
     "the contract's declared type could not be loaded from the TypeScript program, so it was never compared to the base",
-  non_default_impl_at_contract_slot:
-    "the implementation is a non-default one registered at the contract's default-slot key, which would duplicate default-slot semantics in the group",
 } as const satisfies Record<GroupMembershipRejectionReason, string>;
 
 export const glossForGroupRejection = (
@@ -451,24 +440,43 @@ export const extractMemberBaseTypeArgument = (
   );
 };
 
-const getContractDeclaredTypeRaw = (
+/**
+ * The minimum a caller must know about a contract to look its declared type back up: the name, and
+ * the type-only import specifier discovery recorded for it.
+ *
+ * Narrower than {@link ResolvedContractRegistration} on purpose. Group membership has to be
+ * answerable BEFORE the registration plan exists — the plan's own election depends on it — so the
+ * membership walk must not require a plan.
+ */
+export type ContractTypeRef = {
+  readonly contractName: string;
+  readonly contractTypeRelImport: string;
+};
+
+/**
+ * A contract's declared type exactly as the nominal membership walk sees it: no non-nullable
+ * stripping, because a union alias must NOT confer heritage. Exported so the early grouped-contract
+ * index and the authoritative membership pass read the contract through one function; two ways of
+ * loading a contract type is two ways to disagree about who is in a group.
+ */
+export const getContractDeclaredTypeForMembership = (
   checker: ts.TypeChecker,
   program: ts.Program,
   generatedDir: string,
   scanDirs: readonly ResolvedScanDir[],
-  plan: ResolvedContractRegistration,
+  contract: ContractTypeRef,
 ): ts.Type | undefined => {
   const sourceFile = resolveContractTypeSourceFile(
     program,
     generatedDir,
-    plan.contractTypeRelImport,
+    contract.contractTypeRelImport,
     scanDirs,
-    plan.contractName,
+    contract.contractName,
   );
   if (sourceFile === undefined) {
     return undefined;
   }
-  const decl = getTopLevelTypeDeclaration(sourceFile, plan.contractName);
+  const decl = getTopLevelTypeDeclaration(sourceFile, contract.contractName);
   if (decl === undefined) {
     return undefined;
   }
@@ -478,6 +486,9 @@ const getContractDeclaredTypeRaw = (
   }
   return checker.getDeclaredTypeOfSymbol(sym);
 };
+
+/** Back-compat alias for the in-file call sites, which pass a full plan. */
+const getContractDeclaredTypeRaw = getContractDeclaredTypeForMembership;
 
 /**
  * Whether `candidateType` is structurally assignable to a top-level type named `baseTypeName`
@@ -499,25 +510,26 @@ export const isTypeAssignableToNamedBase = (
   return { ok: true };
 };
 
-/**
- * Whether an implementation should appear in a **collection** group.
+/*
+ * RETIRED: `shouldIncludeImplInCollectionGroup`.
  *
- * Skips non-default implementations registered at the contract default slot key (`contractKey`).
- * Those registrations occupy the canonical contract name as a key while another implementation is
- * the selected default; including them would duplicate “default slot” semantics alongside named keys.
+ * It dropped a non-default implementation registered at the contract's default-slot key, so the
+ * group would not carry a second "default slot" entry alongside the named ones. Grouped ⇒
+ * group-only removed the premise: a grouped contract HAS no default slot, so an implementation
+ * whose registration key happens to equal the camel-cased contract name is an ordinary member key
+ * with nothing to duplicate. Keeping the filter would have silently dropped a legitimate member
+ * from its own group — the one outcome a group must never produce quietly.
  */
-export const shouldIncludeImplInCollectionGroup = (
-  plan: ResolvedContractRegistration,
-  impl: ResolvedImplementationEntry,
-): boolean =>
-  impl.registrationKey !== plan.contractKey ||
-  impl.implementationName === plan.defaultImplementationName;
 
 /**
  * All implementations belonging to contracts assignable to `baseType` (per declared contract type).
  * Skips contracts whose declared type cannot be loaded from the program.
  *
- * @param filterImpl - When set, only implementations for which this returns true are included.
+ * EVERY implementation of a member contract is a member. There is no per-implementation filter any
+ * more (see the retirement note above): a grouped contract has no default slot, so no registration
+ * key of one can collide with a slot, and a group that silently omitted one of its own members
+ * would be the worst possible failure — a collection that looks complete and is not.
+ *
  * @param rejections - When set, every considered-and-rejected candidate is appended here. Recording
  * only: membership semantics are identical whether or not the sink is supplied.
  */
@@ -528,10 +540,6 @@ export const collectImplementationMembersAssignableToBase = (
   scanDirs: readonly ResolvedScanDir[],
   plans: readonly ResolvedContractRegistration[],
   baseType: ts.Type,
-  filterImpl?: (
-    plan: ResolvedContractRegistration,
-    impl: ResolvedImplementationEntry,
-  ) => boolean,
   rejections?: GroupMembershipRejection[],
 ): AssignableImplementationMember[] => {
   const members: AssignableImplementationMember[] = [];
@@ -568,14 +576,6 @@ export const collectImplementationMembersAssignableToBase = (
       baseType,
     );
     for (const impl of plan.implementations) {
-      if (filterImpl !== undefined && !filterImpl(plan, impl)) {
-        rejections?.push({
-          contractName: plan.contractName,
-          registrationKey: impl.registrationKey,
-          reason: "non_default_impl_at_contract_slot",
-        });
-        continue;
-      }
       members.push({
         contractName: plan.contractName,
         registrationKey: impl.registrationKey,

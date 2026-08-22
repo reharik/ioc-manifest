@@ -6,6 +6,7 @@
  * Both variants demand what they declare and nothing more, so the fixture carries no findings and
  * emission can be asserted without a verification failure in the way.
  */
+import type { Named } from "../../../named/named.js";
 import type { ScopeRoot } from "../../../scopeRoots/scopeRoot.js";
 import type {
   IAuditLog,
@@ -25,7 +26,7 @@ export const buildEmissionAudit = ({
   },
 });
 
-type AuthRouterDeps = { emissionAudit: IAuditLog; uow: UnitOfWork };
+type AuthRouterDeps = { emissionAudit: Named<IAuditLog>; uow: UnitOfWork };
 
 /** Variant one: an authenticated boundary carrying a principal and a unit of work. */
 export const buildAuthRouter = ({

@@ -5,20 +5,18 @@ import type { AppConfigSlice } from "../types/AppConfigSlice.js";
 import type { ConfigProbe } from "../types/ConfigProbe.js";
 import type { Logger } from "../types/Logger.js";
 import type { RequestTracingLogger } from "../types/RequestTracingLogger.js";
+import type { ServiceLogger } from "../types/ServiceLogger.js";
 import type { UploadService } from "../types/UploadService.js";
 import type { ViewerReadService } from "../types/ViewerReadService.js";
 import type { Storage } from "@example/lib-storage";
 
 export interface IocGeneratedCradle {
   configProbe: ConfigProbe;
-  loggers: ReadonlyArray<RequestTracingLogger>;
   requestTracingLogger: RequestTracingLogger;
-  serviceLogger: Logger;
+  serviceLogger: ServiceLogger;
   uploadService: UploadService;
   viewerReadService: ViewerReadService;
 }
-
-export type Loggers = ReadonlyArray<RequestTracingLogger>;
 
 export interface IocExternals {
   config: AppConfigSlice;

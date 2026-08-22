@@ -24,11 +24,19 @@ import {
 import { selectDefaultImplementationName } from "../core/defaultImplementationSelection.js";
 import type { DiscoveredFactory } from "./types.js";
 import { contractNameToDefaultRegistrationKey } from "./naming.js";
+import { resolveContractAccessKey } from "../core/contractAccessKey.js";
 
 /** Where resolved registration lifetime came from (inspect/debug only). `discovery-root` = `discovery.scanDirs[].scope`. */
 export type IocRegistrationLifetimeSource =
   | "factory-config"
   | "lifetime-marker"
+  /**
+   * The marker sits on the GROUP BASE, so the whole family ranks this lifetime (Ruling 2: lifetime
+   * is a property of the group). Distinguished from `lifetime-marker` because the declaration is
+   * somewhere the member does not control, which is exactly what a reader chasing an unexpected
+   * lifetime needs to be told.
+   */
+  | "group-base-marker"
   | "discovery-root"
   | "default";
 
@@ -39,6 +47,21 @@ export type RegistrationPlanLifetimeContext = {
   composedContractNames?: ComposedManifestContractNames;
   /** Marker-resolved lifetimes keyed by `${modulePath}:${exportName}`. */
   markerLifetimesByFactoryKey?: ReadonlyMap<string, IocLifetime>;
+};
+
+/**
+ * Grouped contracts, as the plan needs to read them.
+ *
+ * Threaded separately from {@link RegistrationPlanLifetimeContext} because it is not a lifetime
+ * fact: it decides whether the contract is put through default election at all.
+ */
+export type RegistrationPlanGroupContext = {
+  /** Contract names that are members of a configured group (`groups/groupedContracts.ts`). */
+  groupedContractNames: ReadonlySet<string>;
+  /** Group name per grouped contract, for the base-marker provenance lookup. */
+  groupNameByContractName?: ReadonlyMap<string, string>;
+  /** Lifetime a group's base declares through a marker interface, by group name. */
+  baseMarkerLifetimeByGroup?: ReadonlyMap<string, IocLifetime>;
 };
 
 export type ResolvedImplementationEntry = {
@@ -82,14 +105,19 @@ export type ResolvedContractRegistration = {
   /** Which implementation is selected for the default contract key (implementation name). */
   defaultImplementationName: string;
   /**
-   * Whether a default implementation was actually elected for this contract's singular default-slot
-   * key. False only for a group-base contract with no explicitly elected default (`default: true`):
-   * forming a group no longer requires electing a default of the base, and such a base emits no
-   * singular contract-default key (the group root and member keys stand alone). Absent ⇒ true
-   * (normal contracts always back their default slot). {@link defaultImplementationName} still holds
-   * a deterministic pick for internal use (group membership, lifetimes).
+   * Whether this contract backs a singular default-slot key at all. Absent ⇒ true.
+   *
+   * False for every GROUPED contract: grouped ⇒ group-only, so there is no slot, nothing to elect,
+   * and no ambiguity to report — the check is vacated by construction rather than passed. That
+   * subsumes the older group-base-without-`default: true` case, which was the same rule seen
+   * through one shape of it.
+   *
+   * {@link defaultImplementationName} still holds a deterministic pick for internal use (group
+   * member ordering, lifetimes); it just names no cradle key.
    */
   contractDefaultElected?: boolean;
+  /** Set when this contract is a member of a configured group — see {@link contractDefaultElected}. */
+  grouped?: true;
   implementations: ResolvedImplementationEntry[];
 };
 
@@ -247,6 +275,7 @@ const resolvePlanLifetime = (
   factory: DiscoveredFactory,
   implOverride: IocOverride | undefined,
   lifetimeContext: RegistrationPlanLifetimeContext | undefined,
+  groupBaseMarkerLifetime?: IocLifetime,
 ): { lifetime: IocLifetime; lifetimeSource?: IocRegistrationLifetimeSource } => {
   if (implOverride?.lifetime !== undefined) {
     return {
@@ -265,7 +294,12 @@ const resolvePlanLifetime = (
       return {
         lifetime: markerLifetime,
         ...(lifetimeContext !== undefined
-          ? { lifetimeSource: "lifetime-marker" as const }
+          ? {
+              lifetimeSource:
+                groupBaseMarkerLifetime === markerLifetime
+                  ? ("group-base-marker" as const)
+                  : ("lifetime-marker" as const),
+            }
           : {}),
       };
     }
@@ -559,13 +593,15 @@ const validateGlobalNamespaceCollisions = (
 
   const accessKeyByContract = new Map<string, string>();
   for (const contractName of mergedByContract.keys()) {
-    const convention = contractNameToDefaultRegistrationKey(contractName);
     const { accessKey: configured } = getContractLevelConfig(
       config?.registrations?.[contractName],
       contractName,
     );
 
-    accessKeyByContract.set(contractName, configured ?? convention);
+    accessKeyByContract.set(
+      contractName,
+      resolveContractAccessKey(contractName, configured),
+    );
   }
 
   const accessKeyOwnerContract = new Map<string, string>();
@@ -672,6 +708,7 @@ export const buildRegistrationPlan = (
   contractMap: Map<string, Map<string, DiscoveredFactory>>,
   config?: IocConfig,
   lifetimeContext?: RegistrationPlanLifetimeContext,
+  groupContext?: RegistrationPlanGroupContext,
 ): ResolvedContractRegistration[] => {
   const mergedByContract = validateIocConfigSemantics(
     contractMap,
@@ -692,14 +729,20 @@ export const buildRegistrationPlan = (
   for (const contractName of sortedContracts) {
     const mergedByImplName = mergedByContract.get(contractName)!;
 
-    // Election is required for ordinary contracts; a group base may omit it. When a group base has
-    // no explicit `default: true`, its default slot is not "elected" and its singular key is
-    // suppressed downstream — but a deterministic default is still picked for internal use.
-    const contractDefaultElected = !isGroupBaseWithoutElectedDefault(
-      contractName,
-      mergedByImplName,
-      groupBaseTypeNames,
-    );
+    // Grouped ⇒ group-only. A grouped contract backs no slot, so election is not merely optional
+    // for it — there is nothing to elect, and running the check would hard-error on exactly the
+    // shape groups exist for (several implementations, no `default: true`). The older group-base
+    // case is the same rule seen through one shape and stays as a fallback for the arrangement
+    // where the base type is configured but its contract was never resolved into the index.
+    const grouped =
+      groupContext?.groupedContractNames.has(contractName) === true;
+    const contractDefaultElected =
+      !grouped &&
+      !isGroupBaseWithoutElectedDefault(
+        contractName,
+        mergedByImplName,
+        groupBaseTypeNames,
+      );
 
     const defaultImplementationName = selectDefaultImplementationKey(
       contractName,
@@ -717,7 +760,7 @@ export const buildRegistrationPlan = (
       config?.registrations?.[contractName],
       contractName,
     );
-    const accessKey = accessKeyOverride ?? contractKey;
+    const accessKey = resolveContractAccessKey(contractName, accessKeyOverride);
 
     const implementationNames = Array.from(mergedByImplName.keys()).sort(
       (a, b) => a.localeCompare(b),
@@ -725,6 +768,15 @@ export const buildRegistrationPlan = (
 
     const contractLevelAccessKeyApplied =
       accessKeyOverride !== undefined && accessKeyOverride !== contractKey;
+
+    // The lifetime this contract's group declares on its BASE, when it has one. A marker match on a
+    // grouped member can only have come from here — a member declaring its own is a hard error
+    // (`validateGroupLifetimeAtCodegen`) — so the match is reported with that provenance.
+    const groupBaseMarkerLifetime = grouped
+      ? groupContext?.baseMarkerLifetimeByGroup?.get(
+          groupContext.groupNameByContractName?.get(contractName) ?? "",
+        )
+      : undefined;
 
     const implementations: ResolvedImplementationEntry[] =
       implementationNames.map((implementationName) => {
@@ -756,6 +808,7 @@ export const buildRegistrationPlan = (
           factory,
           implOverride,
           lifetimeContext,
+          groupBaseMarkerLifetime,
         );
 
         return {
@@ -793,6 +846,7 @@ export const buildRegistrationPlan = (
       accessKey,
       defaultImplementationName,
       ...(contractDefaultElected ? {} : { contractDefaultElected: false }),
+      ...(grouped ? { grouped: true as const } : {}),
       implementations,
     });
   }

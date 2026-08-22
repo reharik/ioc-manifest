@@ -5,9 +5,10 @@
  * supplies `auditContext`, and from here, where the root container must. "Inside" has no single
  * answer for it, so it counts as an outside demand — conservatively, and recorded as a shared unit.
  */
+import type { Named } from "../../../named/named.js";
 import type { IAuditLog, IClock } from "./deps-contracts.js";
 
-type SharedConsumerDeps = { taggedAudit: IAuditLog };
+type SharedConsumerDeps = { taggedAudit: Named<IAuditLog> };
 
 export const buildSharedConsumer = ({
   taggedAudit,

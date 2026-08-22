@@ -24,7 +24,19 @@ const discoverPackages = (root) => {
     .sort((a, b) => a.localeCompare(b));
 };
 
-const packages = discoverPackages(exampleRoot);
+/**
+ * Packages whose generation is EXPECTED to fail, asserted by their own script.
+ *
+ * `app-externals-broken` composes two libraries and supplies neither of the keys they demand.
+ * App-mode generation runs the composition suite, so it refuses to emit — which is the whole point
+ * of that package. Regenerating it here would abort this script on a deliberate fixture; see
+ * `scripts/expect-gen-broken.mjs`, which runs it and asserts the refusal.
+ */
+const EXPECT_GENERATION_FAILURE = new Set(["app-externals-broken"]);
+
+const packages = discoverPackages(exampleRoot).filter(
+  (name) => !EXPECT_GENERATION_FAILURE.has(name),
+);
 
 if (packages.length === 0) {
   console.error(

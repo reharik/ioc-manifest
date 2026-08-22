@@ -10,13 +10,9 @@ export interface IocGeneratedCradle {
   loggers: ReadonlyArray<LoggingService>;
   s3Storage: Storage;
   storage: Storage;
-  storageEventLogger: LoggingService;
-  storages: ReadonlyArray<Storage>;
 }
 
 export type Loggers = ReadonlyArray<LoggingService>;
-
-export type Storages = ReadonlyArray<Storage>;
 
 export interface IocExternals {}
 

@@ -23,6 +23,7 @@ import ts from "typescript";
 import { analyzeDemandSupply } from "./analyzeDemandSupply/index.js";
 import { discoverFactories } from "./discoverFactories/discoverFactories.js";
 import { buildRegistrationPlan } from "./resolveRegistrationPlan.js";
+import { contractSlotsForPlans } from "./contractSlotKeys.js";
 import { buildManifestArtifactSources } from "./writeManifest.js";
 import { EmitImportClosureError } from "./emit/index.js";
 import {
@@ -72,6 +73,7 @@ const generate = (files: string[]) => {
     projectRoot: fixtureDir,
     scanDirs,
     generatedDir,
+    contractSlots: contractSlotsForPlans(plans),
   });
   const sources = buildManifestArtifactSources(
     acceptedFactories,

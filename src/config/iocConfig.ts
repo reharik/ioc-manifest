@@ -20,9 +20,11 @@ export type IocContractMetadata = {
    */
   accessKey?: string;
   /**
-   * Suppresses the codegen warning emitted when this contract has a single implementation whose
-   * registration key diverges from the contract access key (two cradle names for one thing).
-   * Set `true` to declare the divergence intentional.
+   * @deprecated No longer read. It suppressed the divergent-name advisory, which was retired when
+   * contract slot keys joined the static layers: the implementation key and the contract key no
+   * longer mean the same thing (`impl: Named<C>` vs `contractKey: C`), so a divergence between them
+   * is not a second name for one thing and there is nothing to warn about. Still ACCEPTED by the
+   * schema so existing `ioc.config.ts` files keep validating; setting it does nothing.
    */
   allowDivergentName?: boolean;
 };

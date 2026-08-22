@@ -9,7 +9,6 @@ import {
   collectImplementationMembersAssignableToBase,
   getBaseTypeParameterInfo,
   resolveDeclaredBaseType,
-  shouldIncludeImplInCollectionGroup,
   type AssignableImplementationMember,
   type ContractDefaultGroupMember,
   type GroupMembershipRejection,
@@ -543,8 +542,7 @@ const runGroupPlan = (
       discovery.scanDirs,
       plans,
       resolvedBase.type,
-      shouldIncludeImplInCollectionGroup,
-      rejections,
+          rejections,
     );
 
     if (members.length === 0) {

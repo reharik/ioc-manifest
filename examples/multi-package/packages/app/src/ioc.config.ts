@@ -14,8 +14,5 @@ export default defineIocConfig({
     Logger: {
       consoleLogger: { default: true },
     },
-    LoggingService: {
-      requestTracingLogger: { default: true },
-    },
   },
 });

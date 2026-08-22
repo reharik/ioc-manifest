@@ -23,6 +23,15 @@ import {
 import { assertGeneratedReferenceClaimed } from "./assertGeneratedReferenceClaimed.js";
 import { validateNamedDepsType } from "./enforceNamedDepsType.js";
 import {
+  buildDemandKeyUniverse,
+  checkNamedDemand,
+  formatNamedDemandErrors,
+  type DemandableImplementation,
+  type DemandGroupMembership,
+  type NamedDemandFinding,
+} from "./namedInstanceDemand.js";
+import type { ContractSlot } from "../contractSlotKeys.js";
+import {
   depsPropertyTypeNodeByName,
   tryParseConsumedGroupAliasKey,
   tryParseConsumedScopeRootOpenerAliasKey,
@@ -57,18 +66,25 @@ const typesMutuallyAgree = (
 
 /**
  * The keys this package's cradle will carry without anyone asking the app for them: registration
- * keys, group roots, and — since scope-roots stage 3a — the emitted opener keys.
+ * keys, contract slot keys, group roots, and — since scope-roots stage 3a — the emitted opener keys.
  *
  * An opener belongs here for the same reason a group root does: it is a registration this run
  * writes, not a value the composing app supplies. `openerKeys` also carries the openers a COMPOSED
  * package contributes, which `composeManifests` registers under those same keys; asking the app for
  * one in `IocExternals` would be asking it to hand-build a scope opener, which is precisely what the
  * feature exists to stop.
+ *
+ * Contract slot keys belong here for a plainer reason: `registerContractDefaultAliases` registers
+ * every one of them. Leaving them out was the whole of the three-layer split — the cradle emitted
+ * the slot, the runtime registered it, and this pass called a demand for it external, so a package
+ * asked the composing app to supply a key it supplies itself. Only ELECTED slots enter: no
+ * election, no key, and a demand for it stays unsatisfied exactly as any unregistered name does.
  */
 const collectLocalSupplierKeys = (
   factories: readonly DiscoveredFactory[],
   groupsManifest: IocGroupsManifest | undefined,
   openerKeys: ReadonlySet<string>,
+  contractSlots: readonly ContractSlot[],
 ): Set<string> => {
   const keys = new Set<string>();
   for (const factory of factories) {
@@ -81,6 +97,9 @@ const collectLocalSupplierKeys = (
   }
   for (const openerKey of openerKeys) {
     keys.add(openerKey);
+  }
+  for (const slot of contractSlots) {
+    keys.add(slot.accessKey);
   }
   return keys;
 };
@@ -313,6 +332,34 @@ export type AnalyzeDemandSupplyOptions = FactoryDiscoveryPaths & {
    * nor needs to; only the KEY has to be known here, and this is it.
    */
   composedOpenerKeys?: readonly string[];
+  /**
+   * The contract slot keys this generation's plans elect (see `contractSlotKeys.ts`).
+   *
+   * Supply, not demand: `registerContractDefaultAliases` registers every one of them, so a demand
+   * for one is satisfied locally and must not reach `IocExternals`. They also form the row of the
+   * demand model a bare contract-name property means, which is why the marker rule reads them.
+   */
+  contractSlots?: readonly ContractSlot[];
+  /**
+   * Registration units a composed package manifest carries, with their declared contracts.
+   *
+   * Read ONLY by the named-instance rule: `Named<C>` must be checkable against an implementation
+   * that lives in another package, and the manifest is the only place its contract is written down.
+   * Composed keys stay OUT of the local supply set — a composed registration is satisfied at
+   * composition through `IocExternals` and the composed cradle, exactly as it was before.
+   */
+  composedImplementations?: readonly DemandableImplementation[];
+  /** Composed contract slot keys: access key → the registration key it aliases. */
+  composedSlots?: ReadonlyMap<string, string>;
+  /**
+   * Group membership per contract name (`groups/groupedContracts.ts`).
+   *
+   * Grouped ⇒ group-only: a member's implementations claim no individual cradle keys, so they are
+   * kept out of the emitted supply, and any property naming one is the grouped-member error.
+   */
+  groupMemberships?: ReadonlyMap<string, DemandGroupMembership>;
+  /** Would-be contract keys of grouped contracts — names their slot WOULD have had. */
+  absentGroupedSlotKeys?: ReadonlyMap<string, string>;
 };
 
 /**
@@ -352,6 +399,11 @@ export const analyzeDemandSupply = (
     scopeProvided,
     scopeRoots,
     composedOpenerKeys,
+    contractSlots,
+    composedImplementations,
+    composedSlots,
+    groupMemberships,
+    absentGroupedSlotKeys,
   } = options;
   const checker = program.getTypeChecker();
 
@@ -372,8 +424,26 @@ export const analyzeDemandSupply = (
     factories,
     groupsManifest,
     openerKeys,
+    contractSlots ?? [],
   );
   const scopeProvidedSet = new Set(scopeProvided ?? []);
+
+  // The five-row universe the named-instance rule classifies each deps property against. Built once
+  // here because every input it needs is already assembled for the walk.
+  const demandKeyUniverse = buildDemandKeyUniverse({
+    localImplementations: factories.map((factory) => ({
+      registrationKey: factory.registrationKey,
+      contractName: factory.contractName,
+    })),
+    composedImplementations,
+    localSlots: contractSlots ?? [],
+    composedSlots,
+    groupKeys: Object.keys(groupsManifest ?? {}),
+    openerKeys,
+    groupMemberships,
+    absentGroupedSlotKeys,
+  });
+  const namedDemandFindings: NamedDemandFinding[] = [];
 
   const sourceFileByPath = new Map<string, ts.SourceFile>();
   for (const sf of program.getSourceFiles()) {
@@ -545,6 +615,24 @@ export const analyzeDemandSupply = (
           generatedDir,
         );
 
+      // The five-row rule. Deliberately AFTER the claim parsers have spoken and BEFORE the
+      // backstop and the checker: a claimed property is exempt (it has already said which cradle
+      // key it names), and an unclaimed one must be told what it is before an unresolvable-type
+      // error can mask the real problem. Findings accumulate; the run throws once, at the end.
+      const namedDemandFinding = checkNamedDemand({
+        checker,
+        projectRoot,
+        loc,
+        propertyName: propName,
+        typeNode: propTypeNodes.get(propName),
+        claimedByGeneratedReference: consumedCradleKey !== undefined,
+        universe: demandKeyUniverse,
+      });
+      if (namedDemandFinding !== undefined) {
+        namedDemandFindings.push(namedDemandFinding);
+        continue;
+      }
+
       if (consumedCradleKey === undefined) {
         // BACKSTOP: every claim parser declined, so this property is about to be handed to the
         // checker. If it still reaches the generated file, resolving it would read prior output.
@@ -701,6 +789,12 @@ export const analyzeDemandSupply = (
 
       mergeEntry(cradleMap, propName, typeRef, classification);
     }
+  }
+
+  // One aggregated error for the whole package, thrown after the walk so a run reports every
+  // offending property rather than the first.
+  if (namedDemandFindings.length > 0) {
+    throw new Error(formatNamedDemandErrors(namedDemandFindings));
   }
 
   const rawEntries = Array.from(cradleMap.values()).sort((a, b) =>

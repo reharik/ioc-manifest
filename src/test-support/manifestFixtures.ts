@@ -9,7 +9,7 @@ import type {
 } from "../core/manifest.js";
 import { MANIFEST_SCHEMA_VERSION } from "../schemaVersion.js";
 import type { ComposedRegistrationOverrides } from "../runtime/composedOverrides.js";
-import type { ParsedManifestSlice, ValidateContext } from "../validate/types.js";
+import type { ParsedManifestSlice, CompositionContext } from "../composition/types.js";
 
 export const implMeta = (
   partial: {
@@ -47,6 +47,22 @@ export const baseManifest = (
   ...extras,
 });
 
+/**
+ * One implementation entry as a generated manifest actually writes it.
+ *
+ * `registrationKey`, `exportName` and `modulePath` together are a unit's IDENTITY, and the manifest
+ * parser drops an entry missing any of them — an implementation nobody can say anything true about.
+ * Fixtures that stated only a registration key were describing a manifest the generator never emits,
+ * so they get the full triple here rather than a parser lenient enough to accept them.
+ */
+export const implSource = (
+  registrationKey: string,
+  extra = "",
+): string =>
+  `{ registrationKey: ${JSON.stringify(registrationKey)}, exportName: ${JSON.stringify(
+    `build${registrationKey.charAt(0).toUpperCase()}${registrationKey.slice(1)}`,
+  )}, modulePath: ${JSON.stringify(`${registrationKey}.ts`)}${extra} }`;
+
 export const manifestSource = (
   contracts: string,
   extras = "",
@@ -79,13 +95,19 @@ export const parsedSlice = (
   ...partial,
 });
 
-export const validateContext = (
+export const compositionContextFixture = (
   slices: readonly ParsedManifestSlice[],
   overrides?: ComposedRegistrationOverrides,
-): ValidateContext => ({
+): CompositionContext => ({
   projectRoot: "/proj",
   configPath: "/proj/ioc.config.ts",
   slices,
+  // No app source and no pending output: a unit-test context roots the program on the slices'
+  // types files alone. Production always goes through `loadCompositionContext`, which supplies the
+  // app's real source set.
+  sourceFiles: [],
+  pendingArtifacts: undefined,
+  tsconfig: undefined,
   composedPackageNames: slices.slice(1).map((s) => s.sourceId),
   overrides,
   localContractNames: new Set(Object.keys(slices[0]?.contracts ?? {})),

@@ -124,6 +124,20 @@ So `channels: Channels` is the correct demand and `ReadonlyArray<Channels>` was 
 
 `ReadonlyArray<Channels>` and `Pick<IocGeneratedCradle, …>` are the only two rejected shapes that used to produce output at all, and both produced it the wrong way.
 
+### `Named<T>` and the claim forms
+
+`Named<T>` — the marker that declares a demand for one specific implementation, see [Demanding a dependency](/concepts/conventions#demanding-a-dependency-the-five-things-a-deps-property-can-be) — is not a generated-type reference and never interacts with the forms above. It is read syntactically off the written annotation, before the claim parsers run, and the two can never both apply: every claim form rejects a type reference carrying type arguments, and `Named<T>` always carries one.
+
+A property the claim parsers *do* claim is exempt from the marker requirement, implementation keys included:
+
+```ts
+// Both legal, and they mean the same thing:
+type Deps = { s3Storage: Named<Storage> };
+type Deps = { s3Storage: IocGeneratedCradle["s3Storage"] };
+```
+
+The indexed form has already said which cradle key it names, so the ambiguity the marker exists to remove is not present. A bare `s3Storage: Storage` is the one spelling that is now rejected.
+
 ## Typos throw
 
 Indexing a key that is neither a registration nor a declared group — `IocGeneratedCradle["channel"]` when the group is `channels` — fails generation with a diagnostic naming the offending key, instead of resolving to `unknown`.

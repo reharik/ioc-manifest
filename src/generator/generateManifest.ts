@@ -2,6 +2,10 @@
  * @fileoverview Orchestrates manifest generation: load config, discover factories via TypeScript,
  * build registration + group plans, emit `ioc-manifest.ts` and `ioc-registry.types.ts`, then
  * format with Prettier when available.
+ *
+ * In APP MODE the run also judges the composition it performs, via the shared composition suite
+ * (`runCompositionSuiteAtCodegen.ts`) — the same checks `ioc validate` runs, over the same program,
+ * against the artifacts this run is about to write and before any of them is written.
  */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
@@ -63,12 +67,66 @@ import {
   validateScopeRootEmissionAtCodegen,
 } from "./scopeRootOpeners.js";
 import { resolveExternalsExclusion } from "./scopeRootExternalsExclusion.js";
-import { IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS } from "../core/manifest.js";
-import { validateDivergentNamesAtCodegen } from "./validateDivergentNamesAtCodegen.js";
+import { contractSlotsForPlans } from "./contractSlotKeys.js";
+import {
+  resolveGroupedContracts,
+  type GroupedContractIndex,
+} from "../groups/groupedContracts.js";
+import { validateGroupLifetimeAtCodegen } from "./validateGroupLifetimeAtCodegen.js";
+import { resolveLifetimeMarkerTypes } from "./resolveLifetimeMarkers.js";
+import { contractNameToDefaultRegistrationKey } from "./naming.js";
+import type { DemandGroupMembership } from "./analyzeDemandSupply/namedInstanceDemand.js";
+import {
+  IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS,
+  type IocGroupsManifest,
+  type IocGroupLeafManifest,
+} from "../core/manifest.js";
 import { validateGeneratedReferencesAtCodegen } from "./validateGeneratedReferencesAtCodegen.js";
 import { validateNonEmptyGroupsAtCodegen } from "./validateNonEmptyGroupsAtCodegen.js";
+import { validateContractSlotOccupancyAtCodegen } from "./validateContractSlotOccupancyAtCodegen.js";
+import { runCompositionSuiteAtCodegen } from "./runCompositionSuiteAtCodegen.js";
 import { warnUnusableFactoryExports } from "./warnUnusableFactoryExports.js";
 import { warnDivergentClassFileNames } from "./warnDivergentClassFileNames.js";
+
+/**
+ * Group membership in the terms the demand rule reads it, with the group's cradle key and — for a
+ * record group — the property that member is exposed under, so the error can say what to write
+ * instead rather than only what not to.
+ */
+const demandGroupMemberships = (
+  grouped: GroupedContractIndex,
+  groupsManifest: IocGroupsManifest | undefined,
+): ReadonlyMap<string, DemandGroupMembership> => {
+  const out = new Map<string, DemandGroupMembership>();
+  for (const [contractName, membership] of grouped.byContractName) {
+    const root = groupsManifest?.[membership.groupName];
+    const memberProperty =
+      root !== undefined && !Array.isArray(root.members)
+        ? Object.entries(root.members as Record<string, IocGroupLeafManifest>).find(
+            ([, leaf]) => leaf.contractName === contractName,
+          )?.[0]
+        : undefined;
+    out.set(contractName, {
+      groupName: membership.groupName,
+      kind: membership.kind,
+      baseType: membership.baseType,
+      groupKey: membership.groupName,
+      ...(memberProperty !== undefined ? { memberProperty } : {}),
+    });
+  }
+  return out;
+};
+
+/** Would-be contract key → grouped contract name, for the "there is no contract key" diagnosis. */
+const absentGroupedSlotKeys = (
+  grouped: GroupedContractIndex,
+): ReadonlyMap<string, string> =>
+  new Map(
+    [...grouped.byContractName.keys()].map((contractName) => [
+      contractNameToDefaultRegistrationKey(contractName),
+      contractName,
+    ]),
+  );
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../../package.json") as { name?: unknown };
@@ -199,18 +257,75 @@ export const generateManifest = async (
         )
       : undefined;
 
+  // GROUPED ⇒ GROUP-ONLY, decided before anything that depends on it.
+  //
+  // Membership is a nominal-heritage relation between contract types and configured base types, so
+  // it is answerable from discovery alone — which it has to be, because the registration plan's own
+  // default election depends on the answer: a grouped contract backs no slot, so it is never put
+  // through election, and election is what hard-errors on the very shape a group exists for
+  // (several implementations, no `default: true`). `buildGroupPlan` below stays the authoritative
+  // membership pass; this index answers the same question through the same predicate, earlier.
+  const groupDiscovery = { program, generatedDir, scanDirs };
+  const discoveredContracts = acceptedFactories.map((factory) => ({
+    contractName: factory.contractName,
+    contractTypeRelImport: factory.contractTypeRelImport,
+  }));
+  const groupedContracts = resolveGroupedContracts(
+    config?.groups,
+    discoveredContracts,
+    groupDiscovery,
+    {
+      markers:
+        config?.lifetimeMarkers !== undefined &&
+        Object.keys(config.lifetimeMarkers).length > 0
+          ? resolveLifetimeMarkerTypes(program, config.lifetimeMarkers)
+          : [],
+    },
+  );
+
+  // Ruling 2, before marker resolution: a member carrying its own marker would otherwise surface as
+  // the generic multiple-markers error, which names the symptom rather than the rule it breaks.
+  validateGroupLifetimeAtCodegen({
+    contracts: discoveredContracts,
+    grouped: groupedContracts,
+    config,
+    discovery: groupDiscovery,
+    projectRoot,
+    factories: acceptedFactories,
+  });
+
   const markerLifetimesByFactoryKey = resolveLifetimeMarkersForFactories(
     acceptedFactories,
     config?.lifetimeMarkers,
     { program, projectRoot, scanDirs },
   );
 
-  const plans = buildRegistrationPlan(contractMap, config, {
-    projectRoot,
-    scanDirs,
-    composedContractNames,
-    markerLifetimesByFactoryKey,
-  });
+  const plans = buildRegistrationPlan(
+    contractMap,
+    config,
+    {
+      projectRoot,
+      scanDirs,
+      composedContractNames,
+      markerLifetimesByFactoryKey,
+    },
+    {
+      groupedContractNames: new Set(groupedContracts.byContractName.keys()),
+      groupNameByContractName: new Map(
+        [...groupedContracts.byContractName].map(([name, membership]) => [
+          name,
+          membership.groupName,
+        ]),
+      ),
+      baseMarkerLifetimeByGroup: groupedContracts.baseMarkerLifetimeByGroup,
+    },
+  );
+  // Slot occupancy, as soon as both facts exist: the election is resolved and every registration
+  // key is known. Before anything reads a slot key, because a slot key that hands out someone other
+  // than the electee makes every layer downstream — cradle, demand/supply, the subtree walk — agree
+  // on a name that means two things.
+  validateContractSlotOccupancyAtCodegen(plans);
+
   const groupResult = buildGroupPlan(config?.groups, plans, {
     program,
     generatedDir,
@@ -268,6 +383,12 @@ export const generateManifest = async (
         )
       : undefined;
 
+  // Contract slot keys join the static layers here: they are supply (the runtime registers every
+  // one as `aliasTo(elected)`), and they are the row of the demand model a bare contract-name
+  // property means. Derived from the plans, after election has run and before anything reads a
+  // demand — so the cradle, the demand/supply pass and the scope-root walk all name the same set.
+  const contractSlots = contractSlotsForPlans(plans);
+
   const demandSupply = analyzeDemandSupply(acceptedFactories, {
     program,
     projectRoot,
@@ -277,6 +398,21 @@ export const generateManifest = async (
     scopeProvided: config?.scopeProvided,
     scopeRoots,
     composedOpenerKeys,
+    contractSlots,
+    groupMemberships: demandGroupMemberships(
+      groupedContracts,
+      groupResult?.manifest,
+    ),
+    absentGroupedSlotKeys: absentGroupedSlotKeys(groupedContracts),
+    // Composed rows reach the named-instance rule only. `Named<C>` has to be checkable against an
+    // implementation in another package, and the composed manifest is where its contract is
+    // written down; what SUPPLIES a composed key is unchanged — composition, through `IocExternals`.
+    composedImplementations: composedSupply?.units.map((unit) => ({
+      registrationKey: unit.registrationKey,
+      contractName: unit.contractName,
+      packageName: unit.packageName,
+    })),
+    composedSlots: composedSupply?.accessKeys,
   });
 
   validateScopeProvidedAtCodegen(config?.scopeProvided ?? [], demandSupply);
@@ -355,8 +491,6 @@ export const generateManifest = async (
     ...scopeRootExclusion.excludedKeys,
   ]);
 
-  validateDivergentNamesAtCodegen(plans, config, factoryExportPrefix);
-
   if (demandSupply.scopeProvidedKeys.length > 0) {
     console.log(
       `[ioc] scope-provided values: ${demandSupply.scopeProvidedKeys.join(", ")} — register these onto the request child scope at runtime before resolving dependent services.`,
@@ -421,6 +555,28 @@ export const generateManifest = async (
       overrides: composedOverrides,
     });
     filesToWrite.push({ path: composedOutPath, contents: composedSource });
+
+    // The composition suite — the same checks `ioc validate` runs, over the same program. Here,
+    // and not earlier: every input it judges is now final (election, groups, demand/supply,
+    // scope-root openers, the composed manifest source), so it sees the composed picture this run
+    // would actually emit. And here, and not later: it reads the artifacts from `filesToWrite`
+    // rather than from disk and throws before a single one is written, so a run that finds errors
+    // leaves the previous output untouched rather than shipping something that composes wrongly.
+    await runCompositionSuiteAtCodegen({
+      projectRoot: resolvedProjectRoot,
+      configPath,
+      config,
+      sourceFiles: files,
+      tsconfig: tsconfigContext,
+      pendingLocalArtifacts: {
+        manifestPath: manifestOutPath,
+        manifestSource: artifactSources.mainSource,
+        typesPath: artifactSources.typesPath,
+        typesSource: artifactSources.typesSource,
+        composedPath: composedOutPath,
+        composedSource,
+      },
+    });
   }
 
   try {

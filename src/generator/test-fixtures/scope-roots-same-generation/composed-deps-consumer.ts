@@ -6,6 +6,7 @@
  * it hands the property to the checker, which is where a not-yet-emitted opener alias becomes
  * "references an unresolvable deps type". This is the shape the consuming-app migration hit.
  */
+import type { Named } from "../../../named/named.js";
 import type { IClock } from "./contracts.js";
 import type { OpenAuthServiceScope } from "./generated/ioc-registry.types.js";
 
@@ -16,7 +17,7 @@ export interface ComposedController {
 
 export const buildAuditClock = (): IClock => ({ now: () => 0 });
 
-type BaseDeps = { auditClock: IClock };
+type BaseDeps = { auditClock: Named<IClock> };
 
 type ComposedControllerDeps = BaseDeps & {
   openAuthServiceScope: OpenAuthServiceScope;

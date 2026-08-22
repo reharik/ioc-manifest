@@ -1,4 +1,4 @@
-import type { IScoped } from "./IScoped.js";
+import type { IScoped } from "@example/lib-contracts/types/IScoped.js";
 
 /**
  * Reads per-request viewer state, so it must not outlive the request: extending the `IScoped`

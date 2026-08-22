@@ -7,6 +7,7 @@
  * demands like any other unit, so the key flows to `Externals` and composition checks it — which is
  * the backstop whose absence made the stage-2 strictness necessary in the first place.
  */
+import type { Named } from "../../../named/named.js";
 import type { ScopeRoot } from "../../../scopeRoots/scopeRoot.js";
 import type { IAuditLog, IRequestRouter } from "./deps-contracts.js";
 
@@ -21,7 +22,10 @@ export const buildRootOwnAudit = (): IAuditLog => ({
   },
 });
 
-type TenantRouterDeps = { rootOwnAudit: IAuditLog; tenantContext: TenantContext };
+type TenantRouterDeps = {
+  rootOwnAudit: Named<IAuditLog>;
+  tenantContext: TenantContext;
+};
 
 /** Declares an empty lbv: `tenantContext` is a container constant, not a late-bound value. */
 export const buildTenantRouter = ({

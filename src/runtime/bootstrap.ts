@@ -24,7 +24,8 @@ import {
   type ModuleFactoryManifestMetadata,
   type ScopeRootVariantManifestMetadata,
 } from "../core/manifest.js";
-import { contractNameToDefaultRegistrationKey } from "../generator/naming.js";
+import { resolveManifestAccessKey } from "../core/contractAccessKey.js";
+import { groupedContractNamesFromManifest } from "../core/groupedContractNames.js";
 import { propagateIocResolutionFailure } from "./iocResolutionError.js";
 import {
   frameFromManifestMeta,
@@ -240,53 +241,21 @@ const registerImplementationFactories = <TCradle extends object>(
   }
 };
 
-const resolveManifestAccessKey = (
-  contractName: string,
-  implList: readonly ModuleFactoryManifestMetadata[],
-): string => {
-  const explicit = implList.find((m) => m.accessKey !== undefined)?.accessKey;
-  if (explicit !== undefined) {
-    return explicit;
-  }
-  return contractNameToDefaultRegistrationKey(contractName);
-};
-
-/** Contract names used as a group's base type (mirrors the generator's `groups.<name>.baseType`). */
-const groupBaseTypeNamesFromManifest = (
-  groupsManifest: IocGroupsManifest | undefined,
-): ReadonlySet<string> =>
-  new Set(
-    Object.values(groupsManifest ?? {}).map((root) => root.baseType),
-  );
-
-/**
- * True when a group-base contract elects no default (no impl marked `default: true`) — mirrors the
- * generator's `isGroupBaseWithoutElectedDefault` exactly. Such a base emits no singular
- * contract-default key, so runtime must skip default-alias election for it (otherwise a base whose
- * narrowed members collapse to ≥2 impls under one contract aborts boot with "no default selected").
- */
-const isGroupBaseWithoutElectedDefault = (
-  contractName: string,
-  implList: readonly ModuleFactoryManifestMetadata[],
-  groupBaseTypeNames: ReadonlySet<string>,
-): boolean =>
-  groupBaseTypeNames.has(contractName) &&
-  !implList.some((meta) => meta.default === true);
-
 const registerContractDefaultAliases = <TCradle extends object>(
   container: AwilixContainer<TCradle>,
   manifestByContract: IocContractManifest,
-  groupBaseTypeNames: ReadonlySet<string>,
+  groupedContractNames: ReadonlySet<string>,
 ): void => {
   for (const [contractName, impls] of Object.entries(manifestByContract)) {
     const implList = Object.values(impls);
 
-    /* A group base with no elected default emits no singular key at generation time; do not elect
-       one at boot — mirrors generation's `contractDefaultElected === false`. A group base that DOES
-       mark an impl `default: true` falls through and registers that default as normal. */
-    if (
-      isGroupBaseWithoutElectedDefault(contractName, implList, groupBaseTypeNames)
-    ) {
+    /* Grouped ⇒ group-only: a grouped contract backs no default slot at generation time, so do not
+       elect one at boot either. Registering an alias the emitted cradle does not carry would be a
+       key resolvable at runtime that no consumer may legally name — the divergence this mirrors
+       generation to avoid. Member registration keys stay registered: the group resolver hands its
+       members out by registration key, so the container must hold them even though the typed
+       surface does not expose them. */
+    if (groupedContractNames.has(contractName)) {
       continue;
     }
 
@@ -297,6 +266,20 @@ const registerContractDefaultAliases = <TCradle extends object>(
       (meta) => meta.registrationKey === accessKey,
     );
 
+    /* Awilix holds one registration per name, so an implementation already registered UNDER the
+       access key owns it and no alias can be written over the top.
+
+       Generation now guarantees that such an occupant IS the electee — a registration occupying its
+       contract's slot key without being elected is a hard error at `ioc generate` and in
+       `ioc validate` alike (see `core/contractSlotOccupancy.ts`). So for any manifest this tool
+       produced, `hasImplementationAtAccessKey` implies `accessKey === defaultImpl.registrationKey`
+       and the second clause decides nothing: there is no shadow-divergent corner left for boot to
+       have an opinion about.
+
+       It stays because boot is not the gate. `registerIocFromManifest` accepts any manifest handed
+       to it, including one emitted by an older version or assembled by hand, and the honest
+       behaviour there is the container's own — the occupant keeps the name it is registered under —
+       not a crash at startup over a file the caller may not own. */
     if (
       accessKey !== defaultImpl.registrationKey &&
       !hasImplementationAtAccessKey
@@ -528,7 +511,7 @@ export const registerIocFromManifest = <TCradle extends object>(
   registerContractDefaultAliases(
     container,
     manifestByContract,
-    groupBaseTypeNamesFromManifest(groupsManifest),
+    groupedContractNamesFromManifest(groupsManifest),
   );
   registerGroups(container, groupsManifest, keyIndex);
   registerScopeRootOpeners(

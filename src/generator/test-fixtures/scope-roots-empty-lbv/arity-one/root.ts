@@ -4,6 +4,7 @@
  * Byte-identical to `../arity-two/root.ts` apart from that annotation, which is the whole point —
  * the two spellings are one declaration, and everything downstream has to agree.
  */
+import type { Named } from "../../../../named/named.js";
 import type { ScopeRoot } from "../../../../scopeRoots/scopeRoot.js";
 import type {
   IReportClock,
@@ -15,7 +16,7 @@ import type { OpenPublicReportScope } from "./generated/ioc-registry.types.js";
 /** Container-supplied, resolved through the parent chain — not a late-bound value. */
 export const buildReportClock = (): IReportClock => ({ now: () => 0 });
 
-type PublicReportDeps = { reportClock: IReportClock };
+type PublicReportDeps = { reportClock: Named<IReportClock> };
 
 /** A boundary that carries nothing in. */
 export const buildPublicReport = ({

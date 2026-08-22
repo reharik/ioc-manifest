@@ -16,6 +16,7 @@
  * `requestId` is the control: declared by `declaringRouter`, demanded by nothing else. Nothing
  * consumes it from the container, so it IS excluded and the config never has to repeat it.
  */
+import type { Named } from "../../../named/named.js";
 import type { ScopeRoot } from "../../../scopeRoots/scopeRoot.js";
 import type { IAuditLog, IRequestRouter } from "./deps-contracts.js";
 
@@ -36,7 +37,10 @@ export const buildTokenAudit = ({ sessionToken }: TokenAuditDeps): IAuditLog => 
   },
 });
 
-type DeclaringRouterDeps = { tokenAudit: IAuditLog; requestId: RequestId };
+type DeclaringRouterDeps = {
+  tokenAudit: Named<IAuditLog>;
+  requestId: RequestId;
+};
 
 /** Carries both keys at the boundary. */
 export const buildDeclaringRouter = ({
@@ -52,7 +56,7 @@ export const buildDeclaringRouter = ({
   },
 });
 
-type InheritingRouterDeps = { tokenAudit: IAuditLog };
+type InheritingRouterDeps = { tokenAudit: Named<IAuditLog> };
 
 /** Inherits the token from the container. Same subtree, different boundary. */
 export const buildInheritingRouter = ({

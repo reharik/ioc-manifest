@@ -47,9 +47,6 @@ export const composedRegistrationOverrides = {
     Logger: {
       defaultImplementation: "consoleLogger",
     },
-    LoggingService: {
-      defaultImplementation: "requestTracingLogger",
-    },
     Storage: {
       defaultImplementation: "s3Storage",
     },

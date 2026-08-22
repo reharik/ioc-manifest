@@ -13,7 +13,8 @@
     "start": "tsx packages/app/src/bootstrap.ts",
     "typecheck:broken-expect-fail": "node scripts/expect-broken-typecheck.mjs",
     "validate:broken-expect-fail": "node scripts/expect-validate-broken.mjs",
-    "full": "npm run gen && npm run validate && npm run typecheck && npm run start && npm run typecheck:broken-expect-fail && npm run validate:broken-expect-fail"
+    "full": "npm run gen && npm run validate && npm run typecheck && npm run start && npm run gen:broken-expect-fail && npm run typecheck:broken-expect-fail && npm run validate:broken-expect-fail",
+    "gen:broken-expect-fail": "node scripts/expect-gen-broken.mjs"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

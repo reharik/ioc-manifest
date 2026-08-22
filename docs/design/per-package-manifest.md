@@ -134,6 +134,68 @@ A package may supply `albumRepository` (via `buildAlbumRepository`) and demand i
 
 A package may supply `albumRepository` with no internal consumer (the consumers live in apps that import media-core). Fine. The key is in `IocGeneratedCradle` and in the manifest. Apps consume it via the composed cradle.
 
+### 4.6 The demand model: five declared things
+
+A deps property is exactly one of five things, and which one is **declared at the site and verified statically**. Nothing is inferred from whether a name happens to be registered.
+
+| written | means |
+|---|---|
+| contract key (`authMiddleware: AuthMiddleware`) | the contract's **elected default**, whichever implementation that is |
+| `Named<T>` implementation key (`strictAuthMiddleware: Named<AuthMiddleware>`) | **that specific implementation** |
+| group root key (`channels: Channels`) | the group |
+| scope-root opener key (`openAuthRouterScope: OpenAuthRouterScope`) | the opener |
+| anything else | an **external** — an unregistered demand the composing app supplies |
+
+Rows one and two are available only to **ungrouped** contracts. A grouped contract is consumed through its group and through nothing else — no contract key, no member keys — so for its members the third row is the only one there is. See §8.5.
+
+The first two rows used to be spelled identically. Which one a property meant was then decided by whether its name happened to match a registration key, which is invisible at the site and changes when someone renames a factory. `Named<T>` is the missing declaration; with it, the bare implementation-key spelling is a hard error rather than an accident that works.
+
+#### Contract slot keys and the election rule
+
+The contract key — the **slot key** — is the contract's `accessKey` when one is configured, otherwise the camel-cased contract name. One derivation serves every layer (`resolveContractAccessKey` / `resolveManifestAccessKey`), because the point of the key is that the emitted cradle, the demand/supply supply set, the scope-root subtree walk and `registerContractDefaultAliases` all name the *same* property.
+
+**The slot key exists if and only if the contract is ungrouped and elects a default.** Election is the rule `selectDefaultImplementationName` already applies: exactly one `default: true`, else exactly one implementation registered under the contract key, else exactly one implementation at all. Where no slot key exists it exists nowhere — not in the cradle, not in the supply set, not on the container. Three shapes reach that state:
+
+- a **grouped** contract, which is categorically slotless regardless of how many implementations it has or what it declares (§8.5) — a demand for its would-be contract key is diagnosed as the group mistake it is;
+- a multi-implementation ungrouped contract with zero or several `default: true`, which never reaches emission at all — generation hard-errors, and `ioc validate` reports `default-ambiguity` against an already-written manifest;
+- for completeness, an unresolvable contract whose plan cannot name an elected implementation.
+
+Scope-rooted contracts have no slot key either, by construction rather than by rule: a scope root claims no registration key and reaches no registration plan, so there is nothing for a slot to be derived from. Scope-rooted contracts are opener-only.
+
+Slot keys join global key-uniqueness through the machinery that already owned it: a slot key colliding with a registration key, a group root, or an emitted opener key is the existing conflict, reported by the existing error.
+
+A slot key that some implementation is *already registered under* — the convention case, `buildMediaStorage` → `mediaStorage` for `MediaStorage` — is not an alias. Awilix cannot hold two registrations under one name, so that registration owns the key, and every layer resolves the name as a registration before it consults a slot. The cradle then carries that registration's own supply type. Only an alias slot is emitted as the contract type.
+
+**An implementation occupying its contract's slot key must be the electee.** The occupant owning the key is fine when it *is* the elected default — the slot and the key coincide by agreement, and that is the sanctioned single-name case. When some other implementation is elected, the two facts contradict each other: the key hands out the occupant while the election names someone else, and row one of the table above — "the contract's elected default, whichever implementation that is" — is simply false for that contract. There is no honest reading in which both hold, so it is a hard error rather than a documented quirk. The error names both exits, because which one is meant is not the tool's to guess: rename the factory so its key stops shadowing the slot, or elect the occupant.
+
+`ioc generate` gates it off the registration plan, in library and app mode alike — the occupant, the slot key and the election are all package-local facts, and a library shipping the shape exports a manifest whose contract key hands the wrong implementation to every app that composes it. The composition suite gates the shape composition can *create* out of two packages that are each coherent alone: a library registering and electing `mediaStorage`, and an app electing something else over it. Same rule, same sentences, reported as `[slot-occupancy]`.
+
+With that error in place, `registerContractDefaultAliases` has no corner to decide: whenever an implementation is registered at the access key, it is the electee, so boot writing no alias there is the same answer as writing one. The branch remains only because boot is not the gate — it accepts any manifest handed to it, including one from an older version.
+
+#### `Named<T>` and strict contract identity
+
+```ts
+export type Named<T> = T;
+```
+
+Transparent to TypeScript, so annotating with it changes nothing about assignability, inference, or what the factory receives. The generator recognizes it **syntactically, off the written annotation**, by written name and with no checker involvement — the same rule and the same shadowing trade `Promise<T>` and `ScopeRoot<TContract, TLbv>` already make.
+
+`key: Named<C>` verifies that `key` is an implementation registration key — local, or composed (a composed manifest carries each unit's `contractName`) — whose declared contract is **exactly `C`**. Identity, not assignability: a supertype the implementation happens to satisfy is a different statement, and accepting it would make the annotation stop meaning what it says the moment the implementation's own contract changed underneath it.
+
+The marker anywhere it does not belong is a hard error: on a contract slot key, on a group root key, on an opener key, or on a name no implementation is registered under. Wrong arity follows the `scope_root_wrong_arity` precedent — writing the marker at all is an unambiguous attempt to declare a named-instance demand, so an unreadable declaration is demanded rather than guessed at.
+
+#### Where marker recognition sits
+
+Per deps property, in order: the demand is recorded; the marker is read off the written type node; the generated-reference claim parsers run (`IocGeneratedCradle["k"]`, group alias, opener alias); the five-row rule is applied; and only then is the property handed to the checker for emission.
+
+Marker recognition precedes the claim parsers because the two answer different questions — a claim parser asks "which cradle key does this *type* name?", the marker asks "which of the five things is this *property*?" — and because a misplaced or wrong-arity marker must be reported as itself rather than as a downstream unresolvable-type error. The two can never both hold: every claim parser rejects a type reference carrying type arguments, and `Named<T>` always carries one.
+
+A property a claim parser *does* claim is exempt from the marker requirement, implementation keys included. `IocGeneratedCradle["s3Storage"]` is already an explicit, enumerated statement of which cradle key is wanted; the ambiguity the marker removes is not present, and a second declaration on top of it would be ceremony.
+
+None of this touches the scope-root walk's own precedence (`classifyDemandedKey`: group → registration → contract access key → declared group → lbv → external). That walk consumes `dependencyKeys`, which are binding-pattern names carrying no types, so no marker can reach it; and the slot key sits where it always sat, after registrations — the same answer either way for a key that is both.
+
+Emission never sees the marker. `Named<T>` *is* `T` to the checker, so the deps echo (`dependencyContractNames`), the cradle property, and every emitted type reference carry the contract, by reference. The marker is a discovery-time declaration, not an emitted artifact.
+
 ---
 
 ## 5. Composition API
@@ -365,6 +427,63 @@ An object group across manifests may produce duplicate keys (two packages both r
 
 Collection groups are `ReadonlyArray<T>` in whatever order composition emits them. Consumers needing specific order put ordering metadata on the base type and sort at use time. The library does not order group members.
 
+### 8.5 Grouped ⇒ group-only
+
+A contract that is a member of a configured group is consumed **through the group and through nothing else**. This is the symmetric twin of "scope-rooted ⇒ opener-only", and it says the same thing: a contract has exactly one sanctioned way in.
+
+Concretely, a grouped contract has:
+
+- **no contract-slot key.** Not "unelected" — categorically slotless. The slot machinery exempts grouped contracts entirely, including a grouped contract with exactly one implementation, which is otherwise the slot's main road.
+- **no individual cradle keys for its implementations.** A record group already gives typed per-member access through the group value (`channels.emailChannel`); a collection group's members are individually anonymous **by declaration** — that is what choosing `kind: "collection"` says about them.
+- **no default election, and therefore no default ambiguity.** Several implementations with no `default: true` is the ordinary, correct shape of a group. The election is vacated by construction rather than passed: there is no slot for a default to fill, so the question is not asked. `ioc validate`'s `default-ambiguity` check skips grouped contracts for the same reason.
+
+Membership is decided by `config.groups` base types and by nothing else — see §8.6.
+
+**Runtime keeps what the typed surface hides.** Member registration keys stay registered on the container: the group resolver hands its members out *by* registration key, so it must be able to reach them. What changes is what a consumer may legally **name**. The contract-slot alias, by contrast, is not registered at all — runtime mirrors generation there, so nothing resolves under a name the emitted cradle does not carry.
+
+Demanding a grouped member individually is a hard error through every spelling — `key: Named<MemberContract>`, `key: Named<GroupBase>`, the bare `key: MemberContract`, and the grouped contract's would-be contract key. All four are recognized as the same mistake and get the same guidance, because the problem is the family rather than which contract was named. See [Error handling](/reference/errors) for the codes.
+
+One consequence worth stating: the per-implementation membership filter that used to drop a non-default implementation registered at the contract's default-slot key is retired. Its whole justification was avoiding duplicate default-slot semantics inside the group; with no slot there is nothing to duplicate, and dropping a member would produce a group that looks complete and is not.
+
+### 8.6 Group lifetime is declared on the base, only
+
+A group is a family, and its members are handed out interchangeably — a collection group anonymously, a record group by contract name. A family whose members disagree about lifetime is not interchangeable at all: resolving the group would hand back a mixed array of singletons and per-scope instances, and the consumer has no way to know or care which is which. So the lifetime is declared **once, on the base**, and every member ranks it.
+
+```ts
+// contracts/LoggingService.ts — the group's base, and the only place its lifetime is declared.
+export interface LoggingService extends IScoped {
+  readonly id: string;
+  ping: () => string;
+}
+```
+
+Every member reports `lifetimeSource: "group-base-marker"` — distinguished from an ordinary `lifetime-marker` because the declaration sits somewhere the member does not control, which is exactly what a reader chasing an unexpected lifetime needs to be told. `ioc inspect --discovery` prints it as `scoped (group-base-marker)`.
+
+Lifetime-inversion checking sees this through the group **hop**: a root-resolved singleton consuming a scoped group is the same defect as one consuming a scoped member, and is reported as `via group '<key>'`. Suppression is unchanged and belongs on the consuming registration (`allowLifetimeInversion`), not on the family.
+
+**A member declaring its own lifetime is a hard error** — a `lifetimeMarkers` interface on the member contract's own heritage that the base does not carry, or a per-implementation `lifetime` override in `ioc.config` for a grouped member. This is not a conflict to resolve by precedence; it is a statement the member is not entitled to make, so it is refused rather than outranked. The test is a comparison, not a path trace: transitive heritage means a member extending a marked base also carries the marker, and the only thing distinguishing a member *declaring* one is the base not having it. A member that redundantly restates the base's own marker is indistinguishable from one that merely inherits it, and is treated as inheriting — the base owns the lifetime either way.
+
+#### Tombstone: the 2.x group-lifetime rule
+
+The rule this replaces was **not** most-restrictive-member-wins. Most-restrictive-wins does not appear anywhere in this codebase's history — not in `groups`, not in the `bundles` module that preceded it, not in the shipped docs. What 2.0.0 actually shipped is recorded in the v3 audit as item 22: *"group roots are transient wrappers; members keep their own lifetimes."* No aggregation at all — each member ranked independently, and a group could hand out a mixed-lifetime collection with nothing said about it.
+
+Most-restrictive-wins is worth naming anyway, because it is the rule a tool *reaches for* when groups are undeclared: with no place to say what a family's lifetime is, the only way to avoid handing a singleton a per-scope instance is to infer one from the members and take the shortest. That is inference compensating for a missing declaration. Declaring the lifetime on the base removes the question instead of answering it, and supersedes both the inference that was never built and the independent-members rule that was.
+
+### 8.7 Consumer-divergent group consumption — considered, deferred
+
+The scenario is real and it will come up. Consumer A wants the family — "notify every channel" — and consumer B wants one member of it — "send this on the email channel specifically." Under §8.5, B cannot have what it wants: the member has no key, and the group's `kind` is the only lever over how members are exposed.
+
+The reason the lever is coarse is that **the group is declared in the supplier's config**. A library declares `groups.notificationChannels` with a `kind`, and every app that composes that library inherits both the grouping and the kind. So B's need is not a local decision B can make; it is a request to re-shape a supplier's declaration from the consumer side, and there is nothing in the model today that lets a consumer do that for anything.
+
+Supplier-config wins today, for two reasons:
+
+1. **The supplier owns the abstraction.** Grouping a family is a statement about what those contracts *are* — interchangeable members of one abstraction — and that is the supplier's call, in the same way the base type is. A consumer that reaches past it for one member is asserting the members are not interchangeable after all, which is a disagreement about the design, not about wiring.
+2. **A consumer-side override would have to be checked against every other consumer.** Group membership decides the emitted cradle of the *supplier's* package. Re-kinding or ungrouping from an app would mean the same library presents different cradles in different apps — which is exactly the per-package-manifest boundary this design exists to keep (§1.2), and it would make a library's own `IocExternals`/`IocGeneratedCradle` pair depend on who composed it.
+
+The shape of the future knob, when a real case arrives, is **consumer-side re-kinding of composed members**: an app-level declaration that a named composed group is exposed to this app under a different `kind`, or that a named member is additionally exposed under its own key in this app's cradle. It would be additive to the app's composed cradle rather than a mutation of the library's, which is what keeps the boundary intact — the library still emits what it emits, and the app declares a widening it is responsible for. The open questions are whether the widening is per-group or per-member, how it interacts with two apps composing the same library differently (it should not need to interact at all, if the widening is app-local), and whether the re-exposed key participates in the app's own key-uniqueness namespace (it must).
+
+None of that is designed. It is deferred deliberately, not overlooked, and the grouped-member error points here so a developer who hits the wall knows which it is. Until then the honest answers are: consume the family and filter at use time, use `kind: "object"` so members are exposed as properties, or take the member out of the group — it was never a member of that family if one consumer needs it by name.
+
 ---
 
 ## 9. CLI
@@ -374,22 +493,25 @@ Collection groups are `ReadonlyArray<T>` in whatever order composition emits the
 Behavior branches on the presence of `composedManifests` in the config:
 
 - **Library mode** (no `composedManifests`): emits `ioc-manifest.ts` and `ioc-registry.types.ts` only. Manifest is intended for export.
-- **App mode** (with `composedManifests`): emits all three files, including `ioc-composed.ts`.
+- **App mode** (with `composedManifests`): emits all three files, including `ioc-composed.ts`, and runs the full composition suite (§9.2) before writing any of them.
 
 No separate command for the two modes. The config's shape determines emission.
 
-### 9.2 `ioc validate` (new)
+### 9.2 The composition suite: `generate` enforces it, `validate` re-runs it
 
-Loads the app's config, resolves every entry in `composedManifests` to its manifest value, runs full composition checks:
+**Everything gen can know, gen enforces; validate exists to run the same checks without regenerating.** An app package's `generate` already composes — it loads composed manifests, emits `ioc-composed.ts`, walks composed subtrees and resolves composed opener and slot keys — so it already holds every fact the compositional checks adjudicate. Leaving those checks in a separate verb meant that for the primary workflow, where generated output is not checked in and `gen` runs on every change, the verb structurally never ran and the entire checking layer was dead code: `gen` passed while validation had all manner of errors. Both verbs now call one module over one program construction, so they cannot disagree; `validate`'s remaining reason to exist is that it does not regenerate, which is what a CI gate over committed artifacts and a check against a rebuilt dependency both need.
 
-- Every key in every `IocExternals` has a supplier in the composed set.
+The checks, unchanged in substance:
+
+- Every key in every `IocExternals` has a supplier in the composed set, with the types compared.
 - No same-key conflicts unresolved by `source` config.
 - All groups have consistent canonical base types across contributors.
-- Default selection unambiguous for every contract, including app-config overrides.
+- Default selection unambiguous for every ungrouped contract, including app-config overrides (§8.5).
+- The `registry-integrity` gate: a generated registry file that does not compile is reported, and the comparisons that read types out of it are skipped and said to be skipped, never adjudicated against error types.
 
-Output is structured per issue: package + key + suggested fix. Non-zero exit on any issue. Intended for CI gates.
+Output is structured per issue: package + key + suggested fix, every offender in one aggregated report. In `generate` an error-severity finding aborts the run before any file is written; in `validate` it is a non-zero exit. Warnings warn in both.
 
-Separate from `generate` because `generate` runs frequently during development and must tolerate transient inconsistencies (sibling package mid-refactor). `validate` is the pre-merge gate.
+Both build the same program — the app's own `tsconfig.json`, the app's full source rooted, resolution as the app's own `tsc` performs it — and admit each physical file exactly once. Library mode runs none of it: every check is a relation *between* manifests, and a library has no composed set to relate to.
 
 ### 9.3 `ioc inspect`
 

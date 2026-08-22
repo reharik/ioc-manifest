@@ -109,28 +109,36 @@ To resolve *all* implementations of a base type as an array, declare a [collecti
 
 This is the same fundamental idea behind having multiple implementations of a single interface in any IoC container: you can swap implementations by environment. Have one `ioc.config` for production that points to real services, a different one for development that uses local stubs, and a third for testing that wires in mocks — without touching any factory source code. The config is the only thing that changes.
 
-## Divergent-name warning
+## Demanding a dependency: the five things a deps property can be
 
-When a contract has exactly **one** implementation whose registration key differs from the contract access key — e.g. `buildCreateMediaItemUpload` returning `CreateMediaUpload` — the container ends up with two cradle names for one thing: the implementation key (`createMediaItemUpload`) and the default-slot alias (`createMediaUpload`). All injection sites use the alias, so grepping for the implementation name finds nothing, which makes the factory's usage hard to trace. Because a single-implementation contract gets none of the benefits of the dual naming, `ioc generate` warns:
+A deps property is exactly one of five things, and which one is **declared at the site**:
 
-```
-[ioc] Contract "CreateMediaUpload" has a single implementation "createMediaItemUpload" registered as
-"createMediaItemUpload", but injection sites resolve it through the contract key "createMediaUpload" ...
-```
+| written | means |
+| --- | --- |
+| contract key — `mediaStorage: MediaStorage` | the contract's **elected default**, whichever implementation that is |
+| `Named<T>` implementation key — `s3MediaStorage: Named<MediaStorage>` | **that specific implementation** |
+| group root key — `mediaStorages: MediaStorages` | the group |
+| scope-root opener key — `openRequestScope: OpenRequestScope` | the opener |
+| anything else | an **external**: the composing app supplies it |
 
-Fix it by renaming the factory (`buildCreateMediaUpload`) or the contract (`CreateMediaItemUpload`) so the keys match — then no alias is registered and there is a single greppable name. If the divergence is intentional, suppress the warning:
+The first two both name the contract type, so before `Named<T>` they were spelled identically and only differed by whether the property's name happened to match a registration key. Now the difference is written down:
 
 ```ts
-registrations: {
-  CreateMediaUpload: {
-    $contract: { allowDivergentName: true },
-  },
-},
+import type { Named } from "ioc-manifest";
+
+type RequestPipelineDeps = {
+  // Follows the election. Change `ioc.config` and this site follows, with no edit.
+  authMiddleware: AuthMiddleware;
+  // Pinned to one implementation. Does not follow the election.
+  strictAuthMiddleware: Named<AuthMiddleware>;
+};
 ```
 
-The warning never fires for multi-implementation contracts (distinct names are the point there), for contracts with an explicit `$contract.accessKey` (the second name was requested by hand), or for group bases with no elected default (no singular key is emitted).
+`Named<T>` is `T` — it is transparent to TypeScript and changes nothing about what your factory receives. It exists so the generator can check the claim: `key` must be an implementation registration key (in this package or a composed one), and its declared contract must be **exactly** `T`, not merely assignable to it.
 
-Group **members** are not exempt: a contract that extends a group's base type is still an ordinary contract with its own keys — an object group exposes each member under its contract key (`writeServices.createMediaUpload`), so a divergent single-implementation member has the same traceability problem and warns like any other contract. Only a factory returning the group base type *itself* (with no elected default) is skipped.
+The marker is required, not advisory. A bare `strictAuthMiddleware: AuthMiddleware` is a hard error naming both legal spellings, and `Named<…>` on a contract key, a group key, an opener key, or a name nothing registers is a hard error too. See [Error handling](/reference/errors) for the codes.
+
+**The contract key exists only when a default is elected.** A group base with no `default: true` elects none, so it has no contract key at all, and a demand for the name is an ordinary external. A scope-rooted contract has none either — it is opener-only.
 
 ## Dependency inference
 

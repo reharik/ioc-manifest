@@ -35,6 +35,7 @@ import {
   type FactoryDiscoveryPaths,
 } from "./manifestPaths.js";
 import type { ResolvedContractRegistration } from "./resolveRegistrationPlan.js";
+import { contractSlotsForPlans } from "./contractSlotKeys.js";
 import type { DiscoveredFactory, DiscoveredScopeRoot } from "./types.js";
 import {
   inversionSeverity,
@@ -280,22 +281,23 @@ export const buildScopeRootSupplyIndex = (
     factoryByRegistrationKey.set(factory.registrationKey, factory);
   }
 
-  const registrationKeyByAccessKey = new Map<string, string>();
   const lifetimeByRegistrationKey = new Map<string, IocLifetime>();
   for (const plan of ctx.plans) {
     for (const impl of plan.implementations) {
       lifetimeByRegistrationKey.set(impl.registrationKey, impl.lifetime);
     }
-    const defaultImpl = plan.implementations.find(
-      (impl) => impl.implementationName === plan.defaultImplementationName,
-    );
-    if (defaultImpl !== undefined) {
-      registrationKeyByAccessKey.set(
-        plan.accessKey,
-        defaultImpl.registrationKey,
-      );
-    }
   }
+
+  // Contract slot keys, through the one derivation every layer shares. A plan with no ELECTED
+  // default contributes nothing: the key does not exist in the cradle, is not registered at boot,
+  // and must not resolve here either — a walk that descended through a key the container will not
+  // have would report a variant satisfied on the strength of an edge that does not exist.
+  const registrationKeyByAccessKey = new Map<string, string>(
+    contractSlotsForPlans(ctx.plans).map((slot) => [
+      slot.accessKey,
+      slot.electedRegistrationKey,
+    ]),
+  );
 
   const composed = ctx.composedSupply ?? EMPTY_COMPOSED_MANIFEST_SUPPLY;
 

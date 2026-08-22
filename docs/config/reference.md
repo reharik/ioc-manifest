@@ -63,8 +63,8 @@ Under each contract name, keys are implementation names from discovery — the c
 
 | `$contract` field    | Effect                                                                                          |
 | -------------------- | ----------------------------------------------------------------------------------------------- |
-| `accessKey`          | Overrides the cradle property name for the default slot (e.g. `"database"` instead of `"knex"`) |
-| `allowDivergentName` | `true` suppresses the codegen warning for a single-implementation contract whose implementation key differs from the contract access key. See [Divergent-name warning](/concepts/conventions#divergent-name-warning). |
+| `accessKey`          | Overrides the cradle property name for the default slot (e.g. `"database"` instead of `"knex"`). Note that it is written into the manifest, so a library's `accessKey` also decides the slot key of the merged contract in every app that composes it. |
+| `allowDivergentName` | **Deprecated, no longer read.** It suppressed the divergent-name advisory, which was retired when contract slot keys joined the static layers: the implementation key and the contract key no longer mean the same thing (`impl: Named<C>` vs `contractKey: C`), so a divergence between them is not a second name for one thing. Still accepted by the schema, so existing configs keep validating; setting it does nothing. See [Demanding a dependency](/concepts/conventions#demanding-a-dependency-the-five-things-a-deps-property-can-be). |
 
 ### `classes`
 

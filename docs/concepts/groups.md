@@ -4,6 +4,47 @@ Groups collect implementations whose **contract types declare heritage** to a sh
 
 Both [unit kinds](/concepts/conventions#the-two-registration-units) participate: a class whose `implements` contract declares heritage to the base joins alongside factory members, with no distinction downstream.
 
+## Grouped means group-only
+
+**A contract that joins a group is consumed through the group and through nothing else.** Grouping it is a statement that its implementations are interchangeable members of one family, and the tool holds you to it:
+
+- the contract has **no contract key** — not "unelected", categorically none, even with a single implementation;
+- its implementations have **no individual cradle keys** — a record group exposes every member as a property of the group value, and a collection group's members are anonymous by declaration;
+- nothing elects a default for it, so several implementations with no `default: true` is the ordinary shape rather than an ambiguity error.
+
+Demanding a member individually is a hard error, whichever way you spell it:
+
+```ts
+// All four are the same mistake, and all four get the same guidance.
+type Deps = { emailChannel: Named<EmailChannel> };        // the member's contract
+type Deps = { emailChannel: Named<NotificationChannel> }; // the family interface
+type Deps = { emailChannel: EmailChannel };               // bare
+type Deps = { notificationChannel: NotificationChannel }; // the contract key it doesn't have
+
+// This is how you reach it:
+type Deps = { notificationChannels: NotificationChannels };
+//   …then notificationChannels.emailChannel, for a record group.
+```
+
+Runtime still registers member keys — the group resolver needs them to hand its members out — so what changes is what you may **name**, not what the container holds.
+
+If you genuinely need the family for one consumer and one member for another, that is a real and deliberately deferred design question: see [Consumer-divergent group consumption](/design/per-package-manifest#_8-7-consumer-divergent-group-consumption-considered-deferred). Until it is answered, your options are to filter at use time, to use `kind: "object"` so members are exposed as properties, or to take the member out of the group.
+
+## Lifetime belongs to the group
+
+A family whose members disagree about lifetime is not a family: resolving the group would hand back a mixed array and the consumer cannot tell which is which. So the lifetime is declared **once, on the base**:
+
+```ts
+export interface LoggingService extends IScoped {
+  readonly id: string;
+  ping: () => string;
+}
+```
+
+Every member ranks it, and `ioc inspect --discovery` reports the provenance as `scoped (group-base-marker)` so an unexpected lifetime is traceable to the declaration you did not write locally. Lifetime-inversion checks see it through the group hop: a singleton consuming a scoped group is reported the same as one consuming a scoped member.
+
+A member declaring its own lifetime — a marker on its own contract that the base lacks, or a per-implementation `lifetime` in `ioc.config` — is a hard error. It is not outranked by precedence; it is a claim of authority over a property of the family the member does not own.
+
 ## Collection groups: the strategy pattern
 
 Say you have a pricing engine with five discount strategies, each implementing the same interface:

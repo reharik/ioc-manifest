@@ -86,7 +86,6 @@ describe("group rejection gloss", () => {
         "contract_type_not_named",
         "nominal_heritage_not_declared",
         "contract_type_unresolved",
-        "non_default_impl_at_contract_slot",
       ] as const;
 
       assert.deepEqual(

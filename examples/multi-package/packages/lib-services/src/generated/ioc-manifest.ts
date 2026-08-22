@@ -13,20 +13,6 @@ import * as ioc_buildServiceLogger from "../factories/buildServiceLogger.js";
 import * as ioc_buildUploadService from "../factories/buildUploadService.js";
 import * as ioc_buildViewerReadService from "../factories/buildViewerReadService.js";
 
-type IocManifestGroupRoots = {
-  readonly loggers: {
-    readonly kind: "collection";
-    readonly baseType: "LoggingService";
-    readonly baseTypeId: "@example/lib-contracts/src/types/LoggingService.ts:LoggingService";
-    readonly members: readonly [
-      {
-        readonly contractName: "RequestTracingLogger";
-        readonly registrationKey: "requestTracingLogger";
-      },
-    ];
-  };
-};
-
 export const iocManifest = {
   manifestSchemaVersion: 3,
 
@@ -54,22 +40,6 @@ export const iocManifest = {
         dependencyKeys: ["config"],
       },
     },
-    Logger: {
-      serviceLogger: {
-        exportName: "buildServiceLogger",
-        registrationKey: "serviceLogger",
-        modulePath: "buildServiceLogger.ts",
-        relImport: "../factories/buildServiceLogger.js",
-        contractName: "Logger",
-        implementationName: "serviceLogger",
-        lifetime: "singleton",
-        moduleIndex: 2,
-        default: true,
-        discoveredBy: "naming",
-        dependencyContractNames: ["Logger"],
-        dependencyKeys: ["logger"],
-      },
-    },
     RequestTracingLogger: {
       requestTracingLogger: {
         exportName: "buildRequestTracingLogger",
@@ -84,6 +54,21 @@ export const iocManifest = {
         discoveredBy: "naming",
       },
     },
+    ServiceLogger: {
+      serviceLogger: {
+        exportName: "buildServiceLogger",
+        registrationKey: "serviceLogger",
+        modulePath: "buildServiceLogger.ts",
+        relImport: "../factories/buildServiceLogger.js",
+        contractName: "ServiceLogger",
+        implementationName: "serviceLogger",
+        lifetime: "singleton",
+        moduleIndex: 2,
+        default: true,
+        discoveredBy: "naming",
+        dependencyKeys: ["logger"],
+      },
+    },
     UploadService: {
       uploadService: {
         exportName: "buildUploadService",
@@ -96,7 +81,6 @@ export const iocManifest = {
         moduleIndex: 3,
         default: true,
         discoveredBy: "naming",
-        dependencyContractNames: ["Logger"],
         dependencyKeys: ["storage", "logger"],
       },
     },
@@ -116,20 +100,7 @@ export const iocManifest = {
       },
     },
   },
-  // loggers
-  loggers: {
-    kind: "collection",
-    baseType: "LoggingService",
-    baseTypeId:
-      "@example/lib-contracts/src/types/LoggingService.ts:LoggingService",
-    members: [
-      {
-        contractName: "RequestTracingLogger",
-        registrationKey: "requestTracingLogger",
-      },
-    ],
-  },
-} as const satisfies IocGeneratedContainerManifest<IocManifestGroupRoots>;
+} as const satisfies IocGeneratedContainerManifest;
 
 export const IOC_SCOPE_PROVIDED_KEYS = ["viewerId"] as const;
 

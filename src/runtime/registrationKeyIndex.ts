@@ -6,7 +6,7 @@ import type {
   IocContractManifest,
   ModuleFactoryManifestMetadata,
 } from "../core/manifest.js";
-import { contractNameToDefaultRegistrationKey } from "../generator/naming.js";
+import { resolveManifestAccessKey } from "../core/contractAccessKey.js";
 
 export type RegistrationKeyIndex = {
   readonly metaByRegistrationKey: ReadonlyMap<
@@ -25,11 +25,10 @@ export const buildRegistrationKeyIndex = (
 
   for (const contractName of Object.keys(manifestByContract)) {
     const impls = manifestByContract[contractName]!;
-    const list = Object.values(impls);
-    const explicit = list.find((m) => m.accessKey !== undefined)?.accessKey;
-    const slotKey =
-      explicit ?? contractNameToDefaultRegistrationKey(contractName);
-    contractByAccessKey.set(slotKey, contractName);
+    contractByAccessKey.set(
+      resolveManifestAccessKey(contractName, Object.values(impls)),
+      contractName,
+    );
   }
 
   for (const impls of Object.values(manifestByContract)) {

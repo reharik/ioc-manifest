@@ -26,7 +26,7 @@ import type {
   IocGroupNodeManifest,
   IocImplementationLifetime,
 } from "../core/manifest.js";
-import { contractNameToDefaultRegistrationKey } from "./naming.js";
+import { resolveManifestAccessKey } from "../core/contractAccessKey.js";
 import { parseGeneratedManifestSource } from "./parseGeneratedManifestSource.js";
 import { resolvePackageExportPath } from "./resolveComposedPackageExport.js";
 
@@ -129,12 +129,8 @@ export const parseComposedManifestSupplySource = (
 
   for (const [contractName, impls] of Object.entries(parsed.contracts)) {
     const contractUnits: ComposedManifestUnit[] = [];
-    let explicitAccessKey: string | undefined;
 
     for (const meta of Object.values(impls)) {
-      if (meta.accessKey !== undefined && explicitAccessKey === undefined) {
-        explicitAccessKey = meta.accessKey;
-      }
       contractUnits.push({
         packageName,
         contractName,
@@ -153,13 +149,13 @@ export const parseComposedManifestSupplySource = (
 
     units.push(...contractUnits);
 
-    // The default-slot alias, exactly as `registerContractDefaultAliases` computes it: an
-    // explicit `accessKey` when the manifest carries one, otherwise the camel-cased contract
-    // name — and only when some implementation is actually marked default.
+    // The default-slot alias, through the SAME derivation `registerContractDefaultAliases` and the
+    // registration plan go through — and only when some implementation is actually marked default,
+    // because no election means no slot key anywhere.
     const defaultUnit = contractUnits.find((unit) => unit.isDefault);
     if (defaultUnit !== undefined) {
       accessKeys.set(
-        explicitAccessKey ?? contractNameToDefaultRegistrationKey(contractName),
+        resolveManifestAccessKey(contractName, Object.values(impls)),
         defaultUnit.registrationKey,
       );
     }
