@@ -22,6 +22,10 @@ import path from "node:path";
 import ts from "typescript";
 import type { IocConfig, IocLifetime } from "../config/iocConfig.js";
 import type { IocGroupsManifest } from "../core/manifest.js";
+import {
+  docsPointerLine,
+  docsPointerSuffix,
+} from "../diagnostics/errorDocs.js";
 import { readDeclaredLbv } from "./declaredLbv.js";
 import { unitDepsSignatureDecl } from "./discoverFactories/contractSite.js";
 import { collectFileAnalysisForFactoryDiscovery } from "./discoverFactories/scanFactoryFile.js";
@@ -795,7 +799,18 @@ const formatComposedBlindSpotAdvisory = (
     `[ioc] ${variantLabel(ctx, variant)}: the resolution subtree reaches composed package(s) ${packageNames.map((name) => JSON.stringify(name)).join(", ")} whose manifest carries no dependency data, so late-bound-value verification is INCOMPLETE for that part of the subtree.`,
     `    Anything those packages' units demand is invisible here: a declared key they demand may be reported as never demanded, and an undeclared key they demand cannot be reported at all.`,
     `    Fix: regenerate those packages with a version of ioc-manifest that writes "dependencyKeys" into the manifest, then re-run generation here.`,
+    ...docsFooter("lbv_composed_blind_spot"),
   ].join("\n");
+
+/**
+ * The third register for a scope-root finding: one indented line naming the page that articulates
+ * the rule. Indented to sit with the mechanism lines rather than with the sentence, because these
+ * messages put their sentence on line one and everything else underneath it.
+ */
+const docsFooter = (code: ScopeRootFindingCode): string[] => {
+  const line = docsPointerLine(code);
+  return line === undefined ? [] : [`    ${line}`];
+};
 
 const formatMissingKeyError = (
   ctx: ScopeRootVerificationContext,
@@ -808,6 +823,7 @@ const formatMissingKeyError = (
     `    declared lbv: ${variant.lbvTypeText}`,
     `    ${PER_ROOT_COMPLETENESS_NOTE}`,
     `    Fix: add ${JSON.stringify(edge.key)} to the second type argument of ScopeRoot<${variant.contractName}, ...> on ${JSON.stringify(variant.exportName)}.`,
+    ...docsFooter("lbv_missing_key"),
   ].join("\n");
 
 const formatTypeMismatchError = (
@@ -823,6 +839,7 @@ const formatTypeMismatchError = (
     `    demanded:            ${demandedText}`,
     `    ${demandSiteLabel(ctx, edge)}`,
     `    The check runs supplied extends demanded — the value the scope carries must satisfy every consumer under the root, never the other way round. Widen the consumer's type or narrow the declaration.`,
+    ...docsFooter("lbv_type_mismatch"),
   ].join("\n");
 
 const formatUnusedKeyWarning = (
@@ -831,7 +848,7 @@ const formatUnusedKeyWarning = (
   key: string,
   containerSupplied: boolean,
 ): string =>
-  `[ioc] ${variantLabel(ctx, variant)}: declared late-bound value ${JSON.stringify(key)} is never demanded under the root${containerSupplied ? " (a manifest registration already supplies that key, so the scope boundary never carries it)" : ""}. The boundary contract carries dead weight — every opening site must pass a value nothing resolves. Remove it from the declaration, or wire the consumer that was meant to demand it.`;
+  `[ioc] ${variantLabel(ctx, variant)}: declared late-bound value ${JSON.stringify(key)} is never demanded under the root${containerSupplied ? " (a manifest registration already supplies that key, so the scope boundary never carries it)" : ""}. The boundary contract carries dead weight — every opening site must pass a value nothing resolves. Remove it from the declaration, or wire the consumer that was meant to demand it.${docsPointerSuffix("lbv_unused_key")}`;
 
 const formatScopeRootInversion = (
   ctx: ScopeRootVerificationContext,
@@ -857,7 +874,7 @@ const formatScopeRootInversion = (
       ? " A singleton freezes its scoped dependency at first construction, reusing it across every scope opened from this root."
       : " A longer-lived consumer should not depend on a shorter-lived dependency.";
   const trail = ` via ${[...viaPath, depKey].join(" → ")}. Register '${consumerLabel}' as scoped (or shorter), or mark it intentional with registrations['<Contract>'].<impl>.allowLifetimeInversion.`;
-  return `[ioc] ${head}${detail}${trail}`;
+  return `[ioc] ${head}${detail}${trail}${docsPointerSuffix("lifetime_inversion")}`;
 };
 
 /**

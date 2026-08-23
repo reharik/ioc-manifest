@@ -65,6 +65,18 @@ export type DiscoveryReportInput =
       /** Group plans from the non-throwing analyzer; carries membership and rejections. */
       groupPlans?: readonly GroupPlan[];
       /**
+       * Group membership as the manifest ON DISK records it, by group name — the "before" side of
+       * this run.
+       *
+       * Supplied opportunistically by the CLI (see `readPriorGroupMembers`), never by
+       * `runDiscoveryAnalysis`, which reads no manifest by design. Its only use is the ungrouping
+       * signal in {@link isInformativeGroupRejection}: a contract the manifest lists as a member and
+       * this scan rejects is a member LEAVING its group, which is worth a line even though the
+       * rejection reason is the stock one. Absent (no manifest generated yet) simply means that
+       * signal is unavailable, exactly as it is for every other manifest-derived fact.
+       */
+      priorGroupMembers?: ReadonlyMap<string, ReadonlySet<string>>;
+      /**
        * Module paths the config's `discovery.excludes` kept out of the scan, resolved by
        * `runDiscoveryAnalysis`. Rendered as synthetic rows — see {@link buildExcludedFileEntries}.
        */
@@ -79,7 +91,59 @@ export type GroupRejectionReportRow = {
   /** Verbatim reason code — the grep handle. */
   reason: GroupMembershipRejectionReason;
   gloss: string;
+  /**
+   * True when the contract satisfies the base's SHAPE and simply never declared heritage to it.
+   * Recorded only by `inspect --discovery`; absent everywhere else.
+   */
+  structurallyAssignable?: boolean;
+  /** True when the generated manifest currently on disk lists this contract as a member here. */
+  wasMember?: boolean;
+  /**
+   * Whether the human screen gives this rejection its own line. See
+   * {@link isInformativeGroupRejection} for the rule; `--json` carries every row either way, and
+   * `--verbose` prints every row either way.
+   */
+  informative: boolean;
 };
+
+/**
+ * The stock rejection: the walk completed and found no `extends` path to the base.
+ *
+ * Every contract in the package that is not a member of a given group is rejected for this reason,
+ * so a package with 91 contracts and 7 groups produces ~600 of these rows. That is the wall this
+ * predicate exists to collapse.
+ */
+const STOCK_REJECTION_REASON: GroupMembershipRejectionReason =
+  "nominal_heritage_not_declared";
+
+/**
+ * Whether one rejection earns a line of its own on the human screen.
+ *
+ * The question a rejection row can answer is "why is X not in this group?", and it is only worth
+ * printing unasked when there is reason to think someone WANTED X in the group. Three signals say
+ * so, and nothing else does:
+ *
+ * 1. **Shape.** The contract satisfies the base structurally and never wrote `extends`. Membership
+ *    is nominal, so this is the archetypal near-miss — the member someone believes they declared.
+ * 2. **History.** The manifest on disk lists it as a member, so it is leaving the group in THIS
+ *    run. That is the ungrouping cliff, and it is the last moment anyone will be told about it.
+ * 3. **A non-stock reason.** `contract_type_unresolved`, `contract_type_not_named` and
+ *    `base_type_not_named` are failures to resolve a type, not verdicts about a candidate. They
+ *    mean something is broken, they are rare, and they are never the wall.
+ *
+ * Everything else collapses to one counted line per reason per group. `UserRepository` was never a
+ * candidate for `notificationWriters`, and eighty-four lines saying so is how a reader stops
+ * reading. The drill-down is `--contract <name>`, which prints the specific verdict for one name,
+ * and `--verbose`, which prints the whole wall.
+ */
+export const isInformativeGroupRejection = (rejection: {
+  reason: GroupMembershipRejectionReason;
+  structurallyAssignable?: boolean;
+  wasMember?: boolean;
+}): boolean =>
+  rejection.reason !== STOCK_REJECTION_REASON ||
+  rejection.structurallyAssignable === true ||
+  rejection.wasMember === true;
 
 /**
  * One configured group. Built either from the generated manifest (`inspect`, no rejections — the
@@ -230,9 +294,66 @@ export const buildGroupReportsFromManifest = (
     });
 };
 
+/**
+ * One rejection, with the two recorded signals joined on and the render verdict computed once.
+ *
+ * `informative` is stored rather than recomputed at render time so that `--json` consumers see the
+ * same verdict the human screen acted on, and so a filter that narrows rows cannot change it.
+ */
+const toRejectionRow = (
+  rejection: GroupPlan["rejections"][number],
+  priorMembers: ReadonlySet<string> | undefined,
+): GroupRejectionReportRow => {
+  const wasMember = priorMembers?.has(rejection.contractName) === true;
+  const row = {
+    contractName: rejection.contractName,
+    ...(rejection.registrationKey !== undefined
+      ? { registrationKey: rejection.registrationKey }
+      : {}),
+    reason: rejection.reason,
+    gloss: glossForGroupRejection(rejection.reason),
+    ...(rejection.structurallyAssignable !== undefined
+      ? { structurallyAssignable: rejection.structurallyAssignable }
+      : {}),
+    ...(wasMember ? { wasMember: true } : {}),
+  };
+  return { ...row, informative: isInformativeGroupRejection(row) };
+};
+
+export type BuildGroupReportsOptions = {
+  /** Membership per group as the manifest on disk records it. See `priorGroupMembers`. */
+  priorGroupMembers?: ReadonlyMap<string, ReadonlySet<string>>;
+};
+
+/**
+ * Group membership as the manifest on disk records it: group name → member CONTRACT names.
+ *
+ * Contract names rather than registration keys, because that is the vocabulary a rejection speaks:
+ * membership is decided per contract, and a rejection names the contract it dropped.
+ */
+export const readPriorGroupMembers = (
+  groups: IocGroupsManifest | undefined,
+): ReadonlyMap<string, ReadonlySet<string>> => {
+  const byGroup = new Map<string, ReadonlySet<string>>();
+  for (const [groupName, root] of Object.entries(groups ?? {})) {
+    if (!isGroupRootManifest(root)) continue;
+    const members = new Set<string>(
+      (Array.isArray(root.members)
+        ? root.members
+        : Object.values(
+            root.members as Record<string, { contractName: string }>,
+          )
+      ).map((leaf) => leaf.contractName),
+    );
+    byGroup.set(groupName, members);
+  }
+  return byGroup;
+};
+
 /** Group plans from the generator-side membership pass — members and the candidates it dropped. */
 export const buildGroupReportsFromPlans = (
   plans: readonly GroupPlan[],
+  options?: BuildGroupReportsOptions,
 ): InspectionGroupReport[] =>
   [...plans]
     .sort((a, b) => a.groupName.localeCompare(b.groupName))
@@ -259,14 +380,12 @@ export const buildGroupReportsFromPlans = (
             a.contractName.localeCompare(b.contractName) ||
             (a.registrationKey ?? "").localeCompare(b.registrationKey ?? ""),
         )
-        .map((rejection) => ({
-          contractName: rejection.contractName,
-          ...(rejection.registrationKey !== undefined
-            ? { registrationKey: rejection.registrationKey }
-            : {}),
-          reason: rejection.reason,
-          gloss: glossForGroupRejection(rejection.reason),
-        })),
+        .map((rejection) =>
+          toRejectionRow(
+            rejection,
+            options?.priorGroupMembers?.get(plan.groupName),
+          ),
+        ),
     }));
 
 export type BuildInspectionReportOptions = {
@@ -860,7 +979,11 @@ export const buildDiscoveryReport = (
       verificationByVariant,
     ),
     scopeRootSharedUnits: asObject?.scopeRootSharedUnits ?? [],
-    groups: buildGroupReportsFromPlans(asObject?.groupPlans ?? []),
+    groups: buildGroupReportsFromPlans(asObject?.groupPlans ?? [], {
+      ...(asObject?.priorGroupMembers !== undefined
+        ? { priorGroupMembers: asObject.priorGroupMembers }
+        : {}),
+    }),
     excludedByConfig,
     summary: summarize(scannedFiles, excludedByConfig.length),
   };

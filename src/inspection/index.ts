@@ -9,6 +9,9 @@ export {
   buildOpenerReportsFromManifest,
   filterDiscoveryReportByContract,
   filterInspectionReportByContract,
+  isInformativeGroupRejection,
+  readPriorGroupMembers,
+  type BuildGroupReportsOptions,
   type BuildInspectionReportOptions,
   type DiscoveryExportReportRow,
   type DiscoveryReport,
@@ -59,3 +62,21 @@ export {
   validateManifest,
   type ManifestValidationIssue,
 } from "./validateManifest.js";
+
+export {
+  explainFromDiscovery,
+  explainFromManifest,
+  type ExplainDependency,
+  type ExplainDependent,
+  type ExplainLifetime,
+  type ExplainMode,
+  type ExplainReport,
+  type ExplainResolution,
+  type ExplainUnit,
+} from "./explain.js";
+
+export {
+  formatExplainReport,
+  formatExplainReportJson,
+  type FormatExplainOptions,
+} from "./formatExplain.js";

@@ -9,6 +9,7 @@ import { formatInspectionReportJson } from "./reportJson.js";
 import type {
   DiscoveryExportReportRow,
   DiscoveryReport,
+  InspectionGroupReport,
   InspectionReport,
 } from "./reports.js";
 
@@ -296,22 +297,27 @@ describe("formatDiscoveryReport", () => {
   });
 
   describe("When a groups section is rendered", () => {
-    it("should list members and rejected candidates with code and gloss", () => {
+    const groupWith = (
+      rejections: InspectionGroupReport["rejections"],
+    ): InspectionGroupReport => ({
+      groupName: "mediaStoragesGroup",
+      kind: "collection",
+      baseType: "MediaStorage",
+      members: [{ memberName: "MediaStorage", registrationKey: "local" }],
+      rejections,
+    });
+
+    it("should list members and any rejection the predicate calls informative", () => {
       const report = reportOf([discoveredRow], {
         groups: [
-          {
-            groupName: "mediaStoragesGroup",
-            kind: "collection",
-            baseType: "MediaStorage",
-            members: [{ memberName: "MediaStorage", registrationKey: "local" }],
-            rejections: [
-              {
-                contractName: "NotInGroup",
-                reason: "nominal_heritage_not_declared",
-                gloss: "declares no heritage",
-              },
-            ],
-          },
+          groupWith([
+            {
+              contractName: "NotInGroup",
+              reason: "contract_type_unresolved",
+              gloss: "declared type could not be loaded",
+              informative: true,
+            },
+          ]),
         ],
       });
 
@@ -321,8 +327,92 @@ describe("formatDiscoveryReport", () => {
       assert.match(text, /MediaStorage — local/);
       assert.match(
         text,
-        /considered, rejected: NotInGroup \(nominal_heritage_not_declared\) — declares no heritage/,
+        /considered, rejected: NotInGroup \(contract_type_unresolved\) — declared type could not be loaded/,
       );
+    });
+
+    it("should collapse stock rejections to one counted line per reason", () => {
+      const report = reportOf([discoveredRow], {
+        groups: [
+          groupWith(
+            ["UserRepository", "OrderRepository", "Clock"].map((name) => ({
+              contractName: name,
+              reason: "nominal_heritage_not_declared" as const,
+              gloss: "declares no heritage",
+              informative: false,
+            })),
+          ),
+        ],
+      });
+
+      const text = formatDiscoveryReport(report, { color: false });
+
+      assert.match(
+        text,
+        /considered, rejected: 3 \(nominal_heritage_not_declared\) — use --contract <name> for a specific verdict/,
+      );
+      assert.ok(!/UserRepository/.test(text));
+      assert.match(text, /--verbose to show 3 collapsed group rejection\(s\)/);
+    });
+
+    it("should say why an informative stock rejection earned its line", () => {
+      const report = reportOf([discoveredRow], {
+        groups: [
+          groupWith([
+            {
+              contractName: "LooksLikeOne",
+              reason: "nominal_heritage_not_declared",
+              gloss: "declares no heritage",
+              structurallyAssignable: true,
+              informative: true,
+            },
+            {
+              contractName: "WasAMember",
+              reason: "nominal_heritage_not_declared",
+              gloss: "declares no heritage",
+              wasMember: true,
+              informative: true,
+            },
+          ]),
+        ],
+      });
+
+      const text = formatDiscoveryReport(report, { color: false });
+
+      assert.match(
+        text,
+        /LooksLikeOne .*— has the base's shape but declares no heritage to it/,
+      );
+      assert.match(
+        text,
+        /WasAMember .*— was a member in the generated manifest; this scan drops it/,
+      );
+    });
+
+    it("should print every rejection under --verbose", () => {
+      const report = reportOf([discoveredRow], {
+        groups: [
+          groupWith([
+            {
+              contractName: "UserRepository",
+              reason: "nominal_heritage_not_declared",
+              gloss: "declares no heritage",
+              informative: false,
+            },
+          ]),
+        ],
+      });
+
+      const text = formatDiscoveryReport(report, {
+        color: false,
+        verbose: true,
+      });
+
+      assert.match(
+        text,
+        /considered, rejected: UserRepository \(nominal_heritage_not_declared\)/,
+      );
+      assert.ok(!/use --contract <name>/.test(text));
     });
   });
 });

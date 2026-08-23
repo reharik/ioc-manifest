@@ -25,7 +25,7 @@ Full documentation lives at **[reharik.github.io/ioc-manifest](https://reharik.g
 - [Introduction](https://reharik.github.io/ioc-manifest/guide/introduction) — the problem, what this does, library vs app mode
 - [Quick start](https://reharik.github.io/ioc-manifest/guide/quick-start) — units → config → generate → bootstrap
 - [Migrating from `loadModules`](https://reharik.github.io/ioc-manifest/guide/migrating-from-loadmodules) — key parity, what build-time generation adds
-- [Core concepts](https://reharik.github.io/ioc-manifest/concepts/conventions) — conventions, [classes](https://reharik.github.io/ioc-manifest/concepts/classes), [lifetimes](https://reharik.github.io/ioc-manifest/concepts/lifetimes), [groups](https://reharik.github.io/ioc-manifest/concepts/groups)
+- [Core concepts](https://reharik.github.io/ioc-manifest/concepts/conventions) — conventions, [classes](https://reharik.github.io/ioc-manifest/concepts/classes), [lifetimes](https://reharik.github.io/ioc-manifest/concepts/lifetimes), [groups](https://reharik.github.io/ioc-manifest/concepts/groups), [scope roots](https://reharik.github.io/ioc-manifest/concepts/scope-roots)
 - [`ioc.config.ts` reference](https://reharik.github.io/ioc-manifest/config/reference) — the single policy surface
 - [Cross-package composition](https://reharik.github.io/ioc-manifest/monorepo/composition) — monorepo app mode
 - [CLI](https://reharik.github.io/ioc-manifest/reference/cli) · [Error handling](https://reharik.github.io/ioc-manifest/reference/errors) · [Generated types](https://reharik.github.io/ioc-manifest/reference/generated-types) · [Pitfalls](https://reharik.github.io/ioc-manifest/reference/pitfalls)

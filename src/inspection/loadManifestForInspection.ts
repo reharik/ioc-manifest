@@ -108,3 +108,22 @@ export const loadManifestForInspection = async (
     scopeRoots: parsed.scopeRoots,
   };
 };
+
+/**
+ * {@link loadManifestForInspection}, but absence is an answer rather than an error.
+ *
+ * For callers whose report is only ENRICHED by the manifest — `inspect --discovery`, which reads it
+ * for the previous generation's group membership and nothing else. A package that has never
+ * generated, or whose manifest no longer parses, must still get its discovery report; it just gets
+ * it without the facts only a manifest carries.
+ */
+export const tryLoadManifestForInspection = async (
+  iocConfigPath?: string,
+  searchStartDir?: string,
+): Promise<InspectionManifestSource | undefined> => {
+  try {
+    return await loadManifestForInspection(iocConfigPath, searchStartDir);
+  } catch {
+    return undefined;
+  }
+};

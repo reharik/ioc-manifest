@@ -42,7 +42,10 @@ describe("validate checks", () => {
         assert.equal(issues.length, 1);
         assert.equal(issues[0]!.category, "externals");
         assert.match(issues[0]!.summary, /Unsatisfied.*logger/);
-        assert.match(issues[0]!.details.join("\n"), /No manifest in composedManifests supplies/);
+        assert.match(
+          issues[0]!.details.join("\n"),
+          /No composed manifest offers this key/,
+        );
       });
     });
 
@@ -364,7 +367,9 @@ describe("validate checks", () => {
         assert.equal(issues[0]!.severity, "warning");
         assert.match(issues[0]!.details.join("\n"), /Type compatibility not verified/);
         assert.match(issues[0]!.details.join("\n"), /tsc/);
-        assert.equal(issues[0]!.details[0], CHECKER_UNAVAILABLE_CAVEAT);
+        // The caveat is the last detail line now that the mechanism (key, demander, suppliers)
+        // precedes it; what matters is that the caveat is stated, not where it sits.
+        assert.ok(issues[0]!.details.includes(CHECKER_UNAVAILABLE_CAVEAT));
       });
     });
   });

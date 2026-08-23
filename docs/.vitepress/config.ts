@@ -53,6 +53,7 @@ export default defineConfig({
           { text: "Class registration", link: "/concepts/classes" },
           { text: "Lifetimes", link: "/concepts/lifetimes" },
           { text: "Groups", link: "/concepts/groups" },
+          { text: "Scope roots", link: "/concepts/scope-roots" },
         ],
       },
       {

@@ -8,61 +8,19 @@
  * Skip-reason and rejection codes are printed verbatim in snake_case — they are the grep handle for
  * humans and agents alike, so they are never prettified.
  */
+import { resolveAnsi, type Ansi } from "../diagnostics/ansi.js";
 import type { ScopeRootSharedSubtreeUnit } from "../generator/scopeRootExternalsExclusion.js";
 import type {
   DiscoveryExportReportRow,
   DiscoveryReport,
   DiscoveryScopeRootVerificationRow,
+  GroupRejectionReportRow,
   InspectionContractReport,
   InspectionGroupReport,
   InspectionOpenerReport,
   InspectionReport,
 } from "./reports.js";
 import type { ManifestValidationIssue } from "./validateManifest.js";
-
-const shouldColorize = (): boolean => {
-  if (process.env.NO_COLOR !== undefined && process.env.NO_COLOR !== "") {
-    return false;
-  }
-  if (process.env.FORCE_COLOR !== undefined && process.env.FORCE_COLOR !== "0") {
-    return true;
-  }
-  return process.stdout.isTTY === true;
-};
-
-type Ansi = {
-  reset: string;
-  bold: string;
-  dim: string;
-  cyan: string;
-  green: string;
-  red: string;
-  yellow: string;
-};
-
-const ansi = (enabled: boolean): Ansi => {
-  if (!enabled) {
-    const id = (s: string): string => s;
-    return {
-      reset: id(""),
-      bold: id(""),
-      dim: id(""),
-      cyan: id(""),
-      green: id(""),
-      red: id(""),
-      yellow: id(""),
-    };
-  }
-  return {
-    reset: "\x1b[0m",
-    bold: "\x1b[1m",
-    dim: "\x1b[2m",
-    cyan: "\x1b[36m",
-    green: "\x1b[32m",
-    red: "\x1b[31m",
-    yellow: "\x1b[33m",
-  };
-};
 
 /**
  * Names are padded to a shared column within a file block so the eye can scan down the contract
@@ -86,8 +44,73 @@ const formatManifestIssues = (
   ].join("\n");
 };
 
+const rejectionName = (rejection: GroupRejectionReportRow): string =>
+  rejection.registrationKey !== undefined
+    ? `${rejection.contractName}.${rejection.registrationKey}`
+    : rejection.contractName;
+
+/**
+ * Why THIS rejection is worth a line, when most are not.
+ *
+ * It REPLACES the reason's stock gloss rather than following it. The gloss explains the code, which
+ * for a near-miss the reader can already see; what they cannot see is which of the two signals
+ * promoted this row out of the collapsed tally, and that is the sentence worth the width. The full
+ * gloss is still in `--json` and still on every row `--verbose` prints for a non-stock reason.
+ */
+const rejectionExplanation = (rejection: GroupRejectionReportRow): string => {
+  if (rejection.wasMember === true) {
+    return "was a member in the generated manifest; this scan drops it";
+  }
+  if (rejection.structurallyAssignable === true) {
+    return "has the base's shape but declares no heritage to it";
+  }
+  return rejection.gloss;
+};
+
+/**
+ * One line per rejection is the wrong default at any real scale.
+ *
+ * A group lists the contracts it rejected so a reader can answer "why is X not in here?". But the
+ * membership pass considers EVERY contract in the package against EVERY group, so the answer for
+ * almost all of them is the same stock sentence, and printing it per pair is what turned a 91-unit,
+ * 7-group package into a two-thousand-line report. The informative ones (see
+ * `isInformativeGroupRejection`) keep their line; the rest become one counted line per reason, with
+ * the drill-down named on it.
+ */
+const formatRejections = (
+  group: InspectionGroupReport,
+  verbose: boolean,
+  c: Ansi,
+): string[] => {
+  const lines: string[] = [];
+  const collapsed = new Map<string, number>();
+
+  for (const rejection of group.rejections) {
+    if (!verbose && !rejection.informative) {
+      collapsed.set(rejection.reason, (collapsed.get(rejection.reason) ?? 0) + 1);
+      continue;
+    }
+    lines.push(
+      `    ${c.dim}considered, rejected:${c.reset} ${rejectionName(rejection)}` +
+        ` ${c.yellow}(${rejection.reason})${c.reset}` +
+        ` ${c.dim}— ${rejectionExplanation(rejection)}${c.reset}`,
+    );
+  }
+
+  for (const [reason, count] of collapsed) {
+    lines.push(
+      `    ${c.dim}considered, rejected:${c.reset} ${count}` +
+        ` ${c.yellow}(${reason})${c.reset}` +
+        ` ${c.dim}— use --contract <name> for a specific verdict${c.reset}`,
+    );
+  }
+
+  return lines;
+};
+
 const formatGroupsSection = (
   groups: readonly InspectionGroupReport[],
+  verbose: boolean,
   c: Ansi,
 ): string[] => {
   if (groups.length === 0) return [];
@@ -117,15 +140,7 @@ const formatGroupsSection = (
       continue;
     }
 
-    for (const rejection of group.rejections) {
-      const name =
-        rejection.registrationKey !== undefined
-          ? `${rejection.contractName}.${rejection.registrationKey}`
-          : rejection.contractName;
-      lines.push(
-        `    ${c.dim}considered, rejected:${c.reset} ${name} ${c.yellow}(${rejection.reason})${c.reset} ${c.dim}— ${rejection.gloss}${c.reset}`,
-      );
-    }
+    lines.push(...formatRejections(group, verbose, c));
   }
 
   lines.push("");
@@ -224,15 +239,15 @@ const defaultMarking = (
 export type FormatInspectionReportOptions = {
   /** When omitted, uses TTY + NO_COLOR / FORCE_COLOR (same idea as common CLIs). */
   color?: boolean;
+  /** Print every group rejection individually instead of collapsing the stock ones. */
+  verbose?: boolean;
 };
 
 export const formatInspectionReport = (
   report: InspectionReport,
   options?: FormatInspectionReportOptions,
 ): string => {
-  const color =
-    options?.color !== undefined ? options.color : shouldColorize();
-  const c = ansi(color);
+  const c = resolveAnsi(options?.color);
   const lines: string[] = [];
 
   const header = formatManifestIssues(report.manifestIssues);
@@ -274,7 +289,7 @@ export const formatInspectionReport = (
   }
 
   lines.push(...formatOpenersSection(report.openers, c));
-  lines.push(...formatGroupsSection(report.groups, c));
+  lines.push(...formatGroupsSection(report.groups, options?.verbose === true, c));
 
   if (report.filter !== undefined) {
     lines.push(
@@ -288,7 +303,10 @@ export const formatInspectionReport = (
 export type FormatDiscoveryReportOptions = {
   /** When omitted, uses TTY + NO_COLOR / FORCE_COLOR (same idea as common CLIs). */
   color?: boolean;
-  /** Show not-a-candidate rows (and the files that hold only those). Default: hidden. */
+  /**
+   * Show not-a-candidate rows (and the files that hold only those), and every group rejection
+   * rather than the collapsed tally. Default: hidden.
+   */
   verbose?: boolean;
 };
 
@@ -384,10 +402,15 @@ const formatRow = (
   }
 
   if (row.status === "discovered") {
-    const lifetime =
-      row.lifetime !== undefined
-        ? `  ${row.lifetime}${row.lifetimeSource !== undefined ? ` ${c.dim}(${row.lifetimeSource})${c.reset}` : ""}`
+    // Provenance only where it DISCRIMINATES, the same rule the default marker follows: `default`
+    // is what a lifetime is when nothing decided it, so printing `(default)` on most rows of most
+    // reports is how the one row that says `(group-base-marker)` stops standing out.
+    const provenance =
+      row.lifetimeSource !== undefined && row.lifetimeSource !== "default"
+        ? ` ${c.dim}(${row.lifetimeSource})${c.reset}`
         : "";
+    const lifetime =
+      row.lifetime !== undefined ? `  ${row.lifetime}${provenance}` : "";
     // Set only for a contract that had more than one implementation to choose between — see
     // `buildPlanJoin`. The contested cases `inspect` shouts about have no counterpart here: a
     // contract whose default cannot be elected fails the registration plan, and `--discovery`
@@ -460,10 +483,8 @@ export const formatDiscoveryReport = (
   report: DiscoveryReport,
   options?: FormatDiscoveryReportOptions,
 ): string => {
-  const color =
-    options?.color !== undefined ? options.color : shouldColorize();
   const verbose = options?.verbose === true;
-  const c = ansi(color);
+  const c = resolveAnsi(options?.color);
   const lines: string[] = [];
 
   for (const file of report.files) {
@@ -489,7 +510,7 @@ export const formatDiscoveryReport = (
   lines.push(
     ...formatSharedScopeRootUnitsSection(report.scopeRootSharedUnits, c),
   );
-  lines.push(...formatGroupsSection(report.groups, c));
+  lines.push(...formatGroupsSection(report.groups, verbose, c));
 
   lines.push(...formatSummary(report, c));
 
@@ -498,10 +519,21 @@ export const formatDiscoveryReport = (
       `${c.dim}Rows filtered by --contract ${JSON.stringify(report.filter.contract)}; counts above are for the full scan.${c.reset}`,
     );
   }
-  if (!verbose && report.summary.notACandidateFiles > 0) {
-    lines.push(
-      `${c.dim}Run with --verbose to show not-a-candidate rows.${c.reset}`,
-    );
+  const collapsedRejections = report.groups.reduce(
+    (total, group) =>
+      total + group.rejections.filter((r) => !r.informative).length,
+    0,
+  );
+  if (!verbose && (report.summary.notACandidateFiles > 0 || collapsedRejections > 0)) {
+    const hidden = [
+      ...(report.summary.notACandidateFiles > 0
+        ? ["not-a-candidate rows"]
+        : []),
+      ...(collapsedRejections > 0
+        ? [`${collapsedRejections} collapsed group rejection(s)`]
+        : []),
+    ].join(" and ");
+    lines.push(`${c.dim}Run with --verbose to show ${hidden}.${c.reset}`);
   }
 
   return lines.join("\n").trimEnd();

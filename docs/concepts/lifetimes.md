@@ -1,6 +1,6 @@
 # Lifetimes
 
-Every registration has an Awilix lifetime — `singleton`, `scoped`, or `transient`. This page covers the three ways to assign them (markers, folder scope, explicit config) and the generation-time check that catches lifetime inversions before they become runtime bugs.
+Every registration has an Awilix lifetime — `singleton`, `scoped`, or `transient`. This page covers the three ways to assign them (markers, folder scope, explicit config), the rule that decides whether a combination of them is sound, the generation-time check that enforces it, and the two ways a real migration hit that check hardest.
 
 ## Lifetime markers
 
@@ -103,6 +103,30 @@ This came out of a real pattern: in a GraphQL API, services and repositories are
 
 Per-implementation overrides in `registrations` and lifetime markers take precedence over folder scope.
 
+## The floor rule
+
+One sentence governs every combination of lifetimes in a container:
+
+> **A unit lives at most as long as its shortest-lived dependency.**
+
+It is not a policy this tool invented; it is what a container does. A `singleton` is constructed once and the instance it was handed at construction is the instance it holds forever. If that instance was meant to last one request, the singleton has quietly extended it to the life of the process. The dependency's lifetime is a *ceiling* on the consumer's, and the consumer either lives under it or breaks it.
+
+Two things follow.
+
+**A longer-lived unit cannot hold a shorter-lived one.** That is the whole of the [inversion check](/concepts/lifetimes#lifetime-inversion-checks): it ranks every dependency edge and reports the ones where the floor was breached.
+
+**Lifetime propagates upward through a dependency tree.** If a repository holds a per-request unit of work, the repository is per-request. If a write service holds that repository, the write service is per-request too. Nothing about the write service *itself* is request-scoped — it has no state, it just calls methods — and it is scoped anyway, because one of its dependencies is.
+
+### Why repositories are scoped
+
+This is the question that comes up in every migration, usually phrased as "why can't my repository be a singleton, it has no state".
+
+Because it takes a `uow`. A unit of work is a transaction handle: one per request, opened when the request starts and committed or rolled back when it ends. A repository holding one is holding *this request's* transaction, so the repository is per-request by the floor rule. And everything that holds the repository — the write service, the command handler, the resolver that calls them — is per-request for the same reason. The unit of work is the floor, and the entire write tree stands on it.
+
+The read tree, which does not take a `uow`, is under no such constraint. That asymmetry is normal and worth keeping: it is why a read service can be a singleton in the same codebase where its write counterpart cannot.
+
+The practical form of this is that you do not decide a unit's lifetime by looking at the unit. You look at what it demands. `ioc explain <key> --discovery` prints exactly that list with each dependency's lifetime next to it, which is usually the fastest way to answer "why is this scoped".
+
 ## Lifetime inversion checks
 
 Awilix lifetimes have an ordering: a `singleton` lives for the life of the container, a `scoped` instance lives for one scope (typically one request), a `transient` is rebuilt on every resolve. When a longer-lived registration depends on a shorter-lived one, the longer-lived service captures a single instance of that dependency at first construction and reuses it forever — quietly defeating the shorter lifetime.
@@ -116,10 +140,13 @@ The classic case: a `singleton` that depends on a `scoped` repository holding a 
 
 The check resolves each demanded key precisely — a specific registration key, a contract's default slot, a group's members, or a scope-provided key — so it names the exact dependency rather than guessing across a contract's implementations. Findings aggregate: every warning prints, and if there are errors, generation throws once with the full list rather than failing on the first one.
 
-A typical error:
+A typical error. The sentence states the rule, the pointer names the page that articulates it, and each offender line is the mechanism — which unit, which dependency, which lifetimes, and what that does at runtime:
 
 ```
-Lifetime inversion: 'grantSync' (singleton) depends on 'grantRepository' (scoped). A singleton freezes its scoped dependency at first construction, reusing it across all scopes. Register 'grantSync' as scoped (or shorter), or mark it intentional with registrations['Grant'].grantSync.allowLifetimeInversion.
+[ioc] 1 lifetime inversion. A unit lives at most as long as its shortest-lived dependency, and these outlive theirs:
+→ docs: https://reharik.github.io/ioc-manifest/concepts/lifetimes#the-floor-rule
+  - [lifetime-inversion] 'grantSync' (singleton) depends on 'grantRepository' (scoped) — a singleton freezes its scoped dependency at first construction and reuses it across every scope.
+Fix by registering the consumer at the shorter lifetime, or mark an inversion intentional with registrations[<Contract>].<impl>.allowLifetimeInversion in ioc.config.
 ```
 
 The usual fix is the obvious one — the consumer should be `scoped`:
@@ -146,3 +173,66 @@ registrations: {
 ```
 
 Prefer the `string[]` form. `true` silences every inversion for that consumer — including ones you introduce later and didn't mean to. Listing the keys you're knowingly inverting keeps the rest of the check live. The field is config-only and never appears in the generated manifest.
+
+## The captive dependency
+
+This is the incident the inversion check was written for, and it is worth reading even if you never see the error, because the failure mode is silent.
+
+A sync job — call it `grantSync` — was registered as a `singleton`. It ran on a timer, it held no state of its own, and singleton was the obvious choice. It depended on `grantRepository`, which was `scoped`, because `grantRepository` takes a `uow`.
+
+Awilix built `grantSync` once, on first resolve. To build it, it resolved `grantRepository` once. To build *that*, it resolved `uow` once — the unit of work belonging to whichever request happened to trigger the first construction. That transaction handle then lived inside the singleton forever. Every subsequent run of the sync job wrote through the first request's transaction: a transaction that had already been committed, on a connection that had long since been returned to the pool.
+
+Nothing threw. There was no error to catch, no log line to find. Writes went to a handle nobody was watching, and the symptom surfaced days later as data that should have existed and did not.
+
+Two properties make this class of bug worth a build-time check rather than a code review rule:
+
+- **It is invisible at the consumer.** `grantSync` never mentions `uow`. It holds a repository, and the repository holds the transaction. Holding something that holds it is enough, so reading the singleton's own source tells you nothing.
+- **It is created by a change somewhere else.** `grantSync` was correct on the day it was written. It became wrong when `grantRepository` gained a `uow` dependency — a change in a different file, made for a different reason, by someone who had no reason to look at the sync job.
+
+That is why `singleton → scoped` is an error rather than a warning: it is nearly always this bug, and the cost of the false positive (adding `lifetime: "scoped"` to a job that did not need it) is nothing next to the cost of the false negative.
+
+## The ungrouping cliff
+
+The second incident is about what happens when a unit *leaves* a group.
+
+Lifetime for a grouped contract is [declared on the group's base](/concepts/groups#lifetime-belongs-to-the-group), and every member inherits it. A family of write services extending `WriteServiceBase`, whose base carries a `scoped` marker, is `scoped` — all of it, with nothing said at any member.
+
+Now remove one member from the family. Perhaps its contract stopped extending the base during a refactor; perhaps the base was renamed and one contract was missed. The member is still discovered, still registered, still resolvable. What it is no longer is scoped: with no marker of its own and no group base to inherit from, its lifetime falls to the default, which is `singleton`.
+
+Nothing announces this. The contract compiles, the manifest generates, the container starts. A unit that was per-request is now process-wide, and it is still holding a `uow`.
+
+Two things catch it, and it is worth knowing which one you are relying on:
+
+- **The inversion check is the net.** The moment the ungrouped unit becomes a singleton, its scoped dependencies become `singleton → scoped` edges, and generation fails. This is the safety net, and it is a good one — but it catches the *consequence*, so the error names a lifetime inversion rather than the group membership that actually changed.
+- **The discovery report is the warning.** `ioc inspect --discovery` prints a line for a contract the previous generated manifest listed as a group member and this scan does not, precisely because that is the moment nobody would otherwise be told. It is one of the three cases that earn an individual line in the group rejection list rather than being collapsed into a count.
+
+If a lifetime inversion appears in a package you did not think you had changed, check group membership first: `ioc explain <key> --discovery` prints the provenance chain, and a unit that has fallen off a group base says `singleton ← default` where it used to say `scoped ← group-base marker on WriteServiceBase`.
+
+## Lifetime provenance
+
+Every resolved lifetime carries a record of what decided it. The vocabulary is small, and it is the same in every place a lifetime is printed:
+
+| provenance | means |
+| --- | --- |
+| `factory-config` | `registrations[Contract][impl].lifetime` in `ioc.config` — an explicit per-implementation override |
+| `lifetime-marker` | a `lifetimeMarkers` interface on the unit's own contract site |
+| `group-base-marker` | a marker on the base type of a group this contract is a member of; the family declared it, not the member |
+| `discovery-root` | a `discovery.scanDirs[].scope` covering the unit's file |
+| `default` | nothing declared one — `singleton` |
+
+Two commands render it.
+
+`ioc inspect --discovery` puts it next to the lifetime on each discovered row, and **only when it is informative**: `default` is what a lifetime is when nothing decided it, so printing it on most rows of most reports is exactly what makes the one row saying `(group-base-marker)` stop standing out.
+
+```
+✔ buildOrderWriteService → OrderWriteService  key: orderWriteService  scoped (group-base-marker)
+✔ buildClock             → Clock              key: clock              singleton
+```
+
+`ioc explain <key> --discovery` renders it as a chain, in the direction of causation, ending at the thing to go and open:
+
+```
+Lifetime: scoped ← group-base marker on WriteServiceBase (RequestScopeLifeCycle) ← member of group "writeServices"
+```
+
+Provenance is a property of the *scan*, not of the manifest: a generated manifest records the lifetime it resolved, not the reasoning that produced it. `ioc explain <key>` without `--discovery` therefore prints the lifetime and says the provenance is not recorded, rather than guessing at it.

@@ -47,6 +47,11 @@
  */
 import path from "node:path";
 import ts from "typescript";
+import {
+  docsPointerLine,
+  docsPointerSuffix,
+  docsUrlForCode,
+} from "../../diagnostics/errorDocs.js";
 import { resolveAnnotationContract } from "../discoverFactories/contractSite.js";
 import { resolveDepsPropertyTypeNode } from "./resolveIocGeneratedCradleIndexedAccess.js";
 import type { FactorySourceLocation } from "./types.js";
@@ -545,16 +550,48 @@ export const checkNamedDemand = (
   return undefined;
 };
 
+/** The code the aggregated preamble links under — the rule, rather than any one way of breaking it. */
+export const DEMAND_MODEL_FAMILY_CODE = "demand-model";
+
+/**
+ * An offender line links only when its own code points somewhere the preamble does not.
+ *
+ * Seven of the eight codes ARE the demand model, and the preamble has already linked it; repeating
+ * that URL on every offender is how a link stops being read. `grouped-member-demand` is the one that
+ * points elsewhere — at the group law, which is a different rule and a different fix — so it says so.
+ */
+const offenderDocsSuffix = (
+  code: NamedDemandFindingCode,
+  familyUrl: string | undefined,
+): string =>
+  docsUrlForCode(code) === familyUrl ? "" : docsPointerSuffix(code);
+
 /**
  * The aggregated error text for every offender in one run — the offender-bucket shape discovery and
  * scope-root verification already use, so a single run surfaces every failure instead of the first.
+ *
+ * Three registers, in order. The **sentence** says what happened in plain language and names the
+ * five things as NAMES, not as articulated definitions — a reader who needs the definitions is one
+ * click away and a reader who does not is not made to scroll past them. The **docs pointer** is that
+ * click. The **mechanism** is the offender list, which is the part nobody can get anywhere else:
+ * unit, file, line, property, and the exact spellings that would fix it.
  */
 export const formatNamedDemandErrors = (
   findings: readonly NamedDemandFinding[],
-): string =>
-  [
+): string => {
+  const subject =
     findings.length === 1
-      ? `[ioc] 1 deps property does not name one of the five things a dependency can be. A deps property names either a contract key (the contract's elected default), an implementation registration key marked \`${NAMED_MARKER_FORM}\`, a group root key, a scope-root opener key, or an external:`
-      : `[ioc] ${findings.length} deps properties do not name one of the five things a dependency can be. A deps property names either a contract key (the contract's elected default), an implementation registration key marked \`${NAMED_MARKER_FORM}\`, a group root key, a scope-root opener key, or an external:`,
-    ...findings.map((finding) => finding.message),
+      ? "1 deps property does"
+      : `${findings.length} deps properties do`;
+  const familyUrl = docsUrlForCode(DEMAND_MODEL_FAMILY_CODE);
+  const docsLine = docsPointerLine(DEMAND_MODEL_FAMILY_CODE);
+
+  return [
+    `[ioc] ${subject} not name any of the five things a dependency can be ` +
+      `(contract key, \`${NAMED_MARKER_FORM}\` implementation key, group key, opener key, external):`,
+    ...(docsLine !== undefined ? [docsLine] : []),
+    ...findings.map(
+      (finding) => finding.message + offenderDocsSuffix(finding.code, familyUrl),
+    ),
   ].join("\n");
+};

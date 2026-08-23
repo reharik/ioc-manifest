@@ -12,6 +12,7 @@ import {
   type AssignableImplementationMember,
   type ContractDefaultGroupMember,
   type GroupMembershipRejection,
+  type GroupRejectionSink,
 } from "./baseTypeAssignability.js";
 import {
   IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS,
@@ -321,10 +322,24 @@ const warnOnEmptyGroup = (groupName: string, baseType: string): void => {
   console.warn(formatEmptyGroupWarning(groupName, baseType));
 };
 
+/**
+ * How much a run records about the candidates it rejects. Recording never changes membership; see
+ * {@link GroupRejectionSink}.
+ */
+export type GroupPlanRecordingOptions = {
+  /**
+   * Ask the membership walk to note whether a nominally-rejected candidate nevertheless has the
+   * base's shape. Set by `ioc inspect --discovery`, which uses it to tell a near-miss apart from
+   * the eighty-odd contracts that were never candidates; unset at codegen, which pays nothing.
+   */
+  readonly recordStructuralShape?: boolean;
+};
+
 const runGroupPlan = (
   groups: unknown,
   plans: readonly ResolvedContractRegistration[],
   discovery: GroupDiscoveryBuildContext | undefined,
+  options?: GroupPlanRecordingOptions,
 ):
   | { ok: true; plans: GroupPlan[]; manifest: IocGroupsManifest }
   | { ok: false; issues: GroupPlanIssue[] } => {
@@ -483,6 +498,12 @@ const runGroupPlan = (
     // Rejection sink: filled by the same membership walk that selects members, so recording costs
     // no second pass and cannot change the verdict.
     const rejections: GroupMembershipRejection[] = [];
+    const sink: GroupRejectionSink = {
+      rejections,
+      ...(options?.recordStructuralShape === true
+        ? { recordStructuralShape: true as const }
+        : {}),
+    };
 
     if (entry.kind === "object") {
       const objectMembers = collectContractDefaultMembersAssignableToBase(
@@ -492,7 +513,7 @@ const runGroupPlan = (
         discovery.scanDirs,
         plans,
         resolvedBase.type,
-        rejections,
+        sink,
       );
 
       if (objectMembers.length === 0) {
@@ -542,7 +563,7 @@ const runGroupPlan = (
       discovery.scanDirs,
       plans,
       resolvedBase.type,
-          rejections,
+      sink,
     );
 
     if (members.length === 0) {
@@ -630,12 +651,13 @@ export const analyzeGroupPlan = (
   groups: unknown,
   plans: readonly ResolvedContractRegistration[],
   discovery: GroupDiscoveryBuildContext | undefined,
+  options?: GroupPlanRecordingOptions,
 ): GroupPlanAnalysis => {
   if (groups === undefined) {
     return { ok: true, plans: [], manifest: undefined, issues: [] };
   }
 
-  const result = runGroupPlan(groups, plans, discovery);
+  const result = runGroupPlan(groups, plans, discovery, options);
   if (!result.ok) {
     return {
       ok: false,

@@ -392,6 +392,63 @@ describe("--json output", () => {
       assert.ok(parsed.groups[0]!.rejections[0]!.gloss.length > 0);
       assert.deepEqual(parsed.scopeRoots, []);
     });
+
+    it("should keep every rejection in JSON, each labelled with the render verdict", () => {
+      const report = buildDiscoveryReport({
+        discoveryFiles: files,
+        groupPlans: [
+          {
+            groupName: "grouped",
+            kind: "collection",
+            baseType: "BaseA",
+            baseTypeId: "id",
+            members: [],
+            rejections: [
+              {
+                contractName: "NeverACandidate",
+                reason: "nominal_heritage_not_declared",
+                structurallyAssignable: false,
+              },
+              {
+                contractName: "ShapedLikeTheBase",
+                reason: "nominal_heritage_not_declared",
+                structurallyAssignable: true,
+              },
+              { contractName: "WasAMember", reason: "nominal_heritage_not_declared" },
+            ],
+          },
+        ],
+        // The manifest on disk called `WasAMember` a member, so this scan is dropping it.
+        priorGroupMembers: new Map([["grouped", new Set(["WasAMember"])]]),
+        scopeRoots: [],
+        scopeRootSharedUnits: [],
+      });
+
+      const parsed = JSON.parse(formatDiscoveryReportJson(report)) as {
+        groups: {
+          rejections: {
+            contractName: string;
+            informative: boolean;
+            wasMember?: boolean;
+          }[];
+        }[];
+      };
+      const rejections = parsed.groups[0]!.rejections;
+
+      // The complete-record rule: collapsing is a human-screen concern and `--json` never loses a row.
+      assert.deepEqual(
+        rejections.map((r) => [r.contractName, r.informative]),
+        [
+          ["NeverACandidate", false],
+          ["ShapedLikeTheBase", true],
+          ["WasAMember", true],
+        ],
+      );
+      assert.equal(
+        rejections.find((r) => r.contractName === "WasAMember")?.wasMember,
+        true,
+      );
+    });
   });
 
   describe("When an inspection report is serialized", () => {

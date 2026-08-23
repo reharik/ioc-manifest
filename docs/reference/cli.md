@@ -6,20 +6,72 @@ npx ioc generate              # discover units, emit manifest + types (and ioc-c
 npx ioc generate -c ./ioc.config.test.ts   # generate with a specific config
 npx ioc inspect               # loads the generated manifest and prints a summary
 npx ioc inspect --discovery   # re-runs discovery without reading the manifest
+npx ioc explain uow           # one key: what it resolves to, its lifetime, its deps, its dependents
+npx ioc explain uow --discovery   # …with lifetime provenance and scope-root subtree reach
 npx ioc validate              # the composition suite without regenerating (app mode)
 npx ioc validate --json       # machine-readable issue list
 ```
 
 | Flag                       | Purpose                                                                                 |
 | -------------------------- | --------------------------------------------------------------------------------------- |
-| `--discovery`              | (inspect only) Re-run discovery and planning; don't read the generated manifest         |
-| `--json`                   | (validate only) Emit issues as JSON                                                     |
+| `--discovery`              | (inspect, explain) Re-run discovery and planning; don't read the generated manifest      |
+| `--verbose`                | (inspect) Also show not-a-candidate rows and every group rejection, both collapsed by default |
+| `--contract SUBSTRING`     | (inspect only) Narrow rows to a contract or export name, case-insensitively              |
+| `--json`                   | (inspect, explain, validate) Emit the full report as JSON                                |
 | `--config PATH`, `-c PATH` | Explicit path to `ioc.config.ts`                                                        |
 | `--project PATH`           | Project directory for config resolution (default: cwd)                                  |
 
 Set `IOC_DEBUG=1` for full stack traces on errors.
 
 `inspect --discovery` is the tool for "why isn't this registered?". It lists every scanned file with each export's outcome — discovered (with its contract and registration key) or skipped with a categorized reason, including the class-unit reasons such as `class_inherited_contract_not_declared` and `missing_return_type_annotation`. Unlike plain `inspect`, it re-runs discovery from source rather than reading the generated manifest, and it tolerates units that would abort a real generation so the report can list every offender at once.
+
+### Group rejections are collapsed
+
+The groups section of a report lists the candidates the membership pass considered and dropped. Membership is checked for every contract against every group, so in a package of any size almost all of those rejections say the same stock thing — `nominal_heritage_not_declared`, over and over, once per contract per group. A real consumer package with 91 units and 7 groups rendered about 2,000 lines of it.
+
+A rejection gets its own line only when there is reason to think someone *wanted* that contract in that group:
+
+- it satisfies the base's shape and simply never declared `extends` — the archetypal near-miss;
+- the generated manifest on disk lists it as a member, so it is leaving the group in this run (see [the ungrouping cliff](/concepts/lifetimes#the-ungrouping-cliff));
+- the reason is not the stock one — a type that could not be resolved or carries no named symbol, which means something is broken rather than merely absent.
+
+Everything else collapses to one counted line per reason:
+
+```
+considered, rejected: 84 (nominal_heritage_not_declared) — use --contract <name> for a specific verdict
+```
+
+`--contract <name>` is the drill-down and prints the specific verdict for one name; `--verbose` prints the whole wall. `--json` is unaffected — it carries every rejection, each labelled with the `informative` flag the human screen acted on.
+
+## `ioc explain <key>`
+
+One cradle key, one screen, in the order the question is usually asked:
+
+- **What it is.** A registration, a contract slot and the implementation it elects, a group root and its members, or a scope-root opener and the values it requires. An unknown key says so, offers the keys that look like it, and exits non-zero.
+- **How long it lives, and who decided that.** The lifetime with its [provenance chain](/concepts/lifetimes#lifetime-provenance) — `scoped ← group-base marker on WriteServiceBase (RequestScopeLifeCycle) ← member of group "writeServices"`.
+- **What it depends on.** Each demanded key with what it resolved to and its lifetime, and an inline advisory wherever the [floor rule](/concepts/lifetimes#the-floor-rule) is under pressure. Same severities the generation-time check assigns — this is a view of that rule, not a second opinion about it.
+- **Who depends on it.** Every unit demanding the key, including through a group root or a contract slot, plus the scope-root subtrees that reach it.
+
+```
+orderWriteService → registration of OrderWriteService (orderWriteService)
+  declared in src/factories/buildOrderWriteService.ts#buildOrderWriteService
+
+Lifetime: scoped ← group-base marker on WriteServiceBase (RequestScopeLifeCycle) ← member of group "writeServices"
+
+Depends on:
+  uow  scoped  registration of UnitOfWork
+  idGenerator  transient  registration of IdGenerator
+      ![lifetime-inversion] a scoped consumer holding a transient dependency keeps the first instance it was given
+      → docs: https://reharik.github.io/ioc-manifest/concepts/lifetimes#the-floor-rule
+
+Demanded by:
+  auditRunner (src/factories/buildAuditRunner.ts)  via group:writeServices
+
+Reached from scope roots:
+  ⬢ IRouter variant: authRouter  opener: openAuthRouterScope
+```
+
+It reads the generated manifest by default and re-runs discovery with `--discovery`. The manifest records the lifetime it resolved but not the reasoning that produced it, and no scope-root subtree, so manifest mode says so rather than guessing — `--discovery` is the mode with provenance and subtree reach. Both modes are read-only and parse the manifest rather than importing it. `--json` emits the same record.
 
 ## `ioc generate` in app mode: the composition suite
 
@@ -64,6 +116,7 @@ Typical output for a failing run:
   Known composed contracts: Logger, LoggingService, Storage, UploadService.
   Did you mean: "Storage"?
   Suggested fix: Fix the contract name in ioc.config.ts registrations, or add a factory for "Storge".
+  → docs: https://reharik.github.io/ioc-manifest/config/reference#registrations
 
 Validation failed: 1 error, 0 warnings.
 ```

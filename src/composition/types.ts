@@ -28,18 +28,30 @@ export type ValidationIssueSeverity = "error" | "warning";
  * {
  *   "category": "externals",
  *   "severity": "error",
- *   "summary": "Unsatisfied external: @pkg demands \"logger\" (type: Logger)",
- *   "details": ["No manifest in composedManifests supplies this key."],
- *   "suggestedFix": "Register a Logger factory in this package, or compose another manifest that supplies it."
+ *   "summary": "Nothing supplies \"logger\", which @pkg expects the container to already have.",
+ *   "details": ["key:       \"logger\"  demanded by @pkg", "demanded:  Logger"],
+ *   "suggestedFix": "Register a Logger factory in this package, or compose another manifest that supplies it.",
+ *   "docUrl": "https://reharik.github.io/ioc-manifest/monorepo/composition#externals"
  * }
  * ```
  */
 export type ValidationIssue = {
   readonly category: ValidationIssueCategory;
   readonly severity: ValidationIssueSeverity;
+  /** Plain-language statement of what happened. No type text, no paths — those are `details`. */
   readonly summary: string;
+  /** The mechanism: keys, packages, types, paths. Dense on purpose. */
   readonly details: readonly string[];
   readonly suggestedFix?: string;
+  /**
+   * The page that articulates the rule this issue is about, resolved from {@link category} through
+   * `diagnostics/errorDocs.ts`.
+   *
+   * Attached by `buildValidationReport`, so checks never write a URL and `--json` and the text
+   * output cannot disagree. Absent when no page covers the category yet — a missing pointer is the
+   * honest outcome, and better than a link to a page that does not exist.
+   */
+  readonly docUrl?: string;
 };
 
 export type ParsedImplementationMeta = {

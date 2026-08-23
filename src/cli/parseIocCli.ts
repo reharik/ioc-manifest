@@ -1,5 +1,6 @@
 /**
- * @fileoverview Minimal argv parsing for the `ioc` CLI (`generate`, `inspect`, `validate`, and `-h/--help`).
+ * @fileoverview Minimal argv parsing for the `ioc` CLI (`generate`, `inspect`, `explain`,
+ * `validate`, and `-h/--help`).
  */
 
 /** Printed for `-h`, `--help`, or bare `ioc` — successful exit 0 */
@@ -11,19 +12,22 @@ Usage:
   ioc generate [--help|-h]
   ioc inspect [--discovery] [--verbose] [--contract <substring>] [--json] [--config <path> | -c <path>] [--project <path>]
   ioc inspect [--help|-h]
+  ioc explain <key> [--discovery] [--json] [--config <path> | -c <path>] [--project <path>]
+  ioc explain [--help|-h]
   ioc validate [--json] [--config <path> | -c <path>] [--project <path>]
   ioc validate [--help|-h]
 
 Commands:
   ioc generate   Discover factories, build registration plan, and emit ioc-manifest.ts + ioc-registry.types.ts.
   ioc inspect    Load generated ioc-manifest.ts (unless --discovery), print summary.
+  ioc explain    Explain ONE cradle key: what it resolves to, its lifetime and where that came from, its dependencies and its dependents. Read-only.
   ioc validate   App mode only: cross-manifest composition checks (externals, conflicts, groups, defaults). Read-only.
 
 Options:
-  --discovery           (inspect only) Re-run discovery and registration planning; do not read manifest.
-  --verbose             (inspect --discovery) Also show not-a-candidate rows, hidden by default.
+  --discovery           (inspect, explain) Re-run discovery and registration planning; do not read manifest. Required for lifetime provenance and scope-root subtree reach.
+  --verbose             (inspect) Also show not-a-candidate rows and every group rejection, both collapsed by default.
   --contract SUBSTRING  (inspect only) Show only rows whose contract name (or, with --discovery, export name) contains SUBSTRING, case-insensitively.
-  --json                (inspect, validate) Emit the full report as JSON for CI and tooling.
+  --json                (inspect, explain, validate) Emit the full report as JSON for CI and tooling.
   --config PATH   -c    Path to ioc.config.ts
   --project PATH       Directory to resolve config from (default: cwd)
 
@@ -34,7 +38,7 @@ Errors:
 const isHelpFlag = (s: string): boolean => s === "--help" || s === "-h";
 
 const conciseUsageTail = (): string =>
-  "\nUsage: ioc (--help|-h) | ioc generate [--config <path>|-c <path>] [--project <path>] | ioc inspect [--discovery] [--verbose] [--contract <substring>] [--json] [--config <path>|-c <path>] [--project <path>] | ioc validate [--json] [--config <path>|-c <path>] [--project <path>]";
+  "\nUsage: ioc (--help|-h) | ioc generate [--config <path>|-c <path>] [--project <path>] | ioc inspect [--discovery] [--verbose] [--contract <substring>] [--json] [--config <path>|-c <path>] [--project <path>] | ioc explain <key> [--discovery] [--json] [--config <path>|-c <path>] [--project <path>] | ioc validate [--json] [--config <path>|-c <path>] [--project <path>]";
 
 export type IocGenerateCliOptions = {
   iocConfigPath?: string;
@@ -52,6 +56,16 @@ export type IocInspectCliOptions = {
   contract?: string;
 };
 
+export type IocExplainCliOptions = {
+  iocConfigPath?: string;
+  projectDir?: string;
+  /** The cradle key to explain. Required — `explain` with no key is a usage error, not a report. */
+  key: string;
+  /** Re-run discovery instead of reading the manifest; the only mode with lifetime provenance. */
+  discovery: boolean;
+  json: boolean;
+};
+
 export type IocValidateCliOptions = {
   iocConfigPath?: string;
   projectDir?: string;
@@ -62,6 +76,7 @@ export type ParseIocCliArgvResult =
   | { kind: "help" }
   | { kind: "generate"; options: IocGenerateCliOptions }
   | { kind: "inspect"; options: IocInspectCliOptions }
+  | { kind: "explain"; options: IocExplainCliOptions }
   | { kind: "validate"; options: IocValidateCliOptions };
 
 const cliParseError = (detail: string): Error =>
@@ -91,14 +106,19 @@ export const parseIocCliArgv = (
     return { kind: "help" };
   }
 
+  if (args[0] === "explain" && args.slice(1).some(isHelpFlag)) {
+    return { kind: "help" };
+  }
+
   const command = args[0];
   if (
     command !== "inspect" &&
     command !== "generate" &&
-    command !== "validate"
+    command !== "validate" &&
+    command !== "explain"
   ) {
     throw cliParseError(
-      `Unknown command ${JSON.stringify(command)}. Supported: generate, inspect, validate.`,
+      `Unknown command ${JSON.stringify(command)}. Supported: generate, inspect, explain, validate.`,
     );
   }
 
@@ -108,6 +128,8 @@ export const parseIocCliArgv = (
   let discovery = false;
   let verbose = false;
   let json = false;
+  /** `explain`'s positional argument: the first non-flag word after the command. */
+  let positional: string | undefined;
 
   for (let i = 1; i < args.length; i += 1) {
     const a = args[i];
@@ -115,9 +137,9 @@ export const parseIocCliArgv = (
       break;
     }
     if (a === "--discovery") {
-      if (command !== "inspect") {
+      if (command !== "inspect" && command !== "explain") {
         throw cliParseError(
-          "--discovery is only valid with the inspect command.",
+          "--discovery is only valid with the inspect and explain commands.",
         );
       }
       discovery = true;
@@ -131,9 +153,13 @@ export const parseIocCliArgv = (
       continue;
     }
     if (a === "--json") {
-      if (command !== "validate" && command !== "inspect") {
+      if (
+        command !== "validate" &&
+        command !== "inspect" &&
+        command !== "explain"
+      ) {
         throw cliParseError(
-          "--json is only valid with the inspect and validate commands.",
+          "--json is only valid with the inspect, explain and validate commands.",
         );
       }
       json = true;
@@ -162,12 +188,33 @@ export const parseIocCliArgv = (
     if (a.startsWith("-")) {
       throw cliParseError(`Unknown flag ${JSON.stringify(a)}.`);
     }
+    if (positional === undefined) {
+      positional = a;
+    }
   }
 
   if (command === "generate") {
     return {
       kind: "generate",
       options: {
+        ...(iocConfigPath !== undefined ? { iocConfigPath } : {}),
+        ...(projectDir !== undefined ? { projectDir } : {}),
+      },
+    };
+  }
+
+  if (command === "explain") {
+    if (positional === undefined || positional.length === 0) {
+      throw cliParseError(
+        "explain needs the cradle key to explain, e.g. `ioc explain uow`.",
+      );
+    }
+    return {
+      kind: "explain",
+      options: {
+        key: positional,
+        discovery,
+        json,
         ...(iocConfigPath !== undefined ? { iocConfigPath } : {}),
         ...(projectDir !== undefined ? { projectDir } : {}),
       },

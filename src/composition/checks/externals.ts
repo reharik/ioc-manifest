@@ -200,8 +200,14 @@ const buildUnverifiedKeyWarning = (
 ): ValidationIssue => ({
   category: "externals",
   severity: "warning",
-  summary: `[externals] Key ${JSON.stringify(externalKey)} supplied by ${suppliers.map((s) => formatSupplierLabel(s)).join(", ")} (demanded by ${slice.packageLabel})`,
-  details: [caveat],
+  // The category is printed by the renderer from `category`; repeating it here is what produced
+  // the `[externals] [externals]` a consumer reported.
+  summary: `A supplier for ${JSON.stringify(externalKey)} was found, but the types could not be compared.`,
+  details: [
+    `key:       ${JSON.stringify(externalKey)}  demanded by ${slice.packageLabel}`,
+    `supplied by: ${suppliers.map((s) => formatSupplierLabel(s)).join(", ")}`,
+    caveat,
+  ],
 });
 
 export type CheckExternalsOptions = {
@@ -274,10 +280,11 @@ export const checkExternalsSatisfaction = (
         issues.push({
           category: "externals",
           severity: "error",
-          summary: `[externals] Unsatisfied: key ${JSON.stringify(externalKey)} demanded by ${slice.packageLabel}`,
+          summary: `Unsatisfied: nothing supplies ${JSON.stringify(externalKey)}, which ${slice.packageLabel} expects the container to already have.`,
           details: [
+            `key:       ${JSON.stringify(externalKey)}  demanded by ${slice.packageLabel}`,
             `demanded:  ${demandedText}`,
-            "No manifest in composedManifests supplies this key in IocGeneratedCradle.",
+            "No composed manifest offers this key in its IocGeneratedCradle.",
           ],
           suggestedFix:
             `Register a factory for ${demandedText} under key ${JSON.stringify(externalKey)} in this app, or compose another manifest that supplies it.`,
@@ -314,9 +321,10 @@ export const checkExternalsSatisfaction = (
       issues.push({
         category: "externals",
         severity: "error",
-        summary: `[externals] Unsatisfied: key ${JSON.stringify(externalKey)} demanded by ${slice.packageLabel}`,
+        summary: `Unsatisfied: ${JSON.stringify(externalKey)} is supplied, but not with the type ${slice.packageLabel} demands.`,
         details: [
-          "Supplied by a composed manifest or local cradle, but the types are incompatible.",
+          `key:       ${JSON.stringify(externalKey)}  demanded by ${slice.packageLabel}`,
+          "the supplied and demanded types are incompatible:",
           ...buildTypeMismatchDetails(
             typeCheckerCtx,
             suppliers,

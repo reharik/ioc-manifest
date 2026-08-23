@@ -31,7 +31,10 @@ import {
 } from "../generator/manifestOptions.js";
 import type { ManifestRuntimePaths } from "../generator/manifestPaths.js";
 import type { IocDiscoveryAnalysisFiles } from "../generator/discoverFactories/discoveryOutcomeTypes.js";
-import { resolveLifetimeMarkersForFactories } from "../generator/resolveLifetimeMarkers.js";
+import {
+  resolveLifetimeMarkerMatchesForFactories,
+  type LifetimeMarkerMatch,
+} from "../generator/resolveLifetimeMarkers.js";
 import {
   buildScopeRootSupplyIndex,
   verifyScopeRoots,
@@ -79,6 +82,13 @@ export type DiscoveryAnalysisResult = {
    * the report, never as a crashed inspect.
    */
   readonly groupPlans: readonly GroupPlan[];
+  /**
+   * The lifetime marker that decided each factory's lifetime, by `${modulePath}:${exportName}`.
+   *
+   * Empty when the config declares no `lifetimeMarkers`. Carried for provenance rendering only —
+   * the registration plan reads the lifetime out of this and never the name.
+   */
+  readonly lifetimeMarkerMatches: ReadonlyMap<string, LifetimeMarkerMatch>;
   /**
    * Module paths the config's `discovery.excludes` kept out of the scan. Resolved here rather than
    * read off discovery outcomes: excluded files never enter the scan set, so the scanner has no
@@ -182,10 +192,18 @@ const runDiscoveryFromResolution = async (
         { collectFileRecords: true, tolerateInvalidAnnotations: true },
       );
 
-    const markerLifetimesByFactoryKey = resolveLifetimeMarkersForFactories(
+    // Matches rather than bare lifetimes: the plan needs only the lifetime, but `ioc explain` needs
+    // the marker's NAME to render a provenance chain a reader can act on. One walk serves both.
+    const markerMatchesByFactoryKey = resolveLifetimeMarkerMatchesForFactories(
       acceptedFactories,
       config?.lifetimeMarkers,
       { program, projectRoot, scanDirs },
+    );
+    const markerLifetimesByFactoryKey = new Map(
+      [...markerMatchesByFactoryKey].map(([key, match]) => [
+        key,
+        match.lifetime,
+      ]),
     );
 
     // Grouped ⇒ group-only reaches inspection too, and it has to: a grouped contract is never put
@@ -285,11 +303,15 @@ const runDiscoveryFromResolution = async (
 
     // Groups are a codegen artifact, so inspection recomputes rather than reads them. Non-throwing:
     // a bad `groups` entry must not take down `ioc inspect --discovery`, whose job is to report.
-    const groupAnalysis = analyzeGroupPlan(config?.groups, registrationPlan, {
-      program,
-      generatedDir,
-      scanDirs,
-    });
+    // `recordStructuralShape`: inspection is the one caller that wants to know whether a rejected
+    // candidate has the base's SHAPE. It is what separates the near-miss worth a line of the report
+    // from the contracts that were never candidates — see `GroupMembershipRejection`.
+    const groupAnalysis = analyzeGroupPlan(
+      config?.groups,
+      registrationPlan,
+      { program, generatedDir, scanDirs },
+      { recordStructuralShape: true },
+    );
 
     return {
       discoveryFiles,
@@ -300,6 +322,7 @@ const runDiscoveryFromResolution = async (
       scopeRootVerification,
       scopeRootSharedUnits,
       groupPlans: groupAnalysis.plans,
+      lifetimeMarkerMatches: markerMatchesByFactoryKey,
       excludedFiles,
     };
   } catch (error) {

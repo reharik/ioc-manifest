@@ -191,15 +191,18 @@ export type ResolveLifetimeMarkersForFactoriesOptions = {
 };
 
 /**
- * Maps each factory to a marker-resolved lifetime. When `lifetimeMarkers` is empty, returns an
- * empty map immediately — zero assignability checks (perf contract for library-mode packages
- * that omit lifetimeMarkers).
+ * Maps each factory to the marker that decided its lifetime — the MATCH, not only the lifetime.
+ *
+ * The lifetime alone is what registration planning needs; the marker's NAME is what a human needs,
+ * because "scoped ← lifetime-marker (RequestScopeLifeCycle)" says where to go and look and "scoped"
+ * does not. `ioc explain` renders the provenance chain from this map;
+ * {@link resolveLifetimeMarkersForFactories} is the same walk with the name dropped.
  */
-export const resolveLifetimeMarkersForFactories = (
+export const resolveLifetimeMarkerMatchesForFactories = (
   factories: readonly DiscoveredFactory[],
   lifetimeMarkers: Record<string, IocLifetime> | undefined,
   options: ResolveLifetimeMarkersForFactoriesOptions,
-): ReadonlyMap<string, IocLifetime> => {
+): ReadonlyMap<string, LifetimeMarkerMatch> => {
   if (
     lifetimeMarkers === undefined ||
     Object.keys(lifetimeMarkers).length === 0
@@ -224,7 +227,7 @@ export const resolveLifetimeMarkersForFactories = (
     generatedDir: "",
   };
 
-  const out = new Map<string, IocLifetime>();
+  const out = new Map<string, LifetimeMarkerMatch>();
 
   for (const factory of factories) {
     const returnType = getFactoryReturnType(
@@ -270,11 +273,30 @@ export const resolveLifetimeMarkersForFactories = (
       );
     }
 
-    out.set(factoryLifetimeMarkerKey(factory), matches[0]!.lifetime);
+    out.set(factoryLifetimeMarkerKey(factory), matches[0]!);
   }
 
   return out;
 };
+
+/**
+ * Marker-resolved lifetimes by factory key — {@link resolveLifetimeMarkerMatchesForFactories} with
+ * the marker name dropped, which is all the registration plan needs.
+ */
+export const resolveLifetimeMarkersForFactories = (
+  factories: readonly DiscoveredFactory[],
+  lifetimeMarkers: Record<string, IocLifetime> | undefined,
+  options: ResolveLifetimeMarkersForFactoriesOptions,
+): ReadonlyMap<string, IocLifetime> =>
+  new Map(
+    [
+      ...resolveLifetimeMarkerMatchesForFactories(
+        factories,
+        lifetimeMarkers,
+        options,
+      ),
+    ].map(([key, match]) => [key, match.lifetime]),
+  );
 
 /** Validates marker names resolve in the program (used when markers are non-empty). */
 export const assertLifetimeMarkerTypesResolvable = (

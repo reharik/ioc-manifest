@@ -211,7 +211,7 @@ describe("parseIocCliArgv", () => {
     it("should reject --json on generate", () => {
       assert.throws(
         () => parseIocCliArgv([...nodeStub(), "generate", "--json"]),
-        /--json is only valid with the inspect and validate commands/,
+        /--json is only valid with the inspect, explain and validate commands/,
       );
     });
   });
@@ -225,6 +225,49 @@ describe("parseIocCliArgv", () => {
     it("should document validate and --json", () => {
       assert.ok(IOC_CLI_HELP_TEXT.includes("validate"));
       assert.ok(IOC_CLI_HELP_TEXT.includes("--json"));
+    });
+  });
+});
+
+describe("parseIocCliArgv explain", () => {
+  const argv = (...args: string[]): string[] => ["node", "ioc", ...args];
+
+  describe("When a key is given", () => {
+    it("should parse the positional key and the mode flags", () => {
+      const parsed = parseIocCliArgv(argv("explain", "uow", "--discovery", "--json"));
+
+      assert.equal(parsed.kind, "explain");
+      assert.deepEqual(parsed.kind === "explain" ? parsed.options : undefined, {
+        key: "uow",
+        discovery: true,
+        json: true,
+      });
+    });
+
+    it("should default to manifest mode and text output", () => {
+      const parsed = parseIocCliArgv(argv("explain", "uow"));
+
+      assert.equal(parsed.kind, "explain");
+      assert.equal(parsed.kind === "explain" && parsed.options.discovery, false);
+      assert.equal(parsed.kind === "explain" && parsed.options.json, false);
+    });
+  });
+
+  describe("When no key is given", () => {
+    it("should be a usage error rather than an empty report", () => {
+      assert.throws(
+        () => parseIocCliArgv(argv("explain")),
+        /explain needs the cradle key to explain/,
+      );
+    });
+  });
+
+  describe("When --contract is passed to explain", () => {
+    it("should be rejected — explain is already narrowed to one key", () => {
+      assert.throws(
+        () => parseIocCliArgv(argv("explain", "uow", "--contract", "X")),
+        /--contract is only valid with the inspect command/,
+      );
     });
   });
 });

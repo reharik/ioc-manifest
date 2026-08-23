@@ -130,6 +130,22 @@ registerIocFromManifest(
 const uploadService = container.resolve("uploadService");
 ```
 
+## Externals
+
+An **external** is a key a package demands and does not register. It is a promise: this package will work once something supplies that key. Every package's generated `ioc-registry.types.ts` declares its externals in `IocExternals`, and the composing app's `generate` (and `ioc validate`) is where the promise is checked.
+
+The supply side is each package's `IocGeneratedCradle` — every key it registers, including [contract slot keys](/concepts/conventions#contract-slot-keys). A demand for a contract key is therefore satisfied by whichever package elects a default for that contract, exactly as a demand for a registration key is satisfied by whichever package registers it.
+
+Three verdicts are possible per key, and the `[externals]` category reports the last two:
+
+- **Satisfied** — a composed cradle offers the key and its type is assignable to what the demanding package declared. Nothing is printed.
+- **Unsatisfied** — either nothing offers the key, or something does and the types are incompatible. An error; the report prints the demanded type, the supplied type, and the first property that does not line up.
+- **Unverified** — a supplier was found but the types could not be compared, usually because the checker could not resolve one of them. A warning that names the caveat rather than claiming a verdict it does not have.
+
+A fourth outcome is **skipped**: if the generated registry-types file a comparison would read from does not compile, `[registry-integrity]` reports that and the comparisons depending on it are listed as skipped rather than adjudicated against error types (which pass unconditionally). The usual cause is generated output that predates a source change — regenerate the package the issue names.
+
+**Library mode checks nothing here, and skips nothing either.** A library has no composed set to relate to; its `IocExternals` is a promise to whichever app composes it later, and that app's `generate` is the first run that can say whether the promise is kept.
+
 ## Resolving same-key conflicts
 
 If two composed manifests both supply the same Awilix registration key, composition fails with a hard error naming both manifests. Resolve via the `source` field:

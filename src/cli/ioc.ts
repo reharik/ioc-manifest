@@ -7,6 +7,8 @@
  *   the generated manifest by PARSING it (see `loadManifestForInspection`), never by importing it:
  *   the CLI runs under plain `node`, which cannot import a `.ts` file at all.
  * - `ioc inspect --discovery` — re-runs source discovery (no manifest read) for drift analysis.
+ * - `ioc explain <key>` — one cradle key: what it resolves to, its lifetime and the chain that
+ *   decided it, what it depends on, and who depends on it. Same two modes as `inspect`.
  * - `ioc validate` — app mode only: cross-manifest composition checks without writing files (CI gate).
  *
  * Resolves config like generation (`tryLoadIocConfig`, optional `--config`), walking up from cwd
@@ -30,12 +32,24 @@ import {
   formatDiscoveryReportJson,
   formatInspectionReport,
   formatInspectionReportJson,
+  readPriorGroupMembers,
 } from "../inspection/index.js";
-import { loadManifestForInspection } from "../inspection/loadManifestForInspection.js";
+import {
+  loadManifestForInspection,
+  tryLoadManifestForInspection,
+} from "../inspection/loadManifestForInspection.js";
 import {
   resolveDiscoveryManifestContext,
   runDiscoveryAnalysis,
 } from "../inspection/runDiscoveryAnalysis.js";
+import {
+  explainFromDiscovery,
+  explainFromManifest,
+} from "../inspection/explain.js";
+import {
+  formatExplainReport,
+  formatExplainReportJson,
+} from "../inspection/formatExplain.js";
 import {
   printValidateResult,
   runValidate,
@@ -106,6 +120,37 @@ const main = async (): Promise<void> => {
     return;
   }
 
+  if (parsed.kind === "explain") {
+    const cli = parsed.options;
+    const searchStart = path.resolve(cli.projectDir ?? process.cwd());
+
+    // Two modes, the same two sources `inspect` uses: the manifest on disk, or a fresh scan. The
+    // scan is the only one that can say WHY a lifetime is what it is; the report says so itself
+    // rather than leaving a reader to wonder why the chain is missing.
+    const report = cli.discovery
+      ? explainFromDiscovery(
+          cli.key,
+          await runDiscoveryAnalysis({
+            iocConfigPath: cli.iocConfigPath,
+            searchStartDir: searchStart,
+          }),
+        )
+      : explainFromManifest(
+          cli.key,
+          await loadManifestForInspection(cli.iocConfigPath, searchStart),
+        );
+
+    console.log(
+      cli.json ? formatExplainReportJson(report) : formatExplainReport(report),
+    );
+    // An unknown key is a failed question, not a healthy report — CI and shell scripts need to see
+    // that in the exit code.
+    if (report.resolution.kind === "unknown") {
+      process.exitCode = 1;
+    }
+    return;
+  }
+
   const cli = parsed.options;
   const searchStart = path.resolve(cli.projectDir ?? process.cwd());
 
@@ -119,7 +164,20 @@ const main = async (): Promise<void> => {
     const analysis = await runDiscoveryAnalysis({
       reuseResolution: resolved,
     });
-    const full = buildDiscoveryReport(analysis);
+    // The manifest is read here and nowhere deeper: `runDiscoveryAnalysis` answers "what does the
+    // source say", and must keep answering it without a generated file in sight. What the manifest
+    // adds is the BEFORE side — which contracts were group members last generation — and a report
+    // that cannot find one simply loses that one signal.
+    const prior = await tryLoadManifestForInspection(
+      cli.iocConfigPath,
+      searchStart,
+    );
+    const full = buildDiscoveryReport({
+      ...analysis,
+      ...(prior !== undefined
+        ? { priorGroupMembers: readPriorGroupMembers(prior.groups) }
+        : {}),
+    });
     const report =
       cli.contract !== undefined
         ? filterDiscoveryReportByContract(full, cli.contract)
@@ -147,7 +205,9 @@ const main = async (): Promise<void> => {
       ? filterInspectionReportByContract(full, cli.contract)
       : full;
   console.log(
-    cli.json ? formatInspectionReportJson(report) : formatInspectionReport(report),
+    cli.json
+      ? formatInspectionReportJson(report)
+      : formatInspectionReport(report, { verbose: cli.verbose }),
   );
 };
 

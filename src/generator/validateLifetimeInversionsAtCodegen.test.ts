@@ -179,7 +179,10 @@ describe("validateLifetimeInversionsAtCodegen", () => {
       });
 
       assert.strictEqual(warnings.length, 1);
-      assert.match(warnings[0]!, /\[ioc\] Lifetime inversion: 'grantSync' \(singleton\)/);
+      assert.match(
+        warnings[0]!,
+        /\[ioc\] \[lifetime-inversion\] 'grantSync' \(singleton\)/,
+      );
       assert.match(warnings[0]!, /'token' \(transient\)/);
     });
   });
@@ -699,10 +702,14 @@ describe("validateLifetimeInversionsAtCodegen", () => {
         (err: unknown) => {
           assert.ok(err instanceof Error);
           const lines = err.message.split("\n");
-          assert.strictEqual(lines.length, 3);
-          assert.match(lines[0]!, /'grantSync' \(singleton\).*'grantRepository' \(scoped\)/);
-          assert.match(lines[1]!, /'reportSync' \(singleton\).*'auditLog' \(scoped\)/);
-          assert.match(lines[2]!, /allowLifetimeInversion/);
+          // Three registers, then the offenders: sentence, docs pointer, one line per inversion,
+          // one fix line for the run.
+          assert.strictEqual(lines.length, 5);
+          assert.match(lines[0]!, /^\[ioc\] 2 lifetime inversions\./);
+          assert.match(lines[1]!, /^→ docs: https:\/\/.*concepts\/lifetimes#/);
+          assert.match(lines[2]!, /'grantSync' \(singleton\).*'grantRepository' \(scoped\)/);
+          assert.match(lines[3]!, /'reportSync' \(singleton\).*'auditLog' \(scoped\)/);
+          assert.match(lines[4]!, /allowLifetimeInversion/);
           return true;
         },
       );

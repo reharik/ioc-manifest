@@ -97,6 +97,20 @@ When a contract has only one implementation, it is the default. When there are m
 
 If the choice is ambiguous, generation fails with a clear error telling you what to do. A class and a factory implementing the same contract compete for the default exactly as two factories do — unit kind carries no precedence.
 
+## Contract slot keys
+
+Every ungrouped contract claims one cradle key beyond its implementations' own: the **contract slot key**, which resolves to whichever implementation is elected as the default. It is the camel-cased contract name (`MediaStorage` → `mediaStorage`), overridable per contract with `registrations[Contract].$contract.accessKey`.
+
+The slot key means exactly one thing: *the elected default*. That is what makes it useful — a consumer demanding `mediaStorage` follows the election, and swapping the default in `ioc.config` re-points every such consumer with no source edit.
+
+Three rules follow from what it means:
+
+- **A registration must not occupy it while another implementation is elected.** A registration owning the slot key makes the name mean "this specific implementation" while the election says it means something else. Package-local generation refuses it; across a composed set, `[slot-occupancy]` reports it — that shape can be created by two packages that are each fine alone (a library registering and electing `mediaStorage`, an app electing `s3MediaStorage` over it).
+- **A contract that elects no default has no slot key at all.** Nothing resolves the name, so a demand for it is an ordinary external and reports as unsatisfied like any other unregistered key. `[default-ambiguity]` names the contracts in that state.
+- **A grouped contract has no slot key.** [Grouped means group-only](/concepts/groups#grouped-means-group-only): members are consumed through the group and through nothing else.
+
+`ioc explain <slotKey>` prints which implementation the slot currently resolves to, and the field it was elected from.
+
 ## Multiple implementations
 
 When a contract has more than one implementation, each is registered under its own key and one is selected as the default for the contract's access key. `MediaStorage` with implementations `localMediaStorage` and `s3MediaStorage` gives you:

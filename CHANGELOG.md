@@ -82,6 +82,52 @@ working unchanged — see the note under **Fixed**.
 
 ### Added
 
+**`ioc explain <key>` — one cradle key, one screen.** A read-only command that answers the question
+a developer actually arrives with: what does this key resolve to, how long does it live and who
+decided that, what does it pull in, and who breaks if it changes. Every fact was already somewhere
+in the manifest or the scan; what is new is the join.
+
+```
+orderWriteService → registration of OrderWriteService (orderWriteService)
+  declared in src/factories/buildOrderWriteService.ts#buildOrderWriteService
+
+Lifetime: scoped ← group-base marker on WriteServiceBase (RequestScopeLifeCycle) ← member of group "writeServices"
+
+Depends on:
+  uow  scoped  registration of UnitOfWork
+  idGenerator  transient  registration of IdGenerator
+      ![lifetime-inversion] a scoped consumer holding a transient dependency keeps the first instance it was given
+      → docs: https://reharik.github.io/ioc-manifest/concepts/lifetimes#the-floor-rule
+
+Demanded by:
+  auditRunner (src/factories/buildAuditRunner.ts)  via group:writeServices
+
+Reached from scope roots:
+  ⬢ IRouter variant: authRouter  opener: openAuthRouterScope
+```
+
+Two modes, the same two sources `inspect` uses: the generated manifest by default, a fresh scan
+with `--discovery`. Lifetime provenance and scope-root subtree reach exist only in the scan, and
+manifest mode says so rather than guessing. `--json` carries the same record. Read-only, and it
+parses the manifest rather than importing it.
+
+**Docs pointers on diagnostics.** Every diagnostic now renders in three registers — a
+plain-language sentence, the mechanism (key, contract, file and line), and `→ docs: <url>`. URLs
+come from one map of diagnostic code → page, never from message text, and a test resolves every one
+of them against the docs sources and against the rendered HTML after `docs:build`: a heading rename
+that breaks a pointer fails the suite instead of 404ing a reader. A code with no page yet prints no
+arrow.
+
+**A lifetimes chapter written from real incidents.** [The floor rule](https://reharik.github.io/ioc-manifest/concepts/lifetimes#the-floor-rule)
+(a unit lives at most as long as its shortest-lived dependency, which is why repositories are
+scoped), [the captive dependency](https://reharik.github.io/ioc-manifest/concepts/lifetimes#the-captive-dependency)
+(the singleton that froze a per-request unit of work — the incident the inversion check was written
+for), [the ungrouping cliff](https://reharik.github.io/ioc-manifest/concepts/lifetimes#the-ungrouping-cliff)
+(a member leaves a group, silently falls to the default lifetime, and inversion errors are the net),
+and the [provenance vocabulary](https://reharik.github.io/ioc-manifest/concepts/lifetimes#lifetime-provenance).
+Scope roots also get a [user-facing chapter](https://reharik.github.io/ioc-manifest/concepts/scope-roots)
+with the verification codes and a troubleshooting section.
+
 **Class-based registration units.** An exported class with an `implements` clause is a
 registration unit. The `implements` clause is its contract site — the same declared, syntactic
 position a factory's return type annotation occupies, read by the same resolver, producing the
@@ -438,6 +484,30 @@ configs keep validating) and is now a no-op.
 
 ### Changed
 
+**Group rejections collapse to a count unless they are informative.** The groups section listed
+every considered-and-rejected contract, one line each — but membership is checked for every
+contract against every group, so a real consumer package with 91 units and 7 groups rendered about
+2,000 lines of the same stock sentence. A rejection now earns its own line only when it satisfies
+the base's shape without declaring heritage, or the generated manifest on disk lists it as a member
+(it is leaving the group in this run), or its reason is not the stock heritage one. Everything else
+becomes `considered, rejected: 84 (nominal_heritage_not_declared) — use --contract <name> for a
+specific verdict`. `--contract` is the drill-down, `--verbose` prints the whole wall, and `--json`
+is unchanged — it carries every rejection, each labelled with the `informative` flag the human
+screen acted on.
+
+**Diagnostics render in three registers, with colour.** Multi-concept preambles state the rule in
+plain language and name their enumerations rather than articulating them inline — the demand-model
+error's five things are now a parenthetical of names with the articulation at the link. Per-offender
+detail is untouched. Terminal output is coloured when stdout is a TTY, honours `NO_COLOR` and
+`FORCE_COLOR`, and is byte-identical to the old plain text when disabled; severity is stated in
+words as well as colour, and colour never reaches `--json`.
+
+**`ioc validate --json` issues carry `docUrl`.** Added, not renamed; every other field is unchanged.
+
+**Lifetime provenance renders only when it is informative.** A discovery row said
+`singleton (default)` on most rows of most reports, which is what made the one row saying
+`(group-base-marker)` stop standing out. `default` is now omitted.
+
 **Contract identity is what you wrote at the contract site.** The checker no longer infers or
 normalizes the contract: `Promise<T>` and parentheses are unwrapped syntactically, the remaining
 annotation must be a single named type reference, and the contract is that reference's
@@ -585,6 +655,11 @@ declares `implements` for that contract. When a concrete subclass registers it, 
 silent.
 
 ### Fixed
+
+**`[externals] [externals]` on composition output.** The externals check embedded its own category
+tag in each summary while the renderer prefixed the category too. The tag is now printed once, by
+the renderer, from the issue's `category` — which also means `--json` summaries no longer repeat a
+field they sit next to.
 
 **Composition type comparisons no longer disagree with your own `tsc`.** `ioc validate` built a
 program of its own: the generated registry-types files of several packages as root names, nothing

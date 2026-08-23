@@ -3,6 +3,10 @@ import {
   type IocConfig,
   type IocLifetime,
 } from "../config/iocConfig.js";
+import {
+  docsPointerLine,
+  docsPointerSuffix,
+} from "../diagnostics/errorDocs.js";
 import type { IocGroupsManifest } from "../core/manifest.js";
 import type { DemandSupplyAnalysisResult } from "./analyzeDemandSupply/index.js";
 import type { ResolvedContractRegistration } from "./resolveRegistrationPlan.js";
@@ -62,28 +66,36 @@ const formatDepPhrase = (inv: LifetimeInversion): string => {
   return `'${inv.depKey}' (${inv.depLifetime})`;
 };
 
+/** The printed code for this family — the grep handle, and the key its docs pointer resolves under. */
+export const LIFETIME_INVERSION_CODE = "lifetime-inversion";
+
+/**
+ * One offender, in the second register only: which unit, which dependency, which lifetimes, and
+ * what that combination does at runtime.
+ *
+ * The rule ("a unit lives at most as long as its shortest-lived dependency") is stated once in the
+ * preamble and articulated on the linked page; the fix is stated once at the end. Repeating either
+ * on every offender is what made a five-inversion run unreadable.
+ */
 const formatInversionMessage = (inv: LifetimeInversion): string => {
-  const depPhrase = formatDepPhrase(inv);
-  let message =
-    `Lifetime inversion: '${inv.consumerKey}' (${inv.consumerLifetime}) depends on ${depPhrase}.`;
+  const via = inv.via.startsWith("group:")
+    ? ` via group '${inv.via.slice("group:".length)}' member '${inv.memberKey ?? inv.depKey}'`
+    : "";
+  const consequence =
+    inv.severity === "error"
+      ? "a singleton freezes its scoped dependency at first construction and reuses it across every scope"
+      : "a longer-lived consumer holding a shorter-lived dependency keeps the first instance it was given";
 
-  if (inv.severity === "error") {
-    message +=
-      " A singleton freezes its scoped dependency at first construction, reusing it across all scopes.";
-  } else {
-    message +=
-      " A longer-lived consumer should not depend on a shorter-lived dependency.";
-  }
-
-  message += ` Register '${inv.consumerKey}' as scoped (or shorter), or mark it intentional with registrations['<Contract>'].<impl>.allowLifetimeInversion.`;
-
-  if (inv.via.startsWith("group:")) {
-    const groupKey = inv.via.slice("group:".length);
-    message += ` via group '${groupKey}' member '${inv.memberKey ?? inv.depKey}'.`;
-  }
-
-  return message;
+  return (
+    `[${LIFETIME_INVERSION_CODE}] '${inv.consumerKey}' (${inv.consumerLifetime})` +
+    ` depends on ${formatDepPhrase(inv)}${via} — ${consequence}.`
+  );
 };
+
+/** Stated once, at the end, for however many offenders the run found. */
+const INVERSION_FIX_LINE =
+  "Fix by registering the consumer at the shorter lifetime, or mark an inversion intentional with " +
+  "registrations[<Contract>].<impl>.allowLifetimeInversion in ioc.config.";
 
 const collectGroupMemberLeaves = (
   manifest: IocGroupsManifest[string],
@@ -268,7 +280,11 @@ export const validateLifetimeInversionsAtCodegen = (
     if (inv.severity !== "warn") {
       continue;
     }
-    console.warn(`[ioc] ${formatInversionMessage(inv)}`);
+    // A warning is printed alone, so it carries its own pointer; the aggregated error carries one
+    // pointer for the whole list instead of repeating it per offender.
+    console.warn(
+      `[ioc] ${formatInversionMessage(inv)}${docsPointerSuffix(LIFETIME_INVERSION_CODE)}`,
+    );
   }
 
   const errors = inversions.filter((inv) => inv.severity === "error");
@@ -276,8 +292,14 @@ export const validateLifetimeInversionsAtCodegen = (
     return;
   }
 
+  const docsLine = docsPointerLine(LIFETIME_INVERSION_CODE);
   throw new Error(
-    `${errors.map(formatInversionMessage).join("\n")}\n` +
-      "Suppress intentionally with registrations[ContractName].implementationName.allowLifetimeInversion in ioc.config.",
+    [
+      `[ioc] ${errors.length} lifetime inversion${errors.length === 1 ? "" : "s"}.` +
+        " A unit lives at most as long as its shortest-lived dependency, and these outlive theirs:",
+      ...(docsLine !== undefined ? [docsLine] : []),
+      ...errors.map((inv) => `  - ${formatInversionMessage(inv)}`),
+      INVERSION_FIX_LINE,
+    ].join("\n"),
   );
 };

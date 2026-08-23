@@ -14,7 +14,11 @@ import ts from "typescript";
 import type { IocConfig } from "../config/iocConfig.js";
 import { discoverFactories } from "../generator/discoverFactories/discoverFactories.js";
 import { buildRegistrationPlan } from "../generator/resolveRegistrationPlan.js";
-import { buildGroupPlan, type GroupPlan } from "./resolveGroupPlan.js";
+import {
+  analyzeGroupPlan,
+  buildGroupPlan,
+  type GroupPlan,
+} from "./resolveGroupPlan.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..", "..");
@@ -59,6 +63,50 @@ const planGroup = (
   );
   assert.ok(result);
   const plan = result!.plans[0];
+  assert.ok(plan);
+  return plan;
+};
+
+/**
+ * The same plan through the non-throwing analyzer, with shape recording asked for — the shape
+ * `ioc inspect --discovery` builds. Kept next to {@link planGroup} so a divergence in member sets
+ * between the two entry points shows up in this file.
+ */
+const analyzeGroupWithShape = (
+  fixtureDir: string,
+  baseType: string,
+): GroupPlan => {
+  const files = [
+    fixture(fixtureDir, "contracts.ts"),
+    fixture(fixtureDir, "factories.ts"),
+  ];
+  const program = ts.createProgram({
+    rootNames: files,
+    options: {
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.ESNext,
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
+      strict: true,
+      noEmit: true,
+    },
+  });
+  const { contractMap } = discoverFactories(
+    [fixture(fixtureDir, "factories.ts")],
+    program,
+    projectRoot,
+    "build",
+    { projectRoot, scanDirs: [{ absPath: srcDir }], generatedDir },
+    undefined,
+  );
+  const plans = buildRegistrationPlan(contractMap, undefined);
+  const analysis = analyzeGroupPlan(
+    { grouped: { kind: "collection", baseType } },
+    plans,
+    { program, generatedDir, scanDirs: [{ absPath: srcDir }] },
+    { recordStructuralShape: true },
+  );
+  assert.ok(analysis.ok);
+  const plan = analysis.plans[0];
   assert.ok(plan);
   return plan;
 };
@@ -122,6 +170,37 @@ describe("group membership rejection recording", () => {
       assert.deepStrictEqual(
         plan.rejections.filter((r) => r.registrationKey !== undefined),
         [],
+      );
+    });
+  });
+
+  describe("When the sink asks for shape analysis", () => {
+    it("should mark the structural sibling and leave the member set untouched", () => {
+      const shaped = analyzeGroupWithShape("group-rejections", "RejectBase");
+      const plain = planGroup("group-rejections", "RejectBase");
+
+      const sibling = shaped.rejections.find(
+        (r) => r.contractName === "StructuralSibling",
+      );
+      assert.ok(sibling);
+      assert.equal(sibling.reason, "nominal_heritage_not_declared");
+      // The whole point of the near-miss predicate: this contract satisfies the base's shape and
+      // simply never declared heritage, which is what makes it worth a line of the report.
+      assert.equal(sibling.structurallyAssignable, true);
+
+      // Recording is invisible to membership, which is the load-bearing claim of this whole file.
+      assert.deepStrictEqual(
+        shaped.members.map((m) => m.registrationKey).sort(),
+        plain.members.map((m) => m.registrationKey).sort(),
+      );
+    });
+
+    it("should record nothing about shape when the sink does not ask", () => {
+      const plan = planGroup("group-rejections", "RejectBase");
+
+      assert.deepStrictEqual(
+        plan.rejections.map((r) => r.structurallyAssignable),
+        plan.rejections.map(() => undefined),
       );
     });
   });

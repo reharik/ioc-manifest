@@ -30,6 +30,33 @@ export type GroupMembershipRejection = {
   reason: GroupMembershipRejectionReason;
   /** Set for implementation-level rejections; absent when the whole contract was rejected. */
   registrationKey?: string;
+  /**
+   * Whether the candidate has the base's SHAPE despite declaring no heritage to it — recorded only
+   * when the sink asks for it, so it is `undefined` on every codegen-time rejection.
+   *
+   * This is the difference between the one rejection a reader wants to see and the eighty-four they
+   * do not. Membership is nominal, so a contract that structurally satisfies the base and simply
+   * never wrote `extends` is a near-miss: someone meant it to be a member, or will. A contract with
+   * nothing in common with the base was never a candidate in any meaningful sense, and saying so
+   * once per group per contract is what turned a real consumer's report into two thousand lines.
+   *
+   * Recording it changes NO verdict. Nominal assignability decided membership before this is
+   * computed, and it is computed only for candidates that decision already rejected.
+   */
+  structurallyAssignable?: boolean;
+};
+
+/**
+ * Where considered-and-rejected candidates are recorded, and how much is recorded about them.
+ *
+ * Codegen supplies no sink at all (it has no report to build). `ioc inspect --discovery` supplies
+ * one asking for shape analysis, which costs one structural assignability check per rejected
+ * candidate per group — paid by a command whose whole job is the report, and by nothing else.
+ */
+export type GroupRejectionSink = {
+  readonly rejections: GroupMembershipRejection[];
+  /** Record {@link GroupMembershipRejection.structurallyAssignable} on nominal rejections. */
+  readonly recordStructuralShape?: boolean;
 };
 
 /** One sentence per rejection reason: what the check saw, and what would change the verdict. */
@@ -43,6 +70,37 @@ export const IOC_GROUP_REJECTION_GLOSS = {
   contract_type_unresolved:
     "the contract's declared type could not be loaded from the TypeScript program, so it was never compared to the base",
 } as const satisfies Record<GroupMembershipRejectionReason, string>;
+
+/**
+ * Records one rejection, adding the shape verdict when the sink asked for it.
+ *
+ * Only `nominal_heritage_not_declared` gets a shape verdict: the other reasons are failures to
+ * RESOLVE a type, so there is no candidate type to compare shapes with in the first place.
+ */
+const recordRejection = (
+  sink: GroupRejectionSink | undefined,
+  rejection: GroupMembershipRejection,
+  shape: { checker: ts.TypeChecker; candidate: ts.Type; base: ts.Type } | undefined,
+): void => {
+  if (sink === undefined) {
+    return;
+  }
+  if (
+    sink.recordStructuralShape !== true ||
+    shape === undefined ||
+    rejection.reason !== "nominal_heritage_not_declared"
+  ) {
+    sink.rejections.push(rejection);
+    return;
+  }
+  sink.rejections.push({
+    ...rejection,
+    structurallyAssignable: shape.checker.isTypeAssignableTo(
+      shape.candidate,
+      shape.base,
+    ),
+  });
+};
 
 export const glossForGroupRejection = (
   reason: GroupMembershipRejectionReason,
@@ -530,7 +588,7 @@ export const isTypeAssignableToNamedBase = (
  * key of one can collide with a slot, and a group that silently omitted one of its own members
  * would be the worst possible failure — a collection that looks complete and is not.
  *
- * @param rejections - When set, every considered-and-rejected candidate is appended here. Recording
+ * @param sink - When set, every considered-and-rejected candidate is appended to it. Recording
  * only: membership semantics are identical whether or not the sink is supplied.
  */
 export const collectImplementationMembersAssignableToBase = (
@@ -540,7 +598,7 @@ export const collectImplementationMembersAssignableToBase = (
   scanDirs: readonly ResolvedScanDir[],
   plans: readonly ResolvedContractRegistration[],
   baseType: ts.Type,
-  rejections?: GroupMembershipRejection[],
+  sink?: GroupRejectionSink,
 ): AssignableImplementationMember[] => {
   const members: AssignableImplementationMember[] = [];
   for (const plan of plans) {
@@ -552,10 +610,14 @@ export const collectImplementationMembersAssignableToBase = (
       plan,
     );
     if (contractType === undefined) {
-      rejections?.push({
-        contractName: plan.contractName,
-        reason: "contract_type_unresolved",
-      });
+      recordRejection(
+        sink,
+        {
+          contractName: plan.contractName,
+          reason: "contract_type_unresolved",
+        },
+        undefined,
+      );
       continue;
     }
     const nominal = analyzeNominalAssignability(
@@ -564,10 +626,11 @@ export const collectImplementationMembersAssignableToBase = (
       baseType,
     );
     if (!nominal.assignable) {
-      rejections?.push({
-        contractName: plan.contractName,
-        reason: nominal.reason,
-      });
+      recordRejection(
+        sink,
+        { contractName: plan.contractName, reason: nominal.reason },
+        { checker, candidate: contractType, base: baseType },
+      );
       continue;
     }
     const typeArgument = extractMemberBaseTypeArgument(
@@ -599,7 +662,7 @@ export const collectContractDefaultMembersAssignableToBase = (
   scanDirs: readonly ResolvedScanDir[],
   plans: readonly ResolvedContractRegistration[],
   baseType: ts.Type,
-  rejections?: GroupMembershipRejection[],
+  sink?: GroupRejectionSink,
 ): ContractDefaultGroupMember[] => {
   const members: ContractDefaultGroupMember[] = [];
   for (const plan of plans) {
@@ -611,10 +674,14 @@ export const collectContractDefaultMembersAssignableToBase = (
       plan,
     );
     if (contractType === undefined) {
-      rejections?.push({
-        contractName: plan.contractName,
-        reason: "contract_type_unresolved",
-      });
+      recordRejection(
+        sink,
+        {
+          contractName: plan.contractName,
+          reason: "contract_type_unresolved",
+        },
+        undefined,
+      );
       continue;
     }
     const nominal = analyzeNominalAssignability(
@@ -623,10 +690,11 @@ export const collectContractDefaultMembersAssignableToBase = (
       baseType,
     );
     if (!nominal.assignable) {
-      rejections?.push({
-        contractName: plan.contractName,
-        reason: nominal.reason,
-      });
+      recordRejection(
+        sink,
+        { contractName: plan.contractName, reason: nominal.reason },
+        { checker, candidate: contractType, base: baseType },
+      );
       continue;
     }
     const defaultImpl = plan.implementations.find(

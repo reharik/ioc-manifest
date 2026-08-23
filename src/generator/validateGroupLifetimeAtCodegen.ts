@@ -31,6 +31,9 @@ import {
   type IocOverride,
 } from "../config/iocConfig.js";
 import {
+  docsPointerLine,
+} from "../diagnostics/errorDocs.js";
+import {
   getContractDeclaredTypeForMembership,
   type ContractTypeRef,
 } from "../groups/baseTypeAssignability.js";
@@ -59,13 +62,19 @@ export type GroupLifetimeFinding = {
 const declareOnBase = (contractName: string, baseType: string): string =>
   `lifetime is a property of the group; declare the marker on the base ${JSON.stringify(baseType)} (member ${JSON.stringify(contractName)} may not carry its own)`;
 
+/** Family pointer for the aggregated preamble; both codes are the same rule seen from two sides. */
+const GROUP_LIFETIME_FAMILY_CODE = "group-lifetime";
+
 export const formatGroupLifetimeErrors = (
   findings: readonly GroupLifetimeFinding[],
-): string =>
-  [
+): string => {
+  const docsLine = docsPointerLine(GROUP_LIFETIME_FAMILY_CODE);
+  return [
     `[ioc] ${findings.length} grouped member${findings.length === 1 ? "" : "s"} declare${findings.length === 1 ? "s" : ""} a lifetime. A group is a family whose members are handed out interchangeably, so the family ranks one lifetime and the base is where it is declared:`,
+    ...(docsLine !== undefined ? [docsLine] : []),
     ...findings.map((finding) => finding.message),
   ].join("\n");
+};
 
 export type ValidateGroupLifetimeContext = {
   /** Contracts discovery found, with the specifier their declared type is reachable through. */
