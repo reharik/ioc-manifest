@@ -1,4 +1,5 @@
 import { LOCAL_PACKAGE_IDENTIFIER } from "../../config/packageIdentifier.js";
+import { sliceLabel } from "../sliceLabel.js";
 import type { CompositionContext, ValidationIssue } from "../types.js";
 
 type KeyOwner = {
@@ -68,7 +69,7 @@ export const checkSameKeyConflicts = (
       for (const [implementationName, meta] of Object.entries(impls)) {
         const key = meta.registrationKey;
         const owner: KeyOwner = {
-          packageLabel: slice.packageLabel,
+          packageLabel: sliceLabel(slice),
           sliceIndex,
           contractName,
           implementationName,

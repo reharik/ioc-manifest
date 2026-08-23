@@ -22,6 +22,7 @@ import path from "node:path";
 import ts from "typescript";
 import type { IocConfig, IocLifetime } from "../config/iocConfig.js";
 import type { IocGroupsManifest } from "../core/manifest.js";
+import { LOCAL_PACKAGE_ATTRIBUTION } from "../diagnostics/localPackageLabel.js";
 import {
   docsPointerLine,
   docsPointerSuffix,
@@ -764,22 +765,28 @@ const variantLabel = (
   `Scope root "${variant.contractName}" variant "${variant.variantName}" (export ${JSON.stringify(variant.exportName)} in ${relModulePath(ctx.projectRoot, variant.modulePath)})`;
 
 /**
- * Where a demand was made, in the reader's terms.
+ * Where a unit lives, in the reader's terms — the one phrase both walk-path renderings share.
  *
  * A composed unit is called out as such and by package: the reader cannot open that file in this
  * repository, and "this comes from a library you compose" is the single most useful fact about the
- * demand — without it the path names an export nobody here wrote.
+ * demand — without it the path names an export nobody here wrote. A LOCAL unit gets the symmetric
+ * half of the same sentence. It used to get nothing, which left the composed parenthetical looking
+ * like a special case rather than one of two answers to "whose file is this?".
  */
+const unitSiteLabel = (
+  ctx: ScopeRootVerificationContext,
+  unit: { readonly modulePath: string; readonly packageName?: string },
+): string =>
+  unit.packageName !== undefined
+    ? `${unit.modulePath} (composed package ${JSON.stringify(unit.packageName)})`
+    : `${relModulePath(ctx.projectRoot, unit.modulePath)} ${LOCAL_PACKAGE_ATTRIBUTION}`;
+
+/** Where a demand was made, in the reader's terms. */
 const demandSiteLabel = (
   ctx: ScopeRootVerificationContext,
   edge: DemandEdge,
-): string => {
-  const site =
-    edge.unit.packageName !== undefined
-      ? `${edge.unit.modulePath} (composed package ${JSON.stringify(edge.unit.packageName)})`
-      : relModulePath(ctx.projectRoot, edge.unit.modulePath);
-  return `demanded by ${JSON.stringify(edge.unit.exportName)} in ${site} (via ${[...edge.viaPath, edge.key].join(" → ")})`;
-};
+): string =>
+  `demanded by ${JSON.stringify(edge.unit.exportName)} in ${unitSiteLabel(ctx, edge.unit)} (via ${[...edge.viaPath, edge.key].join(" → ")})`;
 
 /**
  * The advisory a variant carries when part of its subtree could not be walked.
@@ -861,10 +868,7 @@ const formatScopeRootInversion = (
 ): string => {
   const consumerLabel =
     consumer.registrationKey ?? `${variant.variantName} (scope root)`;
-  const consumerSite =
-    consumer.packageName !== undefined
-      ? `${JSON.stringify(consumer.exportName)} in ${consumer.modulePath} (composed package ${JSON.stringify(consumer.packageName)})`
-      : `${JSON.stringify(consumer.exportName)} in ${relModulePath(ctx.projectRoot, consumer.modulePath)}`;
+  const consumerSite = `${JSON.stringify(consumer.exportName)} in ${unitSiteLabel(ctx, consumer)}`;
   const depPhrase = lbvDeclared
     ? `'${depKey}' (late-bound value of scope root "${variant.contractName}" variant "${variant.variantName}", per-scope)`
     : `'${depKey}' (${depLifetime})`;

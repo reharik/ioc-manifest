@@ -20,6 +20,7 @@ import {
   formatRegistryDiagnostic,
 } from "../typeComparison.js";
 import type { CompositionProgramContext } from "../compositionProgram.js";
+import { isLocalSlice, sliceLabel } from "../sliceLabel.js";
 import type { ParsedManifestSlice, CompositionContext, ValidationIssue } from "../types.js";
 
 /**
@@ -60,11 +61,11 @@ const displayPath = (projectRoot: string, filePath: string): string => {
  * and the message says so rather than sending them to a command that cannot help.
  */
 const suggestedFixFor = (slice: ParsedManifestSlice): string =>
-  slice.sourceId === "local"
+  isLocalSlice(slice)
     ? "Re-run `ioc generate` for this package — generated output that predates a source change is " +
       "the usual cause. If the same errors survive regeneration, the file was emitted broken: " +
       "that is a bug in ioc-manifest, please report it with this output."
-    : `Regenerate and republish ${slice.packageLabel} with a current ioc-manifest — its committed ` +
+    : `Regenerate and republish ${sliceLabel(slice)} with a current ioc-manifest — its committed ` +
       "manifest is stale or was emitted broken. Until then this package's types cannot be " +
       "compared against. If the errors survive regeneration there, report it as an ioc-manifest bug.";
 
@@ -93,7 +94,7 @@ const buildBrokenFileIssue = (
   return {
     category: "registry-integrity",
     severity: "error",
-    summary: `Generated types for ${slice.packageLabel} do not compile (${diagnostics.length} error${diagnostics.length === 1 ? "" : "s"})`,
+    summary: `Generated types for ${sliceLabel(slice)} do not compile (${diagnostics.length} error${diagnostics.length === 1 ? "" : "s"})`,
     details,
     suggestedFix: suggestedFixFor(slice),
   };

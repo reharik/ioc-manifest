@@ -18,6 +18,10 @@ export interface EmailStrategy extends NotificationStrategy {
 export interface SmsStrategy extends NotificationStrategy {
   readonly medium: "sms";
 }
+/** Member whose only implementation is named nothing like it — see `divergent-strategy.ts`. */
+export interface SlackStrategy extends NotificationStrategy {
+  readonly medium: "slack";
+}
 
 /** Ungrouped control: keeps its contract key and its member keys throughout. */
 export interface Consumer {

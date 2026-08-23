@@ -22,8 +22,10 @@
  */
 import fs from "node:fs";
 import type {
+  IocGroupKind,
   IocGroupLeafManifest,
   IocGroupNodeManifest,
+  IocGroupRootManifest,
   IocImplementationLifetime,
 } from "../core/manifest.js";
 import { resolveManifestAccessKey } from "../core/contractAccessKey.js";
@@ -60,6 +62,48 @@ export type ComposedManifestUnit = {
   dependencyKeys?: readonly string[];
 };
 
+/**
+ * One member of a composed package's group root, in the terms a DEMAND-time check reads it.
+ *
+ * Both facts a demand needs are carried: the registration key (what a bare or `Named<…>` demand
+ * spells) and the contract name (what the member's would-be contract key is derived from, and what
+ * the grouped-member error names). The generated manifest states both on every leaf — see the
+ * schema note on {@link ComposedGroupRoot}.
+ */
+export type ComposedGroupMember = {
+  contractName: string;
+  registrationKey: string;
+  /**
+   * Record-kind groups expose members as properties of the group value; this is the property name.
+   * Absent for a collection group, whose members are individually anonymous by declaration.
+   */
+  memberProperty?: string;
+};
+
+/**
+ * A composed package's group root, merged across every package that contributes to the key.
+ *
+ * ### The schema carries membership, always
+ *
+ * `IocGroupRootManifest` declares `kind`, `baseType` and `members` as required, and
+ * `IocGroupLeafManifest` declares `contractName` and `registrationKey` as required — none of them
+ * is an "omitted when empty" field, so there is no `dependencyKeys`-shaped ambiguity here and no
+ * feature declaration to consult. Schema v2 manifests are refused outright by the composition
+ * suite's version check, so no reader of an older shape exists. A root the parser cannot read as a
+ * root (missing `kind`, `baseType` or `members`) is not surfaced as a group at all by
+ * {@link parseGeneratedManifestSource} — that is a corrupted file, not an under-informative one,
+ * and it behaves exactly as it did before this data was carried.
+ */
+export type ComposedGroupRoot = {
+  /** The group root's cradle key — what a legal demand names instead of a member. */
+  groupKey: string;
+  kind: IocGroupKind;
+  baseType: string;
+  /** Composed packages contributing to this root, in `composedManifests` order. */
+  packageNames: readonly string[];
+  members: readonly ComposedGroupMember[];
+};
+
 export type ComposedManifestSupply = {
   /** Every composed registration unit, in manifest order per package. */
   units: readonly ComposedManifestUnit[];
@@ -74,6 +118,15 @@ export type ComposedManifestSupply = {
   /** Composed group roots: group key → member registration keys, in manifest order. */
   groupMembersByGroupKey: ReadonlyMap<string, readonly string[]>;
   /**
+   * Composed group roots in FULL — kind, base type and per-member contract names.
+   *
+   * `groupMembersByGroupKey` answers the walk's question ("which keys does this hop resolve?");
+   * this answers the demand rule's ("is this contract grouped, and what should have been written
+   * instead?"). Both are projections of the same parsed roots, kept apart because a walk hop and a
+   * diagnostic need different halves of the record.
+   */
+  groupRootsByGroupKey: ReadonlyMap<string, ComposedGroupRoot>;
+  /**
    * Composed packages whose manifest carries no dependency-key data.
    *
    * Sorted. Non-empty means some part of any subtree reaching those packages is unwalkable, which
@@ -86,6 +139,7 @@ export const EMPTY_COMPOSED_MANIFEST_SUPPLY: ComposedManifestSupply = {
   units: [],
   accessKeys: new Map(),
   groupMembersByGroupKey: new Map(),
+  groupRootsByGroupKey: new Map(),
   packagesWithoutDependencyData: [],
 };
 
@@ -94,6 +148,7 @@ export type ComposedManifestPackageSupply = {
   units: readonly ComposedManifestUnit[];
   accessKeys: ReadonlyMap<string, string>;
   groupMembersByGroupKey: ReadonlyMap<string, readonly string[]>;
+  groupRootsByGroupKey: ReadonlyMap<string, ComposedGroupRoot>;
   /** True when the manifest declares that it carries `dependencyKeys` in full. */
   carriesDependencyKeys: boolean;
 };
@@ -104,6 +159,52 @@ const groupMemberKeys = (members: IocGroupNodeManifest): string[] =>
     ? members
     : Object.values(members as Record<string, IocGroupLeafManifest>)
   ).map((leaf) => leaf.registrationKey);
+
+/**
+ * Group members with their contracts, for both group kinds.
+ *
+ * A record group's property KEY is carried through as `memberProperty` — it is what the
+ * grouped-member guidance tells a reader to write after the group key, and it exists nowhere else.
+ */
+const groupMembers = (
+  members: IocGroupNodeManifest,
+): ComposedGroupMember[] =>
+  Array.isArray(members)
+    ? members.map((leaf) => ({
+        contractName: leaf.contractName,
+        registrationKey: leaf.registrationKey,
+      }))
+    : Object.entries(members as Record<string, IocGroupLeafManifest>).map(
+        ([memberProperty, leaf]) => ({
+          contractName: leaf.contractName,
+          registrationKey: leaf.registrationKey,
+          memberProperty,
+        }),
+      );
+
+/** Merges one package's root into the accumulating cross-package root for the same key. */
+const mergeGroupRoot = (
+  existing: ComposedGroupRoot | undefined,
+  incoming: ComposedGroupRoot,
+): ComposedGroupRoot => {
+  if (existing === undefined) {
+    return incoming;
+  }
+  const members = [...existing.members];
+  for (const member of incoming.members) {
+    if (!members.some((m) => m.registrationKey === member.registrationKey)) {
+      members.push(member);
+    }
+  }
+  // `kind` and `baseType` come from the FIRST package to declare the root. Disagreement between
+  // packages is a real composition error, and `checks/groups.ts` is what reports it — reporting it
+  // a second time here, in a demand diagnostic, would say the same thing in the wrong place.
+  return {
+    ...existing,
+    packageNames: [...existing.packageNames, ...incoming.packageNames],
+    members,
+  };
+};
 
 /**
  * Projects one generated manifest source into walk-ready supply.
@@ -126,6 +227,7 @@ export const parseComposedManifestSupplySource = (
   const units: ComposedManifestUnit[] = [];
   const accessKeys = new Map<string, string>();
   const groupMembersByGroupKey = new Map<string, readonly string[]>();
+  const groupRootsByGroupKey = new Map<string, ComposedGroupRoot>();
 
   for (const [contractName, impls] of Object.entries(parsed.contracts)) {
     const contractUnits: ComposedManifestUnit[] = [];
@@ -161,14 +263,24 @@ export const parseComposedManifestSupplySource = (
     }
   }
 
-  for (const [groupKey, root] of Object.entries(parsed.groupRoots)) {
+  for (const [groupKey, root] of Object.entries(
+    parsed.groupRoots as Record<string, IocGroupRootManifest>,
+  )) {
     groupMembersByGroupKey.set(groupKey, groupMemberKeys(root.members));
+    groupRootsByGroupKey.set(groupKey, {
+      groupKey,
+      kind: root.kind,
+      baseType: root.baseType,
+      packageNames: [packageName],
+      members: groupMembers(root.members),
+    });
   }
 
   return {
     units,
     accessKeys,
     groupMembersByGroupKey,
+    groupRootsByGroupKey,
     carriesDependencyKeys: (parsed.declaredFeatures ?? []).includes(
       "dependencyKeys",
     ),
@@ -200,7 +312,8 @@ export const loadComposedManifestSupply = async (
 ): Promise<ComposedManifestSupply> => {
   const units: ComposedManifestUnit[] = [];
   const accessKeys = new Map<string, string>();
-  const groupMembers = new Map<string, string[]>();
+  const groupMemberKeysByGroup = new Map<string, string[]>();
+  const groupRoots = new Map<string, ComposedGroupRoot>();
   const packagesWithoutDependencyData: string[] = [];
 
   for (const packageName of composedPackageNames) {
@@ -234,9 +347,9 @@ export const loadComposedManifestSupply = async (
       }
     }
     for (const [groupKey, members] of parsed.groupMembersByGroupKey) {
-      const existing = groupMembers.get(groupKey);
+      const existing = groupMemberKeysByGroup.get(groupKey);
       if (existing === undefined) {
-        groupMembers.set(groupKey, [...members]);
+        groupMemberKeysByGroup.set(groupKey, [...members]);
         continue;
       }
       for (const member of members) {
@@ -244,6 +357,9 @@ export const loadComposedManifestSupply = async (
           existing.push(member);
         }
       }
+    }
+    for (const [groupKey, root] of parsed.groupRootsByGroupKey) {
+      groupRoots.set(groupKey, mergeGroupRoot(groupRoots.get(groupKey), root));
     }
     if (!parsed.carriesDependencyKeys) {
       packagesWithoutDependencyData.push(packageName);
@@ -253,7 +369,8 @@ export const loadComposedManifestSupply = async (
   return {
     units,
     accessKeys,
-    groupMembersByGroupKey: new Map(groupMembers),
+    groupMembersByGroupKey: new Map(groupMemberKeysByGroup),
+    groupRootsByGroupKey: new Map(groupRoots),
     packagesWithoutDependencyData: [...packagesWithoutDependencyData].sort(
       (a, b) => a.localeCompare(b),
     ),

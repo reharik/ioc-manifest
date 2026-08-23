@@ -5,6 +5,7 @@ import {
   type SkippedComparison,
 } from "./registryIntegrity.js";
 import { createCompositionProgram } from "../compositionProgram.js";
+import { isLocalSlice, sliceLabel } from "../sliceLabel.js";
 import {
   findFirstMismatchedPropertyAcrossSuppliers,
   formatCheckerType,
@@ -24,9 +25,7 @@ export const TYPE_NOT_RESOLVED_CAVEAT =
   "Type compatibility could not be verified for this key — run `tsc` for the authoritative result.";
 
 const formatSupplierLabel = (slice: SupplierSlice): string =>
-  slice.sourceId === "local"
-    ? `${slice.packageLabel} local cradle`
-    : `${slice.packageLabel}`;
+  isLocalSlice(slice) ? `${sliceLabel(slice)} cradle` : sliceLabel(slice);
 
 const findSuppliersForKey = (
   slices: readonly ParsedManifestSlice[],
@@ -204,7 +203,7 @@ const buildUnverifiedKeyWarning = (
   // the `[externals] [externals]` a consumer reported.
   summary: `A supplier for ${JSON.stringify(externalKey)} was found, but the types could not be compared.`,
   details: [
-    `key:       ${JSON.stringify(externalKey)}  demanded by ${slice.packageLabel}`,
+    `key:       ${JSON.stringify(externalKey)}  demanded by ${sliceLabel(slice)}`,
     `supplied by: ${suppliers.map((s) => formatSupplierLabel(s)).join(", ")}`,
     caveat,
   ],
@@ -270,7 +269,7 @@ export const checkExternalsSatisfaction = (
         // would be judged on are not trustworthy, so the honest report is that nothing was judged.
         skipped.push({
           externalKey,
-          demandedBy: slice.packageLabel,
+          demandedBy: sliceLabel(slice),
           taintedByPaths,
         });
         continue;
@@ -280,9 +279,9 @@ export const checkExternalsSatisfaction = (
         issues.push({
           category: "externals",
           severity: "error",
-          summary: `Unsatisfied: nothing supplies ${JSON.stringify(externalKey)}, which ${slice.packageLabel} expects the container to already have.`,
+          summary: `Unsatisfied: nothing supplies ${JSON.stringify(externalKey)}, which ${sliceLabel(slice)} expects the container to already have.`,
           details: [
-            `key:       ${JSON.stringify(externalKey)}  demanded by ${slice.packageLabel}`,
+            `key:       ${JSON.stringify(externalKey)}  demanded by ${sliceLabel(slice)}`,
             `demanded:  ${demandedText}`,
             "No composed manifest offers this key in its IocGeneratedCradle.",
           ],
@@ -321,9 +320,9 @@ export const checkExternalsSatisfaction = (
       issues.push({
         category: "externals",
         severity: "error",
-        summary: `Unsatisfied: ${JSON.stringify(externalKey)} is supplied, but not with the type ${slice.packageLabel} demands.`,
+        summary: `Unsatisfied: ${JSON.stringify(externalKey)} is supplied, but not with the type ${sliceLabel(slice)} demands.`,
         details: [
-          `key:       ${JSON.stringify(externalKey)}  demanded by ${slice.packageLabel}`,
+          `key:       ${JSON.stringify(externalKey)}  demanded by ${sliceLabel(slice)}`,
           "the supplied and demanded types are incompatible:",
           ...buildTypeMismatchDetails(
             typeCheckerCtx,
@@ -334,7 +333,7 @@ export const checkExternalsSatisfaction = (
           ),
         ],
         suggestedFix:
-          `Align the IocGeneratedCradle type for key ${JSON.stringify(externalKey)} with the demanded ${demandedText}, or adjust the external declaration in ${slice.packageLabel}.`,
+          `Align the IocGeneratedCradle type for key ${JSON.stringify(externalKey)} with the demanded ${demandedText}, or adjust the external declaration in ${sliceLabel(slice)}.`,
       });
     }
   }

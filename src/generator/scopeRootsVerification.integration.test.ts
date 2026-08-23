@@ -250,6 +250,19 @@ describe("scope-root registration units (stage 2: demand–supply verification)"
       assert.match(missing.message, /publicRouter → auditLog → viewerId/);
     });
 
+    it("should attribute the demanding node to this app, symmetrically with a composed one", () => {
+      const { result } = verify(missingKeyFixtures(), missingKeyConfig);
+      const missing = result.variants[0]!.findings.find(
+        (f) => f.code === "lbv_missing_key",
+      )!;
+
+      // A composed unit prints `(composed package "@x/y")` — the answer to "whose file is this?".
+      // A local one used to print nothing at all, which made the composed form read as a special
+      // case rather than as one of two answers.
+      assert.match(missing.message, /scope-roots\/missing-key\.ts \(this app\)/);
+      assert.doesNotMatch(missing.message, /composed package/);
+    });
+
     it("should state that declarations are per-root and complete — declare it here", () => {
       const { result } = verify(missingKeyFixtures(), missingKeyConfig);
 
@@ -686,6 +699,8 @@ describe("scope-root registration units (stage 2: demand–supply verification)"
         viewerIdInversion.message,
         /freezes its scoped dependency at first construction/,
       );
+      // The consumer site carries the same attribution the demand path does.
+      assert.match(viewerIdInversion.message, /\.ts \(this app\)\)/);
       // The declaration itself is fine — the failure is the consumer's lifetime, not the lbv set.
       assert.ok(!variant.findings.some((f) => f.code === "lbv_missing_key"));
     });

@@ -361,6 +361,51 @@ describe("Named<T> and bare demands against grouped members", () => {
     });
   }
 
+  describe("When the demanded member's registration key differs from its contract key", () => {
+    /**
+     * The local half of the pin the composed suite carries — same fixture shape, same law.
+     *
+     * `buildSlackNotifier` returns `SlackStrategy`, so the member's registration key is
+     * `slackNotifier` while the record group exposes it under its CONTRACT key,
+     * `slackStrategy`. `registerGroups` builds the group value from the record's own property keys
+     * (`resolveGroupNodeFromCradle`), so the contract key is what a consumer writes; suggesting the
+     * registration key would name a property the group value does not have.
+     *
+     * Every other member in this fixture is implemented by a factory named after its contract, so
+     * the two spellings coincide and no assertion over them could tell one from the other.
+     */
+    it("should suggest the record's property key, not the registration key", () => {
+      assert.throws(
+        () =>
+          generate(
+            [
+              "contracts.ts",
+              "strategies.ts",
+              "divergent-strategy.ts",
+              "bad-bare-divergent-member.ts",
+            ],
+            strategiesGroup,
+          ),
+        (error: Error) => {
+          assert.match(error.message, /\[grouped-member-demand\]/);
+          assert.match(
+            error.message,
+            /then `notificationStrategies\.slackStrategy`/,
+          );
+          assert.doesNotMatch(
+            error.message,
+            /notificationStrategies\.slackNotifier/,
+          );
+          assert.doesNotMatch(
+            error.message,
+            /notificationStrategies\.SlackStrategy/,
+          );
+          return true;
+        },
+      );
+    });
+  });
+
   describe("When a grouped contract's would-be contract key is demanded", () => {
     it("should be recognized rather than drifting out as an external", () => {
       assert.throws(

@@ -8,6 +8,7 @@
  * conflict the other has already resolved.
  */
 import { selectDefaultImplementationName } from "../../core/defaultImplementationSelection.js";
+import { sliceLabel } from "../sliceLabel.js";
 import type { CompositionContext } from "../types.js";
 
 export type MergedImplRow = {
@@ -96,7 +97,7 @@ export const mergedRowsForContract = (
     }
     for (const [implementationName, meta] of Object.entries(impls)) {
       rows.push({
-        packageLabel: slice.packageLabel,
+        packageLabel: sliceLabel(slice),
         sliceIndex,
         implementationName,
         registrationKey: meta.registrationKey,
@@ -104,7 +105,7 @@ export const mergedRowsForContract = (
       });
       if (meta.default === true) {
         manifestDefaults.push({
-          packageLabel: slice.packageLabel,
+          packageLabel: sliceLabel(slice),
           sliceIndex,
           implementationName,
         });

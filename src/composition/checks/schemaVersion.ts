@@ -1,4 +1,5 @@
 import { MANIFEST_SCHEMA_VERSION } from "../../schemaVersion.js";
+import { sliceLabel } from "../sliceLabel.js";
 import type { CompositionContext, ValidationIssue } from "../types.js";
 
 export const checkSchemaVersions = (ctx: CompositionContext): ValidationIssue[] => {
@@ -12,7 +13,7 @@ export const checkSchemaVersions = (ctx: CompositionContext): ValidationIssue[] 
     issues.push({
       category: "schema-version",
       severity: "error",
-      summary: `${slice.packageLabel} declares manifestSchemaVersion ${String(slice.manifestSchemaVersion)} (runtime expects ${MANIFEST_SCHEMA_VERSION})`,
+      summary: `${sliceLabel(slice)} declares manifestSchemaVersion ${String(slice.manifestSchemaVersion)} (runtime expects ${MANIFEST_SCHEMA_VERSION})`,
       details: [
         `Manifest: ${slice.manifestPath}`,
         "This usually means the package was built against an incompatible version of ioc-manifest.",

@@ -54,6 +54,7 @@ import {
   printValidateResult,
   runValidate,
 } from "../validate/runValidate.js";
+import { formatCaughtErrorForTerminal } from "../diagnostics/colorizeDiagnostic.js";
 
 const formatResolvedScanDir = (e: ResolvedScanDir): string => {
   if (e.scope !== undefined) {
@@ -211,11 +212,23 @@ const main = async (): Promise<void> => {
   );
 };
 
+/**
+ * The one place a thrown diagnostic becomes terminal output.
+ *
+ * Generation is this tool's primary error surface — the demand model, the group law, scope-root
+ * verification and the whole composition suite all reach a developer as a thrown `Error.message` —
+ * so this is where those messages get their colour. It is applied HERE and nowhere upstream because
+ * `Error.message` itself must stay escape-free: it is serialized, matched and re-wrapped by things
+ * that are not terminals (see `diagnostics/colorizeDiagnostic.ts`).
+ *
+ * `IOC_DEBUG=1` prints the error object whole, stack included, and is left exactly as it was — it
+ * exists to show the raw thing, and tinting it would defeat that.
+ */
 main().catch((error: unknown) => {
   if (process.env.IOC_DEBUG === "1") {
     console.error(error);
   } else {
-    console.error(error instanceof Error ? error.message : error);
+    console.error(formatCaughtErrorForTerminal(error));
   }
   process.exit(1);
 });

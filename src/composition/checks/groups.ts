@@ -1,5 +1,6 @@
 import { areCanonicalBaseTypeIdsEquivalent } from "../../runtime/groupBaseTypeEquivalence.js";
 import { LOCAL_PACKAGE_IDENTIFIER } from "../../config/packageIdentifier.js";
+import { sliceLabel } from "../sliceLabel.js";
 import type { ParsedGroupRoot, CompositionContext, ValidationIssue } from "../types.js";
 
 type GroupContributor = {
@@ -81,7 +82,7 @@ export const checkGroupConsistency = (
   ctx.slices.forEach((slice, sliceIndex) => {
     for (const [groupName, root] of Object.entries(slice.groupRoots)) {
       const list = byGroup.get(groupName) ?? [];
-      list.push({ packageLabel: slice.packageLabel, sliceIndex, root });
+      list.push({ packageLabel: sliceLabel(slice), sliceIndex, root });
       byGroup.set(groupName, list);
     }
   });

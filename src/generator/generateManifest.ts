@@ -85,6 +85,10 @@ import { validateGeneratedReferencesAtCodegen } from "./validateGeneratedReferen
 import { validateNonEmptyGroupsAtCodegen } from "./validateNonEmptyGroupsAtCodegen.js";
 import { validateContractSlotOccupancyAtCodegen } from "./validateContractSlotOccupancyAtCodegen.js";
 import { runCompositionSuiteAtCodegen } from "./runCompositionSuiteAtCodegen.js";
+import {
+  buildComposedGroupDemandIndex,
+  mergeWithLocalPrecedence,
+} from "./composedGroupMembership.js";
 import { warnUnusableFactoryExports } from "./warnUnusableFactoryExports.js";
 import { warnDivergentClassFileNames } from "./warnDivergentClassFileNames.js";
 
@@ -383,6 +387,11 @@ export const generateManifest = async (
         )
       : undefined;
 
+  // Group membership the composed manifests carry, projected onto the demand rule's indexes. Read
+  // from the SAME merged supply the walk reads, so the two cannot disagree about which composed
+  // contracts are grouped.
+  const composedGroupDemand = buildComposedGroupDemandIndex(composedSupply);
+
   // Contract slot keys join the static layers here: they are supply (the runtime registers every
   // one as `aliasTo(elected)`), and they are the row of the demand model a bare contract-name
   // property means. Derived from the plans, after election has run and before anything reads a
@@ -399,11 +408,20 @@ export const generateManifest = async (
     scopeRoots,
     composedOpenerKeys,
     contractSlots,
-    groupMemberships: demandGroupMemberships(
-      groupedContracts,
-      groupResult?.manifest,
+    // Grouped ⇒ group-only reaches across the package boundary here. The local index is decided
+    // from this package's sources and `config.groups`; a composed package's group roots state the
+    // same fact about ITS members, and merging the two is what lets all four doors — bare member
+    // key, `Named<MemberContract>`, `Named<GroupBase>`, and the would-be contract key — recognize a
+    // member that lives in a library. Without it a composed member's demand landed on
+    // `named-marker-required`, whose advice the group law forbids, and then on `[externals]`.
+    groupMemberships: mergeWithLocalPrecedence(
+      demandGroupMemberships(groupedContracts, groupResult?.manifest),
+      composedGroupDemand.membershipByContractName,
     ),
-    absentGroupedSlotKeys: absentGroupedSlotKeys(groupedContracts),
+    absentGroupedSlotKeys: mergeWithLocalPrecedence(
+      absentGroupedSlotKeys(groupedContracts),
+      composedGroupDemand.absentSlotKeyToContractName,
+    ),
     // Composed rows reach the named-instance rule only. `Named<C>` has to be checkable against an
     // implementation in another package, and the composed manifest is where its contract is
     // written down; what SUPPLIES a composed key is unchanged — composition, through `IocExternals`.

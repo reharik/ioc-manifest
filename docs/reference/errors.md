@@ -43,6 +43,8 @@ A contract that elects no default has no contract key at all, and the `named-mar
   - [named-marker-required] Class "ArchiveStorage" at ArchiveStorage.ts:18 property "localStorage" is the registration key of implementation "localStorage" (contract "Storage", in this package), demanded without saying so. For the elected default, demand the contract key `storage: Storage`; for this specific implementation, write `localStorage: Named<Storage>`.
 ```
 
+Membership is read from composed manifests too, not only from this package's `ioc.config.ts`. A group declared in a library states its roots in the manifest it publishes, so a demand in the composing app for one of that library's members lands on `grouped-member-demand` — naming the library's group — rather than on `named-marker-required`, whose advice the group law forbids.
+
 An offender line repeats a pointer only when its own code points somewhere the preamble does not — `grouped-member-demand` links to [the group law](/concepts/groups#grouped-means-group-only), because the problem there is the family and not the spelling.
 
 File paths in this family are scan-directory relative, the same as the other demand-analysis errors.
