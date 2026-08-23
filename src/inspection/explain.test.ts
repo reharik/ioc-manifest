@@ -14,7 +14,7 @@ import {
 } from "./formatExplain.js";
 import type { DiscoveryAnalysisResult } from "./runDiscoveryAnalysis.js";
 
-const ESC = "";
+const ESC = "\u001b";
 
 type Impl = {
   implementationName: string;

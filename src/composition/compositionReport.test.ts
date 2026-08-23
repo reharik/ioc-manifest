@@ -18,7 +18,9 @@ describe("formatValidationReport", () => {
           suggestedFix: "fix it",
         },
       ]);
-      const text = formatValidationReportText(report);
+      // `color: false` is pinned, not incidental: this asserts the plain-text layout, so it must
+      // not depend on whether the suite's stdout happens to be a terminal.
+      const text = formatValidationReportText(report, { color: false });
       assert.match(text, /\[externals\]/);
       assert.match(text, /Validation failed: 1 error/);
 

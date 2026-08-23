@@ -156,8 +156,10 @@ describe("validate registry integrity", () => {
       const { issues } = scenario();
       const report = buildValidationReport(issues);
       assert.ok(report.errorCount > 0);
+      // Plain text pinned: the category tag is tinted when stdout is a terminal, and an anchored
+      // match would then be testing the escape sequence rather than the line.
       assert.match(
-        formatValidationReportText(report),
+        formatValidationReportText(report, { color: false }),
         /^\[registry-integrity\] /m,
       );
     });

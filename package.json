@@ -50,7 +50,7 @@
     "prepare": "npm run build",
     "prepublishOnly": "npm run typecheck && npm test && npm run build && npm pack --dry-run",
     "publish:dry-run": "npm run build && npm pack --dry-run",
-    "test": "node --import tsx --test 'src/**/*.test.ts'",
+    "test": "NO_COLOR=1 node --import tsx --test 'src/**/*.test.ts'",
     "gen:manifest": "tsx src/generator/gen-manifest.ts",
     "pack:dev": "npm run build && npm pack --silent",
     "example:install": "npm install --prefix examples/multi-package",
