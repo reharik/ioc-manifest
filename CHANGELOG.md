@@ -5,6 +5,86 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.1] - Unreleased
+
+### Fixed
+
+- **Config loading registered a new ESM loader hook per package, and on some `tsx` versions the cost
+  of that compounded exponentially.** A field `ioc validate` took **156 seconds, 156 of which were
+  `composition: freshness`** — with the globbing (2–7ms) and the hashing (0–3ms) provably innocent.
+  The per-package sub-timers added in 4.0.0 named the eater on the first run: `config load` at 0.53s
+  for the local package, 1.36s, 10.92s, and then **144.85s** for the fourth.
+
+  Four packages meant four config loads, and each went through `tsx`'s `tsImport()`, which is
+  `register({ namespace: Date.now() }).import(...)` and never unregisters. On Node 18.19+/20.6+ that
+  takes the off-thread `module.register()` path, so every load left another live hook in the process.
+  The hooks are meant to be independent — each registration cache-busts `esm/index.mjs` so it gets
+  its own state, and each hook ignores resolutions outside its own namespace. **In `tsx` 4.22.0
+  through 4.22.4 that isolation is broken**: `initialize` / `resolve` / `load` are re-exported from a
+  helper module that is *not* cache-busted, and all of them close over a single module-level state
+  object which `initialize` overwrites via `Object.assign(state, createData(options))`. Every new
+  registration therefore re-points the namespace that all *prior* hooks compare against, so all N
+  hooks match, and each re-applies `tsx`'s full extension fan-out (9–14 candidates) before
+  delegating. Cost goes as roughly 14^(N−1).
+
+  Reproduced here on `tsx` 4.22.0 — one import, N hooks registered up front:
+
+  | live hooks | 1 | 2 | 3 | 4 | 5 | 6 |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | one import | 0.016s | 0.017s | 0.032s | 0.202s | 2.209s | 30.388s |
+
+  `unregister()` is not a workaround: it only flips `active` on that same shared object, and the next
+  `register()` re-arms it for every hook at once.
+
+  **The fix is one registration per process.** A new `configModuleLoader` owns the single `tsx` hook
+  and every config load goes through it, so N is 1 however many packages are composed and the
+  pathological branch is unreachable on every `tsx` version. End to end over a six-package fixture on
+  `tsx` 4.22.0:
+
+  | | app | media-core | infrastructure | notifications | billing | search | total |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | before | 132ms | 22ms | 32ms | 206ms | 2295ms | 30893ms | **33.58s** |
+  | after | 119ms | 7ms | 6ms | 5ms | 7ms | 5ms | **0.15s** |
+
+  On an unaffected `tsx` (4.21.0) the same fixture goes 0.18s → 0.15s: no regression, and the curve is
+  flat either way.
+
+- **Configs are now loaded once per process, not once per caller.** A single `ioc validate` asks for
+  the same config from three directions — discovery, the freshness slice loop, and the composition
+  context. Both the transpile and the validation (the schema parse, the `package.json` read for
+  self-reference detection, the composed-identifier collision scan, and the advisory warnings) are
+  now cached by resolved path and content stamp. The local slice already reused its loaded object;
+  this makes that structural for every package. Advisory warnings consequently print once per config
+  rather than once per package that asks about it.
+
+  The cache is keyed on **path plus mtime and size**, not path alone. `tsImport`'s per-call namespace
+  had one accidental virtue — it made every load a distinct module URL, so a config rewritten in place
+  was always re-read. Under one stable registration the URL is stable too, and Node's ESM cache would
+  otherwise serve the stale module.
+
+### Added
+
+- `IOC_CONFIG_TSCONFIG=false` loads `ioc.config.ts` without applying the project's `tsconfig.json`.
+  This is an escape hatch for a project whose tsconfig is enormous or whose compiler options confuse
+  a config that needs none of them — **not** the fix for the above, and not the default. Measured
+  against the reproduction, `tsconfig: false` on its own left the blow-up fully intact (2.64s vs
+  2.57s across five packages), because the extension fan-out is entered whenever the importing file
+  is TypeScript, not only when `allowJs` is set. It also disables `paths` alias resolution, so a
+  config importing through an alias fails with `ERR_MODULE_NOT_FOUND`. Registering once is what
+  flattens the curve; this flag is orthogonal.
+
+- A structural pin that `tsx` registrations do not grow with package count, and a source sweep
+  asserting that `configModuleLoader` is the only module under `src` that reaches for `tsx` at all.
+  The original bug was not a wrong line — it was the right line in four places, where no single call
+  site looked expensive and the cost existed only in the aggregate. The sweep is what stops it
+  coming back from a new direction.
+
+### Documentation
+
+- CLI reference: a **Reporting a slow run** section — `IOC_DEBUG=1` for the full phase breakdown,
+  `IOC_SLOW_PHASE_MS` to tune the self-identifying threshold, and the point that when a phase
+  surprises you, that output *is* the bug report.
+
 ## [4.0.0] - Unreleased
 
 The first release written for someone **adopting** the tool rather than upgrading it, so this entry

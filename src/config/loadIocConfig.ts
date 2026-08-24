@@ -7,7 +7,7 @@ import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import fg from "fast-glob";
-import { tsImport } from "tsx/esm/api";
+import { configCacheKey, importConfigModule } from "./configModuleLoader.js";
 import type { IocConfig } from "./iocConfig.js";
 import { formatIocConfigIssues, iocConfigSchema } from "./iocConfigSchema.js";
 import {
@@ -184,19 +184,55 @@ const resolveConfigFromModule = (mod: Record<string, unknown>): unknown => {
   return current;
 };
 
+/**
+ * Validated configs already loaded in this process, keyed by {@link configCacheKey}.
+ *
+ * `importConfigModule` already makes the TRANSPILE free on a repeat load; this makes the
+ * VALIDATION free too — the zod parse, the `package.json` read for self-reference detection, the
+ * composed-identifier collision scan, and the advisory warnings, which a reader should see once per
+ * config and not once per package that asks about it.
+ *
+ * Keyed on path AND content stamp, the same identity the module cache uses, so a config rewritten
+ * in place is revalidated rather than answered from a stale entry.
+ *
+ * A single `ioc validate` asks for the same config from three directions — discovery, the freshness
+ * slice loop, and the composition context. Reusing the loaded object there is not an optimization
+ * bolted on top; it is the invariant that makes those three agree on what the config SAYS.
+ */
+const validatedConfigCache = new Map<string, Promise<IocConfig>>();
+
 export const loadIocConfig = async (
   absoluteConfigPath: string,
 ): Promise<IocConfig> => {
-  // Transpile the `.ts` config in-process via tsx's scoped loader rather than delegating to a
-  // bare `import()`, which fails on Node versions without native type stripping. `tsImport`
-  // patches the loader only for this import and restores it after, so the rest of the CLI is
-  // untouched.
-  const mod = (await tsImport(absoluteConfigPath, import.meta.url)) as Record<
-    string,
-    unknown
-  >;
-  const raw = resolveConfigFromModule(mod);
-  return validateIocConfig(raw, absoluteConfigPath);
+  const key = configCacheKey(absoluteConfigPath);
+  const cached = validatedConfigCache.get(key);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  // Transpiling the `.ts` config in-process is delegated to `configModuleLoader`, which owns the
+  // single per-process tsx registration. A bare `import()` is not an option: it fails on Node
+  // versions without native type stripping.
+  const loading = (async (): Promise<IocConfig> => {
+    const mod = await importConfigModule(absoluteConfigPath);
+    const raw = resolveConfigFromModule(mod);
+    return validateIocConfig(raw, absoluteConfigPath);
+  })().catch((error: unknown) => {
+    // A config that failed to load or validate is retryable once its author fixes it; a remembered
+    // rejection would outlive the fix.
+    if (validatedConfigCache.get(key) === loading) {
+      validatedConfigCache.delete(key);
+    }
+    throw error;
+  });
+
+  validatedConfigCache.set(key, loading);
+  return loading;
+};
+
+/** Drops every cached config. For tests that rebuild a fixture config under one process. */
+export const clearIocConfigCache = (): void => {
+  validatedConfigCache.clear();
 };
 
 const CONFIG_RELATIVE_SEARCH_PATHS = ["src/ioc.config.ts", "ioc.config.ts"] as const;

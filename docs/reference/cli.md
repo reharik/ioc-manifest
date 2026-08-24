@@ -104,11 +104,43 @@ package per step, above the total:
 ```
 
 Read top to bottom: `package resolve` finds the installed directory, `config resolve` finds the
-`ioc.config.ts` inside it, `config load` transpiles it through `tsx` (usually the expensive one),
-`scan-set glob` resolves the files, `content hash` reads them, `compare` matches the fingerprint
-against the record. The two steps whose cost depends on volume carry that volume in the label — a
-four-second glob over 41,234 files and a four-second glob over 12 are opposite problems, and the
-duration alone cannot tell them apart.
+`ioc.config.ts` inside it, `config load` transpiles it through `tsx`, `scan-set glob` resolves the
+files, `content hash` reads them, `compare` matches the fingerprint against the record. The two
+steps whose cost depends on volume carry that volume in the label — a four-second glob over 41,234
+files and a four-second glob over 12 are opposite problems, and the duration alone cannot tell them
+apart.
+
+Each config is transpiled **once per process**, so `config load` should appear for the first package
+that needs a given config and be near-zero everywhere else. A `config load` that grows package over
+package is the signature of the 4.0.1 bug and should not occur; see [Reporting a slow
+run](#reporting-a-slow-run).
+
+### Reporting a slow run
+
+If a phase surprises you — a number you cannot explain, or a total that does not add up — the
+`IOC_DEBUG=1` output **is** the bug report. Send it as-is:
+
+```
+IOC_DEBUG=1 ioc validate 2> ioc-phases.txt
+```
+
+It names the phase, the package, and (where cost depends on volume) the file count and byte total,
+which is nearly always enough to identify the cause without a reproduction. A description of the
+symptom without this output usually is not.
+
+Two knobs are worth knowing while you are in there:
+
+| variable | effect |
+| --- | --- |
+| `IOC_DEBUG=1` | Every phase prints its duration as it completes, plus full stack traces on errors |
+| `IOC_SLOW_PHASE_MS` | Changes the five-second threshold at which a phase names itself without `IOC_DEBUG` |
+| `IOC_CONFIG_TSCONFIG=false` | Loads `ioc.config.ts` without applying the project's `tsconfig.json` |
+
+`IOC_CONFIG_TSCONFIG=false` is an escape hatch, not a tuning knob. It makes config loading skip
+tsconfig resolution entirely, which is faster on a very large tsconfig — but it also turns off
+`paths` alias resolution, so a config that imports through an alias (`@shared/policy.js`) will fail
+with `ERR_MODULE_NOT_FOUND`. Reach for it only if your config needs none of your compiler options
+and you have measured that it helps.
 
 Without the flag, a phase that takes longer than **five seconds** prints one line naming itself, and
 nothing else prints at all:
