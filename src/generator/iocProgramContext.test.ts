@@ -129,7 +129,7 @@ describe("isCodegenFailureCausedByTypeScript", () => {
       assert.equal(
         isCodegenFailureCausedByTypeScript(
           new Error(
-            "[ioc-config] registrations references unknown contract \"Missing\".",
+            '[ioc-config] registrations references unknown contract "Missing" — not a contract in this package or any composed manifest.',
           ),
         ),
         false,

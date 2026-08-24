@@ -74,6 +74,7 @@ export const iocManifest = {
         moduleIndex: 1,
         discoveredBy: "naming",
         dependencyKeys: ["writeServices"],
+        lifetimeSource: "default",
       },
     },
     LoggingService: {
@@ -87,6 +88,7 @@ export const iocManifest = {
         lifetime: "scoped",
         moduleIndex: 2,
         discoveredBy: "naming",
+        lifetimeSource: "group-base-marker",
       },
       storageEventLogger: {
         exportName: "buildStorageEventLogger",
@@ -98,6 +100,7 @@ export const iocManifest = {
         lifetime: "scoped",
         moduleIndex: 5,
         discoveredBy: "naming",
+        lifetimeSource: "group-base-marker",
       },
     },
     Storage: {
@@ -114,6 +117,7 @@ export const iocManifest = {
         discoveredBy: "implements",
         dependencyContractNames: ["Storage"],
         dependencyKeys: ["localStorage"],
+        lifetimeSource: "default",
       },
       localStorage: {
         exportName: "buildLocalStorage",
@@ -127,6 +131,7 @@ export const iocManifest = {
         default: true,
         discoveredBy: "naming",
         configOverridesApplied: ["default"],
+        lifetimeSource: "default",
       },
       s3Storage: {
         exportName: "buildS3Storage",
@@ -138,6 +143,7 @@ export const iocManifest = {
         lifetime: "singleton",
         moduleIndex: 4,
         discoveredBy: "naming",
+        lifetimeSource: "default",
       },
     },
     ToggleReaction: {
@@ -151,6 +157,7 @@ export const iocManifest = {
         lifetime: "singleton",
         moduleIndex: 6,
         discoveredBy: "naming",
+        lifetimeSource: "default",
       },
     },
   },
@@ -193,5 +200,8 @@ export const iocManifest = {
 export const IOC_SCOPE_PROVIDED_KEYS = [] as const;
 
 /* Optional manifest data this file is known to carry in full. A composing app reads it to tell
-   "this unit has no dependency keys" apart from "this manifest predates dependency keys". */
-export const IOC_MANIFEST_FEATURES = ["dependencyKeys"] as const;
+   "this unit records none of this" apart from "this manifest predates the field". */
+export const IOC_MANIFEST_FEATURES = [
+  "dependencyKeys",
+  "lifetimeSource",
+] as const;

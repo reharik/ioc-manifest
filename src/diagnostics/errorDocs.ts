@@ -88,6 +88,23 @@ const DOC_TARGET_BY_CODE: Readonly<Record<string, string>> = {
   "slot-occupancy": "concepts/conventions#contract-slot-keys",
   "app-config": "config/reference#registrations",
   "unused-config": "config/reference#registrations",
+
+  // ── The CLI's own help output ─────────────────────────────────────────────────────────────────
+  /**
+   * Not diagnostic codes — but the same third register, and the same rot.
+   *
+   * `ioc --help` and each verb's `--help` page end on a docs pointer, and a pointer hand-written
+   * into a help string 404s exactly the way one hand-written into an error message does. Keying
+   * them here puts them under `errorDocs.test.ts`, which resolves every anchor against the markdown
+   * the site is built from. `generate` has no dedicated reference section, so it points at the one
+   * chapter headed with its name; `inspect` gained one in the same pass that added this map.
+   */
+  "cli-command-map": "reference/cli#the-command-map",
+  "cli-verb-generate":
+    "reference/cli#ioc-generate-in-app-mode-the-composition-suite",
+  "cli-verb-inspect": "reference/cli#ioc-inspect",
+  "cli-verb-explain": "reference/cli#ioc-explain-key",
+  "cli-verb-validate": "reference/cli#ioc-validate",
 };
 
 /** Every code that carries a pointer, sorted — the surface `errorDocs.test.ts` walks. */

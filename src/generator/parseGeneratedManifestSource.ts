@@ -40,6 +40,7 @@ import {
   type IocGroupRootManifest,
   type IocGroupsManifest,
   type IocImplementationLifetime,
+  type IocLifetimeProvenance,
   type IocScopeRootsManifest,
   type IocUnitKind,
   type ModuleFactoryManifestMetadata,
@@ -208,6 +209,26 @@ const findDeclaredFeatures = (
   return found;
 };
 
+const LIFETIME_PROVENANCE_TOKENS: ReadonlySet<string> = new Set([
+  "factory-config",
+  "lifetime-marker",
+  "group-base-marker",
+  "discovery-root",
+  "default",
+]);
+
+/**
+ * Narrows a manifest's `lifetimeSource` to the schema's vocabulary.
+ *
+ * An unrecognized token is dropped rather than carried through: provenance is rendered as prose a
+ * reader is told to go and act on, and a token this version has no gloss for would print as a bare
+ * word that explains nothing. Dropping it lands on the degraded rendering, which is honest.
+ */
+const isLifetimeProvenance = (
+  value: string | undefined,
+): value is IocLifetimeProvenance =>
+  value !== undefined && LIFETIME_PROVENANCE_TOKENS.has(value);
+
 const parseImplementationMetadata = (
   contractName: string,
   implementationKey: string,
@@ -234,6 +255,7 @@ const parseImplementationMetadata = (
   const moduleIndexNode = props.get("moduleIndex");
   const dependencyContractNamesNode = props.get("dependencyContractNames");
   const dependencyKeysNode = props.get("dependencyKeys");
+  const lifetimeSourceText = readValue(props, "lifetimeSource");
   const configOverridesNode = props.get("configOverridesApplied");
 
   return {
@@ -273,6 +295,9 @@ const parseImplementationMetadata = (
       : {}),
     ...(dependencyKeysNode !== undefined
       ? { dependencyKeys: readStringArray(dependencyKeysNode) ?? [] }
+      : {}),
+    ...(isLifetimeProvenance(lifetimeSourceText)
+      ? { lifetimeSource: lifetimeSourceText }
       : {}),
     ...(accessKey !== undefined ? { accessKey } : {}),
   };

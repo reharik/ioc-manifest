@@ -76,6 +76,16 @@ export {
 } from "./explain.js";
 
 export {
+  buildExplainComposedView,
+  type BuildExplainComposedViewInput,
+  type ComposedExternalRow,
+  type ComposedGroupRow,
+  type ComposedRegistrationRow,
+  type ExplainComposedView,
+  type ExplainSupplier,
+} from "./explainComposedView.js";
+
+export {
   formatExplainReport,
   formatExplainReportJson,
   type FormatExplainOptions,

@@ -87,6 +87,7 @@ export const parsedSlice = (
   manifestPath: partial.manifestPath ?? "/tmp/ioc-manifest.ts",
   typesPath: partial.typesPath ?? "/tmp/ioc-registry.types.ts",
   manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
+  declaredFeatures: undefined,
   contracts: {},
   groupRoots: {},
   cradleKeys: new Set(),

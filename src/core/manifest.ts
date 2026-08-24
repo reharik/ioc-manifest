@@ -18,6 +18,29 @@ export type IocUnitKind = "class" | "factory";
 export const iocUnitKindOf = (kind: IocUnitKind | undefined): IocUnitKind =>
   kind ?? "factory";
 
+/**
+ * WHY a registration's lifetime is what it is — the mechanism that decided it.
+ *
+ * Declared here rather than beside the registration planner because it is now a MANIFEST field
+ * (see {@link ModuleFactoryManifestMetadata.lifetimeSource}), and a field a composing app reads out
+ * of another package's artifacts has to have its vocabulary fixed by the schema. The planner's
+ * `IocRegistrationLifetimeSource` is an alias of this, so there is one union and not two.
+ *
+ * `discovery-root` names a `discovery.scanDirs[].scope`; `default` means nothing declared one.
+ */
+export type IocLifetimeProvenance =
+  | "factory-config"
+  | "lifetime-marker"
+  /**
+   * The marker sits on the GROUP BASE, so the whole family ranks this lifetime (Ruling 2: lifetime
+   * is a property of the group). Distinguished from `lifetime-marker` because the declaration is
+   * somewhere the member does not control, which is exactly what a reader chasing an unexpected
+   * lifetime needs to be told.
+   */
+  | "group-base-marker"
+  | "discovery-root"
+  | "default";
+
 export type IocConfigOverrideField =
   | "name"
   | "lifetime"
@@ -49,6 +72,31 @@ export type ModuleFactoryManifestMetadata = {
   implementationName: string;
   /** Awilix lifetime for this registration. */
   lifetime: IocImplementationLifetime;
+  /**
+   * WHICH MECHANISM decided {@link lifetime} — the provenance `ioc explain` renders as a chain.
+   *
+   * The blind spot this closes has been stated in `inspection/explain.ts` since that command
+   * shipped: a manifest recorded the lifetime it resolved and nothing about where the decision was
+   * written down, so manifest-mode explain could only say "provenance not recorded" and app-mode
+   * explain could say nothing at all about a composed unit — which is precisely the unit whose
+   * lifetime a reader cannot go and look up for themselves, because its sources are in another
+   * package.
+   *
+   * Optional, and omitted for a plan that carried none — a plan built without a lifetime context.
+   * It inherits the same ambiguity {@link dependencyKeys} has, so it is declared through
+   * {@link IOC_MANIFEST_FEATURES} rather than guessed at from absence.
+   *
+   * `"default"` IS written out, unlike every other conventional value in this metadata. The
+   * omit-when-conventional rule applies to a field whose absent value is the only thing it could
+   * have been — `kind` is `"factory"` or it is not a factory. Provenance is not that: `"default"`
+   * is one of five equally real answers to "what decided this", and if it were omitted, absence
+   * would have to mean `"default"` here and "not recorded" in a manifest that predates the field,
+   * which is two readings of one silence. A reader chasing an unexpected lifetime is best served
+   * by being told, in as many words, that nothing declared one. Rendering is where `"default"` is
+   * suppressed for being uninformative — see `inspection/formatReports.ts`, which prints
+   * provenance only when it is not this.
+   */
+  lifetimeSource?: IocLifetimeProvenance;
   /** Index into the parallel `iocModuleImports` array. */
   moduleIndex: number;
   group?: string;
@@ -101,8 +149,9 @@ export type IocContractManifest = Record<
  * between a real verdict and a blind one, so it is declared positively.
  *
  * `"dependencyKeys"`: every unit in `contracts` that has demandable cradle keys carries them.
+ * `"lifetimeSource"`: every unit in `contracts` whose lifetime has a recorded mechanism carries it.
  */
-export type IocManifestFeature = "dependencyKeys";
+export type IocManifestFeature = "dependencyKeys" | "lifetimeSource";
 
 /**
  * The name of the sibling export a generated manifest declares its features under.
@@ -121,6 +170,7 @@ export const IOC_MANIFEST_FEATURES_EXPORT_NAME = "IOC_MANIFEST_FEATURES";
 /** The features the CURRENT generator writes. Emitted verbatim into every generated manifest. */
 export const IOC_MANIFEST_FEATURES: readonly IocManifestFeature[] = [
   "dependencyKeys",
+  "lifetimeSource",
 ];
 
 /**

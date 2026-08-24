@@ -385,4 +385,75 @@ describe("explainFromManifest", () => {
       assert.equal(report.lifetime?.lifetime, "singleton");
     });
   });
+
+  /**
+   * The no-regression pin.
+   *
+   * A library composes nothing, so there is no composed picture to answer over and every one of the
+   * cross-package facilities must be invisible: no supplier line, no caveat, and the manifest-mode
+   * note in the words it has always used. Pinned as one exact screen rather than as assertions
+   * about parts, because "byte-identical" is the claim.
+   */
+  describe("When the package composes nothing", () => {
+    it("should print exactly the screen it has always printed", () => {
+      assert.equal(
+        formatExplainReport(explainFromManifest("s3Storage", manifest), {
+          color: false,
+        }),
+        [
+          "s3Storage → registration of Storage (s3Storage)  ★ backs the contract slot",
+          "  declared in src/factories/buildS3Storage.ts#buildS3Storage",
+          "",
+          "Lifetime: singleton ← provenance not recorded in the manifest",
+          "",
+          "Depends on:",
+          "  uow  scoped  registration of UnitOfWork",
+          "      ![lifetime-inversion] a singleton freezes its scoped dependency at first construction and reuses it across every scope",
+          "      → docs: https://reharik.github.io/ioc-manifest/concepts/lifetimes#the-floor-rule",
+          "",
+          "Demanded by: nothing in this package",
+          "",
+          "Read from the generated manifest. A manifest records the lifetime it resolved, not the marker or config that decided it, and it records no scope-root subtree — run `ioc explain <key> --discovery` for provenance and subtree reach.",
+        ].join("\n"),
+      );
+    });
+  });
+
+  /**
+   * Provenance from a manifest, which used to be the command's stated blind spot.
+   *
+   * The chain is thinner than discovery's — the marker's NAME is a fact about sources this mode
+   * never read — but which mechanism decided the lifetime, and which group or config entry it
+   * points at, are now recorded and rendered. The note drops its provenance clause with them: a
+   * manifest that carries the field must not go on disclaiming it.
+   */
+  describe("When the manifest records lifetime provenance", () => {
+    const withProvenance = {
+      contracts: {
+        UnitOfWork: {
+          uow: {
+            ...manifest.contracts.UnitOfWork.uow,
+            lifetimeSource: "lifetime-marker" as const,
+          },
+        },
+      },
+      groups: {},
+      scopeRoots: undefined,
+      declaredFeatures: ["dependencyKeys", "lifetimeSource"],
+    };
+
+    it("should render the chain and stop disclaiming what it now knows", () => {
+      const report = explainFromManifest("uow", withProvenance);
+
+      assert.deepEqual(report.lifetime?.provenance, [
+        "lifetime-marker",
+        "on the contract site of buildUow",
+      ]);
+      const text = formatExplainReport(report, { color: false });
+      assert.match(text, /Lifetime: scoped ← lifetime-marker ← on the contract site of buildUow/);
+      assert.ok(!/provenance not recorded/.test(text));
+      assert.ok(!/not the marker or config that decided it/.test(text));
+      assert.match(report.notes.join(" "), /records no scope-root subtree/);
+    });
+  });
 });

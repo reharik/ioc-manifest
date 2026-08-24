@@ -44,7 +44,15 @@ import type {
 const readFileUtf8 = (filePath: string): string =>
   fs.readFileSync(filePath, "utf8");
 
-/** The two fields every contract check reads, projected off the full parsed metadata. */
+/**
+ * Implementation metadata as the composed readers need it, projected off the full parsed record.
+ *
+ * The election and key-conflict checks read the first three fields; `ioc explain` reads the rest to
+ * answer about a composed key without opening the manifest a second time. Everything is copied
+ * verbatim and nothing is defaulted — a field the manifest omits stays omitted here, because the
+ * whole point of {@link ParsedManifestSlice.declaredFeatures} is that absence is a fact a reader
+ * has to be able to see.
+ */
 const projectContracts = (
   contracts: ReturnType<typeof parseGeneratedManifestSource>["contracts"],
 ): Record<string, Record<string, ParsedImplementationMeta>> => {
@@ -56,6 +64,16 @@ const projectContracts = (
         registrationKey: meta.registrationKey,
         ...(meta.default === true ? { default: true as const } : {}),
         ...(meta.accessKey !== undefined ? { accessKey: meta.accessKey } : {}),
+        exportName: meta.exportName,
+        modulePath: meta.modulePath,
+        implementationName: meta.implementationName,
+        lifetime: meta.lifetime,
+        ...(meta.lifetimeSource !== undefined
+          ? { lifetimeSource: meta.lifetimeSource }
+          : {}),
+        ...(meta.dependencyKeys !== undefined
+          ? { dependencyKeys: meta.dependencyKeys }
+          : {}),
       };
     }
     out[contractName] = byImpl;
@@ -128,6 +146,7 @@ export const buildCompositionSlice = (
     manifestPath,
     typesPath,
     manifestSchemaVersion: parsed.manifestSchemaVersion,
+    declaredFeatures: parsed.declaredFeatures,
     contracts: projectContracts(parsed.contracts),
     groupRoots: projectGroupRoots(parsed.groupRoots),
     cradleKeys: new Set(cradleProps.keys()),

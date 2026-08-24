@@ -14,6 +14,21 @@
  * **what it is**, **how long it lives and who decided that**, **what it depends on**, **who depends
  * on it**.
  *
+ * ### The composed picture, when there is one
+ *
+ * The join above used to stop at the package boundary, which made the command work richly in a
+ * library and read as cut off in the app — where most cradle keys are supplied by somebody else and
+ * where the question is therefore asked most often. When the caller supplies an
+ * {@link ExplainComposedView}, the composed registrations, group roots, slot elections and declared
+ * externals are merged into the same universe every section below already reads, so nothing here
+ * grows a package-boundary special case: a composed unit is a unit, and it turns up in resolution,
+ * in dependencies, in dependents and in scope-root reach by the same code paths a local one does.
+ * What it carries extra is its SUPPLIER, and every answer names it.
+ *
+ * Local wins on a collision, matching the scope-root walk: a local registration and a composed one
+ * under the same key is a composition error the suite already reports, and this view must not
+ * disagree with discovery about which unit is in front of the reader.
+ *
  * ### Read-only, and parse-only
  *
  * Nothing here writes, and nothing here imports the generated manifest — the same discipline
@@ -21,10 +36,12 @@
  *
  * ### Two modes, two depths, stated honestly
  *
- * Manifest mode reads the file on disk; discovery mode re-runs the scan. The manifest does not
- * record WHY a lifetime is what it is, and it records no scope-root subtree, so manifest mode says
- * so rather than guessing — the same stance every other manifest-sourced view in this package takes
- * about the things a manifest cannot know.
+ * Manifest mode reads the file on disk; discovery mode re-runs the scan. A manifest records no
+ * scope-root subtree, so manifest mode says so rather than guessing — the same stance every other
+ * manifest-sourced view in this package takes about the things a manifest cannot know. Lifetime
+ * PROVENANCE used to be on that list and no longer is: manifests carry `lifetimeSource` since
+ * schema v3, and a manifest written before that is told apart from one whose unit genuinely records
+ * nothing by the `IOC_MANIFEST_FEATURES` declaration rather than by guessing from absence.
  */
 import type { IocLifetime } from "../config/iocConfig.js";
 import type {
@@ -36,6 +53,13 @@ import type {
 import { resolveManifestAccessKey } from "../core/contractAccessKey.js";
 import { inversionSeverity } from "../generator/validateLifetimeInversionsAtCodegen.js";
 import { variantNameToOpenerKey } from "../generator/naming.js";
+import { formatFreshnessCaveat } from "../diagnostics/freshness.js";
+import type { ComposedGroupKeyHit } from "../composition/composedGroupIndex.js";
+import type {
+  ComposedExternalRow,
+  ExplainComposedView,
+  ExplainSupplier,
+} from "./explainComposedView.js";
 import type { DiscoveryAnalysisResult } from "./runDiscoveryAnalysis.js";
 
 /** Which view produced the report — and therefore which facts could be known at all. */
@@ -54,13 +78,30 @@ export type ExplainUnit = {
   dependencyKeys: readonly string[];
   /** True when this unit backs its contract's default slot. */
   isDefault: boolean;
+  /**
+   * The package supplying this unit, when the answer is being given over a composed picture.
+   *
+   * Absent in library mode, where there is one package and naming it on every line would be noise.
+   * That absence is what keeps a purely local explanation byte-identical to what it has always been.
+   */
+  packageLabel?: string;
+  /** The machine token for {@link packageLabel} — `"local"`, or a `composedManifests` entry. */
+  sourceId?: string;
 };
 
 /** One step of the provenance chain: `scoped ← group-base marker on WriteServiceBase`. */
 export type ExplainLifetime = {
   lifetime: string;
-  /** Chain steps, nearest cause first. Empty when the view cannot know (manifest mode). */
+  /** Chain steps, nearest cause first. Empty when nothing recorded the decision. */
   provenance: readonly string[];
+  /**
+   * Why the chain is empty, when the reason is worth acting on.
+   *
+   * Set only for a supplier whose manifest predates `lifetimeSource`: there the emptiness has a
+   * remedy — regenerate that package — and the note names it. Never a guess at what the provenance
+   * would have been.
+   */
+  degradedNote?: string;
 };
 
 export type ExplainDependency = {
@@ -68,6 +109,8 @@ export type ExplainDependency = {
   /** What the key turned out to be: a registration, a contract slot, a group, an opener, external. */
   resolvedAs: string;
   lifetime?: string;
+  /** The package supplying this dependency, over a composed picture. */
+  packageLabel?: string;
   /** Set when the floor rule is under pressure on this edge. */
   pressure?: {
     severity: "error" | "warn";
@@ -81,6 +124,8 @@ export type ExplainDependent = {
   modulePath: string;
   /** `direct`, `group:<groupKey>`, or `slot:<accessKey>`. */
   via: string;
+  /** The package the demanding unit lives in, over a composed picture. */
+  packageLabel?: string;
 };
 
 export type ExplainResolution =
@@ -99,7 +144,14 @@ export type ExplainResolution =
       groupName: string;
       groupKind: "collection" | "object";
       baseType: string;
-      members: readonly { memberName: string; registrationKey: string }[];
+      members: readonly {
+        memberName: string;
+        registrationKey: string;
+        /** The package supplying this member's registration, over a composed picture. */
+        packageLabel?: string;
+      }[];
+      /** The package whose manifest declares this root, over a composed picture. */
+      declaredBy?: string;
     }
   | {
       kind: "opener";
@@ -107,6 +159,41 @@ export type ExplainResolution =
       contractName: string;
       variantName: string;
       lbvKeys: readonly string[];
+    }
+  /**
+   * The key names a grouped contract's member, which has no cradle key of its own.
+   *
+   * The answer-shaped sibling of the `grouped-member-demand` ERROR: the same facts, in the teaching
+   * register. A reader who typed this key has a coherent model that happens to be wrong about one
+   * rule, and the useful reply states the rule and the spelling that does work — not a miss.
+   */
+  | {
+      kind: "grouped-member";
+      groupKey: string;
+      groupKind: "collection" | "object";
+      baseType: string;
+      /** The package whose manifest declares the group root. */
+      declaredBy: string;
+      /** True when that package is composed rather than the one being explained from. */
+      declaredByComposedPackage: boolean;
+      /** The member contract this key names, when it names a member rather than the base. */
+      contractName?: string;
+      /**
+       * The record property the group exposes this member under — what a consumer writes after the
+       * group key. Absent for a collection group, whose members are anonymous by declaration.
+       */
+      recordPropertyKey?: string;
+    }
+  /**
+   * Nothing in the composed set registers the key, and at least one package declares it as an
+   * external — so it is not a miss but a demand on the composing app, answered as one.
+   */
+  | {
+      kind: "external";
+      /** The demanded type as the declaring package's `IocExternals` writes it. */
+      typeText?: string;
+      /** Every package that expects the container to already carry this key. */
+      demandedBy: readonly { packageLabel: string; sourceId: string }[];
     }
   | { kind: "unknown"; similarKeys: readonly string[] };
 
@@ -116,6 +203,16 @@ export type ExplainReport = {
   resolution: ExplainResolution;
   /** Absent for a key with no single unit behind it (a group root, an unknown key). */
   lifetime?: ExplainLifetime;
+  /** The package supplying the explained key, over a composed picture. */
+  supplier?: { packageLabel: string; sourceId: string };
+  /**
+   * True when the answer was given over a composed picture rather than this package alone.
+   *
+   * Rendering reads it to say "nothing in the composed picture" where it would otherwise say
+   * "nothing in this package" — in an app the second is true and misleading, because the reader's
+   * question was about the container and the container is bigger than the package.
+   */
+  composed?: true;
   dependencies: readonly ExplainDependency[];
   dependents: readonly ExplainDependent[];
   /** Scope-root variants whose resolution subtree reaches this key. Discovery mode only. */
@@ -124,6 +221,16 @@ export type ExplainReport = {
     variantName: string;
     openerKey: string;
   }[];
+  /**
+   * The `sourceId`s this answer rests on — the supplier of the key, and the declarer of a group it
+   * belongs to. The same machine-token attribution a {@link import("../composition/types.js").ValidationIssue}
+   * carries, read by the same freshness machinery for the same purpose.
+   */
+  packages?: readonly string[];
+  /** Set when one of {@link packages} may predate its sources. */
+  possiblyStale?: true;
+  /** The caveat rendered with a {@link possiblyStale} answer. Set with it, never alone. */
+  stalenessNote?: string;
   /** What this view could not know, stated rather than omitted. */
   notes: readonly string[];
 };
@@ -140,6 +247,7 @@ type ExplainUniverse = {
       groupKind: "collection" | "object";
       baseType: string;
       members: readonly { memberName: string; registrationKey: string }[];
+      declaredBy?: string;
     }
   >;
   openers: ReadonlyMap<
@@ -152,6 +260,16 @@ type ExplainUniverse = {
   groupBaseByName: ReadonlyMap<string, string>;
   /** `${modulePath}:${exportName}` → the marker that decided the lifetime. Discovery mode only. */
   markerByFactoryKey: ReadonlyMap<string, { name: string; lifetime: string }>;
+  /** Keys a group root accounts for that the cradle does not carry. Empty without a composed view. */
+  groupKeyIndex: ReadonlyMap<string, ComposedGroupKeyHit>;
+  /** Keys some package declares as externals. Empty without a composed view. */
+  externals: ReadonlyMap<string, ComposedExternalRow>;
+  /** Packages whose manifest does not declare that it records lifetime provenance. */
+  packagesWithoutProvenance: ReadonlySet<string>;
+  /** `sourceId` → the name a staleness caveat calls that package. */
+  staleCaveatBySourceId: ReadonlyMap<string, string>;
+  /** True once a composed picture is merged in — the switch every supplier label hangs off. */
+  composed: boolean;
   notes: readonly string[];
 };
 
@@ -183,6 +301,15 @@ const groupMembers = (
         registrationKey: leaf.registrationKey,
       }));
 
+/** The empty composed half — what a library-mode explanation is built over. */
+const NO_COMPOSED_PICTURE = {
+  groupKeyIndex: new Map<string, ComposedGroupKeyHit>(),
+  externals: new Map<string, ComposedExternalRow>(),
+  packagesWithoutProvenance: new Set<string>(),
+  staleCaveatBySourceId: new Map<string, string>(),
+  composed: false,
+} as const;
+
 /**
  * The universe as the generated manifest records it.
  *
@@ -195,6 +322,7 @@ const universeFromManifest = (
   contracts: IocContractManifest,
   groups: IocGroupsManifest | undefined,
   scopeRoots: IocScopeRootsManifest | undefined,
+  declaredFeatures: readonly string[] | undefined,
 ): ExplainUniverse => {
   const units: ExplainUnit[] = [];
   const slotKeys = new Map<string, string>();
@@ -247,6 +375,9 @@ const universeFromManifest = (
         contractName,
         implementationName: row.implementationName,
         lifetime: row.lifetime,
+        ...(row.lifetimeSource !== undefined
+          ? { lifetimeSource: row.lifetimeSource }
+          : {}),
         modulePath: row.modulePath,
         exportName: row.exportName,
         dependencyKeys: row.dependencyKeys ?? [],
@@ -269,6 +400,11 @@ const universeFromManifest = (
     }
   }
 
+  // A manifest that records provenance no longer needs to disclaim it, and one that does not must
+  // still say so in the words it always used — a reader of an artifact generated before the field
+  // existed is looking at exactly the document the old sentence described.
+  const carriesProvenance = (declaredFeatures ?? []).includes("lifetimeSource");
+
   return {
     mode: "manifest",
     units,
@@ -278,8 +414,11 @@ const universeFromManifest = (
     subtreeKeysByVariant: new Map(),
     groupBaseByName,
     markerByFactoryKey: new Map(),
+    ...NO_COMPOSED_PICTURE,
     notes: [
-      "Read from the generated manifest. A manifest records the lifetime it resolved, not the marker or config that decided it, and it records no scope-root subtree — run `ioc explain <key> --discovery` for provenance and subtree reach.",
+      carriesProvenance
+        ? "Read from the generated manifest. A manifest records no scope-root subtree — run `ioc explain <key> --discovery` for subtree reach."
+        : "Read from the generated manifest. A manifest records the lifetime it resolved, not the marker or config that decided it, and it records no scope-root subtree — run `ioc explain <key> --discovery` for provenance and subtree reach.",
     ],
   };
 };
@@ -354,6 +493,10 @@ const universeFromDiscovery = (
     });
     subtreeKeysByVariant.set(
       variant.variantName,
+      // Composed units are in here already: the app-side verification walks composed subtrees, and
+      // a composed unit inside one carries its registration key exactly as a local one does. So
+      // "Reached from scope roots" needs nothing package-aware — it needs the composed unit to be
+      // resolvable, which merging the composed view is what provides.
       new Set(
         variant.subtreeUnits
           .map((unit) => unit.registrationKey)
@@ -371,7 +514,124 @@ const universeFromDiscovery = (
     subtreeKeysByVariant,
     groupBaseByName,
     markerByFactoryKey: analysis.lifetimeMarkerMatches,
+    ...NO_COMPOSED_PICTURE,
     notes: [],
+  };
+};
+
+/**
+ * Merges the composed picture into a local universe.
+ *
+ * The merge is deliberately additive and local-first. A registration key the local view already
+ * knows keeps its local record — it was read from this package's own sources or manifest, which is
+ * the more specific statement, and it is what discovery would resolve. What a local unit GAINS is
+ * its supplier label, because in a composed picture every answer names one.
+ *
+ * Slot elections are the one place the composed view overrules: an election is a fact about the
+ * MERGED contract set (another package may implement the same contract, and the app's config may
+ * override the choice), so the local view's answer is not a competing opinion but an answer to a
+ * smaller question. It is taken from the shared electee helpers, which is what makes it the same
+ * answer `default-ambiguity` and `slot-occupancy` reached.
+ */
+const mergeComposedView = (
+  local: ExplainUniverse,
+  view: ExplainComposedView,
+): ExplainUniverse => {
+  const supplierByKey = new Map<string, ExplainSupplier>();
+  for (const row of view.units) {
+    if (!supplierByKey.has(row.registrationKey)) {
+      supplierByKey.set(row.registrationKey, row);
+    }
+  }
+
+  const localSupplier = view.units.find((row) => row.local);
+
+  const byKey = new Map<string, ExplainUnit>();
+  for (const unit of local.units) {
+    const supplier = supplierByKey.get(unit.registrationKey) ?? localSupplier;
+    byKey.set(unit.registrationKey, {
+      ...unit,
+      ...(supplier !== undefined
+        ? { packageLabel: supplier.packageLabel, sourceId: supplier.sourceId }
+        : {}),
+    });
+  }
+  for (const row of view.units) {
+    if (byKey.has(row.registrationKey)) {
+      continue;
+    }
+    byKey.set(row.registrationKey, {
+      registrationKey: row.registrationKey,
+      contractName: row.contractName,
+      implementationName: row.implementationName,
+      lifetime: row.lifetime,
+      ...(row.lifetimeSource !== undefined
+        ? { lifetimeSource: row.lifetimeSource }
+        : {}),
+      modulePath: row.modulePath,
+      exportName: row.exportName,
+      dependencyKeys: row.dependencyKeys,
+      isDefault: false,
+      packageLabel: row.packageLabel,
+      sourceId: row.sourceId,
+    });
+  }
+
+  const units = [...byKey.values()].map((unit) => {
+    const elected = view.electedKeyByContract.get(unit.contractName);
+    return elected === undefined
+      ? unit
+      : { ...unit, isDefault: elected === unit.registrationKey };
+  });
+
+  const slotKeys = new Map(local.slotKeys);
+  for (const [slotKey, contractName] of view.slotKeys) {
+    slotKeys.set(slotKey, contractName);
+  }
+
+  const groups = new Map(local.groups);
+  for (const [groupKey, row] of view.groups) {
+    const existing = groups.get(groupKey);
+    if (existing === undefined) {
+      groups.set(groupKey, {
+        groupKind: row.groupKind,
+        baseType: row.baseType,
+        members: row.members,
+        declaredBy: row.packageLabel,
+      });
+      continue;
+    }
+    const members = [...existing.members];
+    for (const member of row.members) {
+      if (!members.some((m) => m.registrationKey === member.registrationKey)) {
+        members.push(member);
+      }
+    }
+    groups.set(groupKey, {
+      ...existing,
+      members,
+      declaredBy: existing.declaredBy ?? row.packageLabel,
+    });
+  }
+
+  const groupBaseByName = new Map(local.groupBaseByName);
+  for (const [groupKey, row] of view.groups) {
+    if (!groupBaseByName.has(groupKey)) {
+      groupBaseByName.set(groupKey, row.baseType);
+    }
+  }
+
+  return {
+    ...local,
+    units,
+    slotKeys,
+    groups,
+    groupBaseByName,
+    groupKeyIndex: view.groupKeyIndex,
+    externals: view.externals,
+    packagesWithoutProvenance: new Set(view.packagesWithoutProvenance),
+    staleCaveatBySourceId: view.staleCaveatBySourceId,
+    composed: true,
   };
 };
 
@@ -382,6 +642,11 @@ const universeFromDiscovery = (
  * decision was made but not where the decision is written down. So each one is expanded with the
  * thing it points at — the marker's name, the group's base type — because the next thing the reader
  * will do is go and look at it.
+ *
+ * For a COMPOSED unit the marker name is not available (the marker is a type in another package's
+ * sources, which this run never opened) and the expansion is the part that can be given: which
+ * mechanism, and which group or config entry it points at. That is strictly more than the nothing
+ * that was available before manifests carried the field.
  */
 const provenanceChain = (
   unit: ExplainUnit,
@@ -433,14 +698,47 @@ const provenanceChain = (
   return ["default (nothing declared a lifetime for this unit)"];
 };
 
+/**
+ * Why a unit's provenance chain is empty, when the reason is one the reader can do something about.
+ *
+ * Only for a supplier whose manifest does not DECLARE that it carries provenance — a package
+ * generated before the field existed. Everywhere else emptiness is either impossible (discovery
+ * always resolves a source) or already covered by the manifest-mode note, and a second sentence
+ * saying the same thing would be noise. Never a guess: the degraded answer states the lifetime and
+ * says the chain was not recorded, and stops there.
+ */
+const provenanceDegradedNote = (
+  unit: ExplainUnit,
+  universe: ExplainUniverse,
+): string | undefined => {
+  if (unit.lifetimeSource !== undefined || !universe.composed) {
+    return undefined;
+  }
+  const label = unit.packageLabel;
+  if (label === undefined || !universe.packagesWithoutProvenance.has(label)) {
+    return undefined;
+  }
+  return `provenance not recorded — regenerate ${label} with a current version`;
+};
+
 /** What a demanded key turns out to be, in the vocabulary the demand model uses. */
 const classifyKey = (
   key: string,
   universe: ExplainUniverse,
-): { resolvedAs: string; lifetime?: string; unit?: ExplainUnit } => {
+): {
+  resolvedAs: string;
+  lifetime?: string;
+  unit?: ExplainUnit;
+  packageLabel?: string;
+} => {
   const group = universe.groups.get(key);
   if (group !== undefined) {
-    return { resolvedAs: `group root (${group.members.length} member(s))` };
+    return {
+      resolvedAs: `group root (${group.members.length} member(s))`,
+      ...(group.declaredBy !== undefined
+        ? { packageLabel: group.declaredBy }
+        : {}),
+    };
   }
   const opener = universe.openers.get(key);
   if (opener !== undefined) {
@@ -452,6 +750,9 @@ const classifyKey = (
       resolvedAs: `registration of ${unit.contractName}`,
       lifetime: unit.lifetime,
       unit,
+      ...(unit.packageLabel !== undefined
+        ? { packageLabel: unit.packageLabel }
+        : {}),
     };
   }
   const contractName = universe.slotKeys.get(key);
@@ -461,7 +762,21 @@ const classifyKey = (
     );
     return {
       resolvedAs: `contract slot for ${contractName}`,
-      ...(electee !== undefined ? { lifetime: electee.lifetime, unit: electee } : {}),
+      ...(electee !== undefined
+        ? {
+            lifetime: electee.lifetime,
+            unit: electee,
+            ...(electee.packageLabel !== undefined
+              ? { packageLabel: electee.packageLabel }
+              : {}),
+          }
+        : {}),
+    };
+  }
+  const external = universe.externals.get(key);
+  if (external !== undefined) {
+    return {
+      resolvedAs: "external (supplied by the composing app at bootstrap)",
     };
   }
   return { resolvedAs: "external (nothing in this package registers it)" };
@@ -502,7 +817,13 @@ const floorPressure = (
   };
 };
 
-/** Every unit that demands `key`, directly, through a group root, or through a contract slot. */
+/**
+ * Every unit that demands `key`, directly, through a group root, or through a contract slot.
+ *
+ * Cross-package for free: the hops are the same three, and once the composed units are in the
+ * universe a library unit demanded by an app unit and by another library unit turns up as two rows,
+ * each attributed to the package the demander lives in.
+ */
 const findDependents = (
   key: string,
   universe: ExplainUniverse,
@@ -532,6 +853,9 @@ const findDependents = (
           demander: candidate.registrationKey,
           modulePath: candidate.modulePath,
           via,
+          ...(candidate.packageLabel !== undefined
+            ? { packageLabel: candidate.packageLabel }
+            : {}),
         });
         break;
       }
@@ -564,8 +888,12 @@ const similarKeys = (key: string, universe: ExplainUniverse): string[] => {
 
 /**
  * Resolution order is the demand model's own: group root, opener, registration key, contract slot,
- * then nothing. It matches `classifyDemandedKey` in the scope-root walk, so what `explain` says a
+ * then externals. It matches `classifyDemandedKey` in the scope-root walk, so what `explain` says a
  * key is cannot differ from what generation resolves it to.
+ *
+ * The two answers past the container's own precedence — the grouped member's would-be key and the
+ * declared external — are reached only after all of it has missed, which is exactly where they
+ * belong: both describe a key the cradle does not carry, and both are still real answers.
  */
 const resolveKey = (
   key: string,
@@ -578,7 +906,20 @@ const resolveKey = (
       groupName: key,
       groupKind: group.groupKind,
       baseType: group.baseType,
-      members: group.members,
+      members: group.members.map((member) => {
+        const supplier = universe.units.find(
+          (u) => u.registrationKey === member.registrationKey,
+        );
+        return {
+          ...member,
+          ...(supplier?.packageLabel !== undefined
+            ? { packageLabel: supplier.packageLabel }
+            : {}),
+        };
+      }),
+      ...(group.declaredBy !== undefined
+        ? { declaredBy: group.declaredBy }
+        : {}),
     };
   }
 
@@ -613,7 +954,78 @@ const resolveKey = (
     };
   }
 
+  const groupHit = universe.groupKeyIndex.get(key);
+  if (groupHit !== undefined) {
+    return {
+      kind: "grouped-member",
+      groupKey: groupHit.groupKey,
+      groupKind: groupHit.kind,
+      baseType: groupHit.baseType,
+      declaredBy: groupHit.declaredBy,
+      declaredByComposedPackage: groupHit.declaredByComposedPackage,
+      ...(groupHit.contractName !== undefined
+        ? { contractName: groupHit.contractName }
+        : {}),
+      ...(groupHit.memberProperty !== undefined
+        ? { recordPropertyKey: groupHit.memberProperty }
+        : {}),
+    };
+  }
+
+  const external = universe.externals.get(key);
+  if (external !== undefined) {
+    return {
+      kind: "external",
+      typeText: external.typeText,
+      demandedBy: external.demandedBy.map((s) => ({
+        packageLabel: s.packageLabel,
+        sourceId: s.sourceId,
+      })),
+    };
+  }
+
   return { kind: "unknown", similarKeys: similarKeys(key, universe) };
+};
+
+/**
+ * The `sourceId`s an answer rests on, in the order they were reached, deduplicated.
+ *
+ * The same attribution a `ValidationIssue` carries and for the same reason: this is what the
+ * freshness machinery matches on to decide whether the answer may describe the old world. A group
+ * answer rests on every package supplying a member, because the membership list is read out of
+ * their manifests; a grouped-member answer rests on the package that DECLARES the root, because
+ * "this contract is grouped" is a claim read straight out of it.
+ */
+const packagesForResolution = (
+  key: string,
+  resolution: ExplainResolution,
+  subject: ExplainUnit | undefined,
+  universe: ExplainUniverse,
+): readonly string[] => {
+  const ids: string[] = [];
+  if (subject?.sourceId !== undefined) {
+    ids.push(subject.sourceId);
+  }
+  if (resolution.kind === "grouped-member") {
+    const hit = universe.groupKeyIndex.get(key);
+    if (hit !== undefined) {
+      ids.push(hit.declaredBySourceId);
+    }
+  }
+  if (resolution.kind === "group") {
+    for (const member of resolution.members) {
+      const supplier = universe.units.find(
+        (u) => u.registrationKey === member.registrationKey,
+      );
+      if (supplier?.sourceId !== undefined) {
+        ids.push(supplier.sourceId);
+      }
+    }
+  }
+  if (resolution.kind === "external") {
+    ids.push(...resolution.demandedBy.map((s) => s.sourceId));
+  }
+  return [...new Set(ids)];
 };
 
 const buildExplainReport = (
@@ -643,6 +1055,9 @@ const buildExplainReport = (
             ...(classified.lifetime !== undefined
               ? { lifetime: classified.lifetime }
               : {}),
+            ...(classified.packageLabel !== undefined
+              ? { packageLabel: classified.packageLabel }
+              : {}),
             ...(pressure !== undefined ? { pressure } : {}),
           };
         });
@@ -668,6 +1083,16 @@ const buildExplainReport = (
           }))
           .sort((a, b) => a.variantName.localeCompare(b.variantName));
 
+  const packages = packagesForResolution(key, resolution, subject, universe);
+  const staleNames = packages
+    .map((sourceId) => universe.staleCaveatBySourceId.get(sourceId))
+    .filter((name): name is string => name !== undefined);
+
+  const degradedNote =
+    subject === undefined
+      ? undefined
+      : provenanceDegradedNote(subject, universe);
+
   return {
     key,
     mode: universe.mode,
@@ -677,32 +1102,66 @@ const buildExplainReport = (
           lifetime: {
             lifetime: subject.lifetime,
             provenance: provenanceChain(subject, universe),
+            ...(degradedNote !== undefined ? { degradedNote } : {}),
           },
         }
       : {}),
+    ...(subject?.packageLabel !== undefined && subject.sourceId !== undefined
+      ? {
+          supplier: {
+            packageLabel: subject.packageLabel,
+            sourceId: subject.sourceId,
+          },
+        }
+      : {}),
+    ...(universe.composed ? { composed: true as const } : {}),
     dependencies,
     dependents: findDependents(key, universe),
     scopeRootSubtrees,
+    ...(packages.length > 0 ? { packages } : {}),
+    ...(staleNames.length > 0
+      ? {
+          possiblyStale: true as const,
+          stalenessNote: formatFreshnessCaveat([...new Set(staleNames)]),
+        }
+      : {}),
     notes: universe.notes,
   };
 };
 
-/** Explain one key against the generated manifest. */
+/** Explain one key against the generated manifest, and the composed picture when there is one. */
 export const explainFromManifest = (
   key: string,
   manifest: {
     contracts: IocContractManifest;
     groups: IocGroupsManifest;
     scopeRoots: IocScopeRootsManifest | undefined;
+    /** The local manifest's `IOC_MANIFEST_FEATURES`, which decides how absence is worded. */
+    declaredFeatures?: readonly string[] | undefined;
   },
-): ExplainReport =>
-  buildExplainReport(
-    key,
-    universeFromManifest(manifest.contracts, manifest.groups, manifest.scopeRoots),
+  composed?: ExplainComposedView,
+): ExplainReport => {
+  const local = universeFromManifest(
+    manifest.contracts,
+    manifest.groups,
+    manifest.scopeRoots,
+    manifest.declaredFeatures,
   );
+  return buildExplainReport(
+    key,
+    composed === undefined ? local : mergeComposedView(local, composed),
+  );
+};
 
-/** Explain one key against a fresh source scan. */
+/** Explain one key against a fresh source scan, and the composed picture when there is one. */
 export const explainFromDiscovery = (
   key: string,
   analysis: DiscoveryAnalysisResult,
-): ExplainReport => buildExplainReport(key, universeFromDiscovery(analysis));
+  composed?: ExplainComposedView,
+): ExplainReport => {
+  const local = universeFromDiscovery(analysis);
+  return buildExplainReport(
+    key,
+    composed === undefined ? local : mergeComposedView(local, composed),
+  );
+};

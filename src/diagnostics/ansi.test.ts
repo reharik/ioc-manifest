@@ -61,6 +61,16 @@ describe("shouldColorize", () => {
       assert.equal(shouldColorize(), true);
     });
 
+    it("should treat an empty FORCE_COLOR as not set", () => {
+      // The shape a CI expression leaves when it resolves to nothing. Reading it as "force" would
+      // put escapes into every piped log in the job, which is the opposite of what was asked for.
+      setEnv("NO_COLOR", undefined);
+      setEnv("FORCE_COLOR", "");
+      process.stdout.isTTY = false;
+
+      assert.equal(shouldColorize(), false);
+    });
+
     it("should treat FORCE_COLOR=0 as not set", () => {
       setEnv("NO_COLOR", undefined);
       setEnv("FORCE_COLOR", "0");

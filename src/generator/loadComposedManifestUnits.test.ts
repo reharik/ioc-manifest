@@ -18,6 +18,7 @@ import {
 
 const manifestSource = (options?: {
   dependencyKeys?: boolean;
+  lifetimeSource?: boolean;
   features?: boolean;
   accessKey?: boolean;
 }): string => `export const iocManifest = {
@@ -40,6 +41,10 @@ const manifestSource = (options?: {
           options?.dependencyKeys === false
             ? ""
             : `\n        dependencyKeys: ["baseUrl", "logger"],`
+        }${
+          options?.lifetimeSource === false
+            ? ""
+            : `\n        lifetimeSource: "lifetime-marker",`
         }
       },
       graphClient: {
@@ -78,7 +83,7 @@ const manifestSource = (options?: {
 } as const;
 
 export const IOC_SCOPE_PROVIDED_KEYS = [] as const;
-${options?.features === false ? "" : `\nexport const IOC_MANIFEST_FEATURES = ["dependencyKeys"] as const;\n`}`;
+${options?.features === false ? "" : `\nexport const IOC_MANIFEST_FEATURES = ["dependencyKeys", "lifetimeSource"] as const;\n`}`;
 
 const parse = (options?: Parameters<typeof manifestSource>[0]) =>
   parseComposedManifestSupplySource(
@@ -161,6 +166,24 @@ describe("parseComposedManifestSupplySource", () => {
       assert.equal(parse().carriesDependencyKeys, true);
       // The bootstrap case: a manifest written before the field existed declares nothing.
       assert.equal(parse({ features: false }).carriesDependencyKeys, false);
+    });
+
+    it("should report whether lifetime provenance is carried in full", () => {
+      assert.equal(parse().carriesLifetimeSource, true);
+      assert.equal(parse({ features: false }).carriesLifetimeSource, false);
+    });
+  });
+
+  describe("When a unit records why its lifetime is what it is", () => {
+    it("should surface the provenance, and leave it absent when the manifest omits it", () => {
+      // Surfaced, not consumed: nothing in the walk reads it. `ioc explain` does, which is the
+      // only reader a fact about WHY a lifetime is what it is has.
+      assert.equal(parse().units[0]?.lifetimeSource, "lifetime-marker");
+      assert.equal(
+        parse({ lifetimeSource: false }).units[0]?.lifetimeSource,
+        undefined,
+      );
+      assert.equal(parse().units[1]?.lifetimeSource, undefined);
     });
   });
 
@@ -247,6 +270,29 @@ describe("loadComposedManifestSupply", () => {
 
       assert.deepEqual(supply.packagesWithoutDependencyData, ["@test/lib-old"]);
     });
+
+    it("should name packages missing provenance apart from those missing dependency data", async () => {
+      // Two different blind spots with two different consequences: no dependency keys makes a
+      // subtree unwalkable, no provenance merely leaves a lifetime unexplained. Conflating them
+      // would caveat a verdict for a reason unrelated to it.
+      const root = makeRoot();
+      installPackage(root, "@test/lib-new", manifestSource());
+      installPackage(
+        root,
+        "@test/lib-old",
+        manifestSource({ features: false, lifetimeSource: false }),
+      );
+
+      const supply = await loadComposedManifestSupply(root, [
+        "@test/lib-new",
+        "@test/lib-old",
+      ]);
+
+      assert.deepEqual(supply.packagesWithoutLifetimeProvenance, [
+        "@test/lib-old",
+      ]);
+      assert.deepEqual(supply.packagesWithoutDependencyData, ["@test/lib-old"]);
+    });
   });
 
   describe("When a composed package cannot be read", () => {
@@ -270,6 +316,9 @@ describe("loadComposedManifestSupply", () => {
 
       assert.deepEqual(supply.units, []);
       assert.deepEqual(supply.packagesWithoutDependencyData, ["@test/missing"]);
+      assert.deepEqual(supply.packagesWithoutLifetimeProvenance, [
+        "@test/missing",
+      ]);
     });
   });
 });

@@ -265,4 +265,10 @@ Two commands render it.
 Lifetime: scoped ← group-base marker on WriteServiceBase (RequestScopeLifeCycle) ← member of group "writeServices"
 ```
 
-Provenance is a property of the *scan*, not of the manifest: a generated manifest records the lifetime it resolved, not the reasoning that produced it. `ioc explain <key>` without `--discovery` therefore prints the lifetime and says the provenance is not recorded, rather than guessing at it.
+Manifests carry it too. A generated manifest records `lifetimeSource` next to each unit's `lifetime`, so `ioc explain <key>` without `--discovery` renders the chain as well — and, in a composing app, renders it for a unit supplied by a **composed package**, which is exactly the unit whose sources you cannot go and open. The manifest chain is one step thinner than the scan's: the marker's *name* is a fact about sources the manifest mode never read, so it prints `scoped ← lifetime-marker ← on the contract site of buildUow` where `--discovery` prints the marker interface too.
+
+A manifest generated before the field existed carries no provenance, and that absence is readable rather than guessed at — `IOC_MANIFEST_FEATURES` declares whether the file records it. When a composed package's manifest predates it, `explain` prints the lifetime with the remedy instead of a chain:
+
+```
+Lifetime: singleton ← provenance not recorded — regenerate @packages/media-core with a current version
+```

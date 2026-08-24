@@ -13,7 +13,11 @@ import {
   type IocRegistrationsPerContract,
   isIocImplementationOverride,
 } from "../config/iocConfig.js";
-import type { IocConfigOverrideField, IocUnitKind } from "../core/manifest.js";
+import type {
+  IocConfigOverrideField,
+  IocLifetimeProvenance,
+  IocUnitKind,
+} from "../core/manifest.js";
 import type { IocDiscoveryStrategy } from "./discoverFactories/discoveryOutcomeTypes.js";
 import type { ComposedManifestContractNames } from "./loadComposedManifestContracts.js";
 import {
@@ -26,25 +30,27 @@ import type { DiscoveredFactory } from "./types.js";
 import { contractNameToDefaultRegistrationKey } from "./naming.js";
 import { resolveContractAccessKey } from "../core/contractAccessKey.js";
 
-/** Where resolved registration lifetime came from (inspect/debug only). `discovery-root` = `discovery.scanDirs[].scope`. */
-export type IocRegistrationLifetimeSource =
-  | "factory-config"
-  | "lifetime-marker"
-  /**
-   * The marker sits on the GROUP BASE, so the whole family ranks this lifetime (Ruling 2: lifetime
-   * is a property of the group). Distinguished from `lifetime-marker` because the declaration is
-   * somewhere the member does not control, which is exactly what a reader chasing an unexpected
-   * lifetime needs to be told.
-   */
-  | "group-base-marker"
-  | "discovery-root"
-  | "default";
+/**
+ * Where a resolved registration's lifetime came from.
+ *
+ * An alias of the schema's {@link IocLifetimeProvenance} rather than a second union: the plan's
+ * value is now written into the manifest verbatim, so the planner and the schema have to speak one
+ * vocabulary or a token could be emitted that no reader knows.
+ */
+export type IocRegistrationLifetimeSource = IocLifetimeProvenance;
 
 export type RegistrationPlanLifetimeContext = {
   projectRoot: string;
   scanDirs: readonly ResolvedScanDir[];
   /** Contract names from composed package manifests (app mode). */
   composedContractNames?: ComposedManifestContractNames;
+  /**
+   * Composed packages whose manifest could not be read, when the caller read them tolerantly.
+   *
+   * Only inspection sets it — see {@link ValidateConfigContractsOptions.unreadableComposedPackages}.
+   * It affects nothing but config validation; the plan itself is identical either way.
+   */
+  unreadableComposedPackages?: readonly string[];
   /** Marker-resolved lifetimes keyed by `${modulePath}:${exportName}`. */
   markerLifetimesByFactoryKey?: ReadonlyMap<string, IocLifetime>;
 };
@@ -442,14 +448,39 @@ const formatComposedContractList = (
   return names.length > 0 ? names.join(", ") : "(none)";
 };
 
+/**
+ * Options for the one case where an unknown name is not proof of a mistake.
+ *
+ * Generation never passes these: an unreadable composed package fails its run long before the
+ * config is adjudicated, so by the time this is reached everything that could be read has been.
+ * Inspection does, because it reads composed packages tolerantly on purpose — a package that cannot
+ * be resolved must thin the report rather than crash it.
+ */
+export type ValidateConfigContractsOptions = {
+  /**
+   * Composed packages whose manifest could not be read, sorted.
+   *
+   * Non-empty means the contract universe is INCOMPLETE, and an unknown name is then genuinely
+   * undecidable: it may be a typo, or it may be declared in the very file that could not be opened.
+   * Refusing on it would take away the whole view over one unresolvable dependency, and accepting
+   * it silently would hide a real typo — so the finding is reported and the view proceeds.
+   */
+  readonly unreadableComposedPackages?: readonly string[];
+  /** Where an advisory goes. stderr by default, beside the rest of inspection's framing. */
+  readonly warn?: (message: string) => void;
+};
+
 export const validateConfigContractsExist = (
   config: IocConfig | undefined,
   localContractNames: Set<string>,
   composedContractNames?: ComposedManifestContractNames,
+  options?: ValidateConfigContractsOptions,
 ): void => {
   if (config?.registrations === undefined) {
     return;
   }
+
+  const unreadable = options?.unreadableComposedPackages ?? [];
 
   for (const contract of Object.keys(config.registrations)) {
     const knownLocal = localContractNames.has(contract);
@@ -473,14 +504,32 @@ export const validateConfigContractsExist = (
         : []),
     ];
     const suggestion = suggestContractName(contract, candidates);
+    // The scope of the claim is the scope of the search. Configuring a COMPOSED contract — electing
+    // a library's implementation as the app's default — is a first-class pattern, so the universe
+    // this is measured against spans both, and the sentence says so rather than leaving a reader to
+    // infer which package was looked in.
     const lines = [
-      `[ioc-config] registrations references unknown contract ${JSON.stringify(contract)}.`,
+      `[ioc-config] registrations references unknown contract ${JSON.stringify(contract)} — not a contract in this package or any composed manifest.`,
       `Known local contracts: ${localList}.`,
       `Known contracts from composed packages: ${composedList}.`,
     ];
     if (suggestion !== undefined) {
       lines.push(`Did you mean: ${JSON.stringify(suggestion)}?`);
     }
+
+    if (unreadable.length > 0) {
+      const warn = options?.warn ?? ((message: string) => console.error(message));
+      warn(
+        [
+          ...lines,
+          `Reported, not refused: ${unreadable
+            .map((name) => JSON.stringify(name))
+            .join(", ")} could not be read, so this name may be declared there. Run \`ioc generate\` for the authoritative answer.`,
+        ].join("\n"),
+      );
+      continue;
+    }
+
     throw new Error(lines.join("\n"));
   }
 };
@@ -670,6 +719,7 @@ const validateIocConfigSemantics = (
   contractMap: Map<string, Map<string, DiscoveredFactory>>,
   config: IocConfig | undefined,
   composedContractNames?: ComposedManifestContractNames,
+  unreadableComposedPackages?: readonly string[],
 ): Map<string, Map<string, DiscoveredFactory>> => {
   const contractNames = new Set(contractMap.keys());
 
@@ -677,6 +727,9 @@ const validateIocConfigSemantics = (
     config,
     contractNames,
     composedContractNames,
+    unreadableComposedPackages !== undefined
+      ? { unreadableComposedPackages }
+      : undefined,
   );
   validateConfigImplementationKeys(config, contractMap);
   validateAtMostOneConfigDefaultPerContract(config);
@@ -714,6 +767,7 @@ export const buildRegistrationPlan = (
     contractMap,
     config,
     lifetimeContext?.composedContractNames,
+    lifetimeContext?.unreadableComposedPackages,
   );
 
   const sortedContracts = Array.from(mergedByContract.keys()).sort((a, b) =>

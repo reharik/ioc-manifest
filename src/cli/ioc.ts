@@ -15,7 +15,8 @@
  * (or `--project`) to find `ioc.config.ts` in a monorepo.
  */
 import path from "node:path";
-import { IOC_CLI_HELP_TEXT, parseIocCliArgv } from "./parseIocCli.js";
+import { parseIocCliArgv } from "./parseIocCli.js";
+import { formatCommandMap, formatVerbHelp } from "./commandMap.js";
 import { generateManifest } from "../generator/generateManifest.js";
 import {
   resolveIocConfigPath,
@@ -47,6 +48,14 @@ import {
   explainFromManifest,
 } from "../inspection/explain.js";
 import {
+  buildExplainComposedView,
+  type ExplainComposedView,
+} from "../inspection/explainComposedView.js";
+import { loadCompositionContext } from "../composition/compositionContext.js";
+import { assessFreshness } from "../composition/freshnessPass.js";
+import { isAppMode } from "../config/iocMode.js";
+import type { IocConfig } from "../config/iocConfig.js";
+import {
   formatExplainReport,
   formatExplainReportJson,
 } from "../inspection/formatExplain.js";
@@ -70,6 +79,56 @@ import {
   judgeFreshness,
 } from "../diagnostics/freshness.js";
 import { LOCAL_PACKAGE_IDENTIFIER } from "../config/packageIdentifier.js";
+
+/**
+ * The composed picture `ioc explain` answers over, in app mode.
+ *
+ * The SAME loader the composition suite builds its picture from — `loadCompositionContext` — so an
+ * explanation and a `ioc validate` finding about the same key cannot be built on different readings
+ * of the same manifests. Library mode gets `undefined` and the local answer it has always had.
+ *
+ * Degradation is a note, never a failure. `explain` is a view: an app whose composed package cannot
+ * be resolved still deserves an answer about its own keys, and saying which half of the picture is
+ * missing is strictly better than refusing the question. The same stance every other part of
+ * inspection takes about an unreadable composed package.
+ *
+ * The freshness pass runs for the COMPOSED packages only. The local package is already bannered by
+ * {@link bannerIfNotFresh} in manifest mode and is read from source in discovery mode, so judging it
+ * again here would print the same warning twice.
+ */
+const loadExplainComposedView = async (
+  cfgPath: string,
+  knownConfig: IocConfig | undefined,
+  json: boolean,
+): Promise<ExplainComposedView | undefined> => {
+  const config = knownConfig ?? (await tryLoadIocConfig(cfgPath));
+  if (config === undefined || !isAppMode(config)) {
+    return undefined;
+  }
+  const projectRoot = resolveProjectRootFromIocConfigPath(cfgPath);
+  const loaded = await loadCompositionContext({
+    projectRoot,
+    configPath: cfgPath,
+    config,
+  });
+  if (!loaded.ok) {
+    if (!json) {
+      console.error(
+        `note: the composed picture could not be read (${loaded.message}) — this answer covers this package only.`,
+      );
+      console.error("");
+    }
+    return undefined;
+  }
+  const freshness = await assessFreshness({
+    projectRoot,
+    configPath: cfgPath,
+    config,
+    slices: loaded.context.slices,
+    includeLocal: false,
+  });
+  return buildExplainComposedView({ context: loaded.context, freshness });
+};
 
 const formatResolvedScanDir = (e: ResolvedScanDir): string => {
   if (e.scope !== undefined) {
@@ -163,7 +222,13 @@ const logInspectContext = (
 const main = async (): Promise<void> => {
   const parsed = parseIocCliArgv(process.argv);
   if (parsed.kind === "help") {
-    console.log(IOC_CLI_HELP_TEXT.trimEnd());
+    // `--json` is not a thing a help screen has; what a pipe gets is the same text without escapes,
+    // which `formatCommandMap` handles through the shared TTY/NO_COLOR check.
+    console.log(
+      parsed.verb === undefined
+        ? formatCommandMap()
+        : formatVerbHelp(parsed.verb),
+    );
     return;
   }
 
@@ -218,15 +283,24 @@ const main = async (): Promise<void> => {
     let staleness: IocGenerationStateMarker | undefined;
     let report;
     if (cli.discovery) {
-      const analysis = await runDiscoveryAnalysis({
+      const resolved = await resolveDiscoveryManifestContext({
         iocConfigPath: cli.iocConfigPath,
         searchStartDir: searchStart,
       });
+      const analysis = await runDiscoveryAnalysis({ reuseResolution: resolved });
       // Discovery mode reads SOURCE, so its own answer is never stale — but a reader who reaches
       // for `--discovery` after a failing generation is reconciling two worlds, and saying that the
       // artifacts beside it are stale is the whole point of the banner.
       staleness = bannerIfStale(analysis.generatedDir, cli.json);
-      report = explainFromDiscovery(cli.key, analysis);
+      report = explainFromDiscovery(
+        cli.key,
+        analysis,
+        await loadExplainComposedView(
+          resolved.cfgPath,
+          resolved.config,
+          cli.json,
+        ),
+      );
     } else {
       const manifest = await loadManifestForInspection(
         cli.iocConfigPath,
@@ -234,7 +308,11 @@ const main = async (): Promise<void> => {
       );
       staleness = bannerIfStale(manifest.generatedDir, cli.json);
       await bannerIfNotFresh(manifest.generatedDir, manifest.cfgPath, cli.json);
-      report = explainFromManifest(cli.key, manifest);
+      report = explainFromManifest(
+        cli.key,
+        manifest,
+        await loadExplainComposedView(manifest.cfgPath, undefined, cli.json),
+      );
     }
 
     console.log(

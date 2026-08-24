@@ -258,6 +258,12 @@ const plansToIocContractManifest = (
         ...(impl.dependencyKeys !== undefined && impl.dependencyKeys.length > 0
           ? { dependencyKeys: impl.dependencyKeys }
           : {}),
+        // Provenance travels with the lifetime it explains. A composing app cannot re-derive it —
+        // the marker, the config and the scan root that decided it are all in the supplying
+        // package — so a lifetime emitted without it is a fact with no way back to its cause.
+        ...(impl.lifetimeSource !== undefined
+          ? { lifetimeSource: impl.lifetimeSource }
+          : {}),
       };
     }
 
@@ -429,6 +435,11 @@ const serializeMetadataBlock = (
       `      dependencyKeys: ${JSON.stringify(meta.dependencyKeys)},`,
     );
   }
+  if (meta.lifetimeSource !== undefined) {
+    lines.push(
+      `      lifetimeSource: ${JSON.stringify(meta.lifetimeSource)},`,
+    );
+  }
   if (meta.accessKey !== undefined) {
     lines.push(`      accessKey: ${JSON.stringify(meta.accessKey)},`);
   }
@@ -558,7 +569,7 @@ ${moduleArrayLines.join("\n")}
 export const IOC_SCOPE_PROVIDED_KEYS = [${scopeProvidedKeys.map((k) => JSON.stringify(k)).join(", ")}] as const;
 
 /* Optional manifest data this file is known to carry in full. A composing app reads it to tell
-   "this unit has no dependency keys" apart from "this manifest predates dependency keys". */
+   "this unit records none of this" apart from "this manifest predates the field". */
 export const ${IOC_MANIFEST_FEATURES_EXPORT_NAME} = [${IOC_MANIFEST_FEATURES.map((f) => JSON.stringify(f)).join(", ")}] as const;
 `;
 };

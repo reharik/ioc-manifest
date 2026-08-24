@@ -22,7 +22,10 @@ import {
   logDiscoveryProgramErrorDiagnosticsForFailure,
 } from "../generator/iocProgramContext.js";
 import { isAppMode } from "../config/iocMode.js";
-import { loadComposedManifestSupply } from "../generator/loadComposedManifestUnits.js";
+import {
+  composedContractNamesFromSupply,
+  loadComposedManifestSupply,
+} from "../generator/loadComposedManifestUnits.js";
 import { computeDiscoveryModulePath } from "../generator/manifestPaths.js";
 import {
   mergeManifestOptionsWithIocConfig,
@@ -234,6 +237,31 @@ const runDiscoveryFromResolution = async (
       },
     );
 
+    // Composed supply, loaded BEFORE the plan because the plan validates `ioc.config` against the
+    // contract universe and that universe spans the composed packages too. Configuring a composed
+    // contract — an app electing a library's implementation as the default — is a sanctioned
+    // pattern, and reading `registrations` against local names alone refused it, which took
+    // `inspect --discovery` and `explain --discovery` away from exactly the apps that use it.
+    // Generation has never had the defect: it assembles the same universe (`generateManifest.ts`,
+    // `loadComposedManifestContractNames`) and threads it into the same validator.
+    //
+    // It is also what the report's subtree walk crosses package boundaries with — the false
+    // "declared but never demanded" the report used to print for a key only a composed unit demands
+    // came from not having this. Tolerant: a package that cannot be resolved thins the report (and
+    // is disclosed as a blind spot), never crashes it, which is the same stance every other part of
+    // inspection takes.
+    const composedSupply =
+      config !== undefined && config !== null && isAppMode(config)
+        ? await loadComposedManifestSupply(
+            projectRoot,
+            config.composedManifests!,
+            {
+              customConditions: tsconfigCustomConditions(projectRoot),
+              tolerateUnreadablePackages: true,
+            },
+          )
+        : undefined;
+
     const registrationPlan = buildRegistrationPlan(
       contractMap,
       config,
@@ -241,6 +269,16 @@ const runDiscoveryFromResolution = async (
         projectRoot,
         scanDirs,
         markerLifetimesByFactoryKey,
+        ...(composedSupply !== undefined
+          ? {
+              composedContractNames:
+                composedContractNamesFromSupply(composedSupply),
+              // Undecidable rather than wrong: a name absent from an incomplete universe may be a
+              // typo or may live in the manifest that could not be opened, so it is reported and
+              // the view proceeds. `ioc generate` is the authority and refuses either way.
+              unreadableComposedPackages: composedSupply.unreadablePackages,
+            }
+          : {}),
       },
       {
         groupedContractNames: new Set(groupedContracts.byContractName.keys()),
@@ -260,23 +298,6 @@ const runDiscoveryFromResolution = async (
     // recognised from `config.groups` and reported as container-supplied, and the externals verdict
     // falls out of the classifier's fallback. Reported, never thrown: the report is a view, and
     // generation remains the authority that fails the run.
-    // Composed supply, so the report's subtree walk crosses package boundaries the same way
-    // generation's does — the false "declared but never demanded" the report used to print for a
-    // key only a composed unit demands came from not having this. Tolerant: a package that cannot
-    // be resolved thins the report (and is disclosed as a blind spot), never crashes it, which is
-    // the same stance every other part of inspection takes.
-    const composedSupply =
-      config !== undefined && config !== null && isAppMode(config)
-        ? await loadComposedManifestSupply(
-            projectRoot,
-            config.composedManifests!,
-            {
-              customConditions: tsconfigCustomConditions(projectRoot),
-              tolerateUnreadablePackages: true,
-            },
-          )
-        : undefined;
-
     const scopeRootVerification = verifyScopeRoots(scopeRoots, {
       program,
       projectRoot,

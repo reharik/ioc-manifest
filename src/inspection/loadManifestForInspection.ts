@@ -50,6 +50,13 @@ export type InspectionManifestSource = {
   readonly generatedDir: string;
   readonly scanDirs: readonly ResolvedScanDir[];
   readonly contracts: IocContractManifest;
+  /**
+   * The manifest's `IOC_MANIFEST_FEATURES` declaration, or `undefined` when it declares none.
+   *
+   * Carried because absence of an optional field is ambiguous on its own, and a report that words
+   * "there is none" and "this file predates the field" the same way is guessing at one of them.
+   */
+  readonly declaredFeatures: readonly string[] | undefined;
   /** Top-level group roots, per the fixed-key rule. */
   readonly groups: IocGroupsManifest;
   /** Absent when the manifest declares no scope roots. */
@@ -113,6 +120,7 @@ export const loadManifestForInspection = async (
     generatedDir: options.paths.generatedDir,
     scanDirs: options.paths.scanDirs,
     contracts: parsed.contracts,
+    declaredFeatures: parsed.declaredFeatures,
     groups: parsed.groupRoots,
     scopeRoots: parsed.scopeRoots,
   };

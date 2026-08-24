@@ -79,6 +79,22 @@ export type ParsedImplementationMeta = {
   readonly registrationKey: string;
   readonly default?: boolean;
   /**
+   * The rest of the unit as its manifest states it.
+   *
+   * The projection above was, for a long time, the two fields the CONTRACT checks read — and that
+   * was the right narrowing while the only readers were checks adjudicating election and key
+   * conflicts. `ioc explain` reads the same slices to answer about ONE key across the composed
+   * picture, and its answer is made of exactly these: where the unit is declared, how long it
+   * lives, why, and what it demands. They are carried here rather than parsed a second time
+   * somewhere else, because two parses of one manifest are two chances to disagree about it.
+   */
+  readonly exportName?: string;
+  readonly modulePath?: string;
+  readonly implementationName?: string;
+  readonly lifetime?: import("../core/manifest.js").IocImplementationLifetime;
+  readonly lifetimeSource?: import("../core/manifest.js").IocLifetimeProvenance;
+  readonly dependencyKeys?: readonly string[];
+  /**
    * The contract's configured `$contract.accessKey`, when the manifest carries one.
    *
    * Emitted onto whichever implementation held it and omitted when it equals the convention key, so
@@ -103,6 +119,15 @@ export type ParsedManifestSlice = {
   readonly manifestPath: string;
   readonly typesPath: string;
   readonly manifestSchemaVersion: unknown;
+  /**
+   * The manifest's `IOC_MANIFEST_FEATURES` declaration, or `undefined` when it declares none.
+   *
+   * Absence of an optional field never distinguishes "there is none" from "the generator that
+   * wrote this predates it" — see {@link import("../core/manifest.js").IocManifestFeature}. A
+   * reader that renders a degraded note for one and a real answer for the other has to consult
+   * this, so the slice carries it beside the data it qualifies.
+   */
+  readonly declaredFeatures: readonly string[] | undefined;
   readonly contracts: Readonly<
     Record<string, Readonly<Record<string, ParsedImplementationMeta>>>
   >;

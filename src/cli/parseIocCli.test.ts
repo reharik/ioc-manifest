@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-  IOC_CLI_HELP_TEXT,
-  parseIocCliArgv,
-  type IocInspectCliOptions,
-} from "./parseIocCli.js";
+import { parseIocCliArgv, type IocInspectCliOptions } from "./parseIocCli.js";
+import { IOC_CLI_STUMBLES } from "./commandMap.js";
 
 const nodeStub = (): string[] => ["node", "dist/cli/ioc.js"];
 
@@ -25,14 +22,14 @@ describe("parseIocCliArgv", () => {
       assert.deepEqual(r, { kind: "help" });
     });
 
-    it("should return help for inspect with --help", () => {
+    it("should return help for inspect with --help, naming the verb", () => {
       const r = parseIocCliArgv([...nodeStub(), "inspect", "--help"]);
-      assert.deepEqual(r, { kind: "help" });
+      assert.deepEqual(r, { kind: "help", verb: "inspect" });
     });
 
-    it("should return help for inspect with -h", () => {
+    it("should return help for inspect with -h, naming the verb", () => {
       const r = parseIocCliArgv([...nodeStub(), "inspect", "-h"]);
-      assert.deepEqual(r, { kind: "help" });
+      assert.deepEqual(r, { kind: "help", verb: "inspect" });
     });
 
     it("should return help when inspect mixes flags and includes -h", () => {
@@ -42,7 +39,16 @@ describe("parseIocCliArgv", () => {
         "--discovery",
         "-h",
       ]);
-      assert.deepEqual(r, { kind: "help" });
+      assert.deepEqual(r, { kind: "help", verb: "inspect" });
+    });
+
+    it("should name the verb for every verb's own --help", () => {
+      for (const verb of ["generate", "inspect", "explain", "validate"]) {
+        assert.deepEqual(parseIocCliArgv([...nodeStub(), verb, "--help"]), {
+          kind: "help",
+          verb,
+        });
+      }
     });
   });
 
@@ -185,7 +191,7 @@ describe("parseIocCliArgv", () => {
     it("should reject unknown commands", () => {
       assert.throws(
         () => parseIocCliArgv([...nodeStub(), "frobnicate"]),
-        /Supported:.*validate|\nUsage:/,
+        /Unknown command "frobnicate"\.\n  Run `ioc --help` for the full command list\./,
       );
     });
 
@@ -216,15 +222,77 @@ describe("parseIocCliArgv", () => {
     });
   });
 
-  describe("IOC_CLI_HELP_TEXT", () => {
-    it("should document inspect and discovery", () => {
-      assert.ok(IOC_CLI_HELP_TEXT.includes("inspect"));
-      assert.ok(IOC_CLI_HELP_TEXT.includes("--discovery"));
+  describe("When an unknown command is close to something real", () => {
+    const messageOf = (...args: string[]): string => {
+      try {
+        parseIocCliArgv([...nodeStub(), ...args]);
+      } catch (error) {
+        return (error as Error).message;
+      }
+      throw new Error(`expected \`ioc ${args.join(" ")}\` to be rejected`);
+    };
+
+    it("should answer a vocabulary miss from the stumble table", () => {
+      assert.equal(
+        messageOf("discovery"),
+        'Unknown command "discovery". Did you mean `ioc inspect --discovery`?\n' +
+          "  Run `ioc --help` for the full command list.",
+      );
     });
 
-    it("should document validate and --json", () => {
-      assert.ok(IOC_CLI_HELP_TEXT.includes("validate"));
-      assert.ok(IOC_CLI_HELP_TEXT.includes("--json"));
+    it("should answer every stumble the table lists", () => {
+      // Driven off the table itself, so adding a stumble is one line there and nothing here — and
+      // so a table entry that is never actually reached by the suggester cannot sit there unused.
+      for (const { typed, spelling } of IOC_CLI_STUMBLES) {
+        assert.ok(
+          messageOf(typed).includes(
+            `Did you mean \`ioc ${spelling}\`?`,
+          ),
+          `\`ioc ${typed}\` should suggest \`ioc ${spelling}\`, got: ${messageOf(typed)}`,
+        );
+      }
+    });
+
+    it("should answer a typo by edit distance", () => {
+      assert.match(messageOf("vaildate"), /Did you mean `ioc validate`\?/);
+      assert.match(messageOf("insepct"), /Did you mean `ioc inspect`\?/);
+      assert.match(messageOf("genrate"), /Did you mean `ioc generate`\?/);
+      // A near miss on a stumble still lands on the spelling that works, not on the stumble.
+      assert.match(
+        messageOf("discovry"),
+        /Did you mean `ioc inspect --discovery`\?/,
+      );
+    });
+
+    it("should offer nothing at all for a word close to nothing", () => {
+      // The map pointer alone. A suggestion pulled from too far away is worse than no suggestion:
+      // it sends a reader to try a command they have no reason to want.
+      assert.equal(
+        messageOf("frobnicate"),
+        'Unknown command "frobnicate".\n' +
+          "  Run `ioc --help` for the full command list.",
+      );
+    });
+
+    it("should answer an unknown flag against the verb it followed", () => {
+      assert.equal(
+        messageOf("inspect", "--disovery"),
+        'Unknown flag "--disovery" for `ioc inspect`. Did you mean `--discovery`?\n' +
+          "  Run `ioc inspect --help` for this command's flags.",
+      );
+      assert.equal(
+        messageOf("inspect", "--zzzzzzz"),
+        'Unknown flag "--zzzzzzz" for `ioc inspect`.\n' +
+          "  Run `ioc inspect --help` for this command's flags.",
+      );
+    });
+
+    it("should not suggest a flag back to itself when the value is what is missing", () => {
+      assert.equal(
+        messageOf("inspect", "--contract"),
+        "--contract needs a value, e.g. `ioc inspect --contract <value>`.\n" +
+          "  Run `ioc inspect --help` for this command's flags.",
+      );
     });
   });
 });

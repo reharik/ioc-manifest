@@ -1,44 +1,34 @@
 /**
- * @fileoverview Minimal argv parsing for the `ioc` CLI (`generate`, `inspect`, `explain`,
- * `validate`, and `-h/--help`).
+ * @fileoverview Minimal argv parsing for the `ioc` CLI.
+ *
+ * The set of words this accepts as commands is NOT written here — it is derived from the verb table
+ * in `commandMap.ts`, which is also what `ioc --help` prints. One table, so a verb the parser
+ * accepts is a verb the map describes, structurally rather than by anyone remembering to.
+ *
+ * Parse failures carry a suggestion where one can be found, and a pointer to the map. Deliberately
+ * not a usage line: the old tail restated the whole grammar on every error, which is the register
+ * that made the commands hard to remember in the first place.
  */
-
-/** Printed for `-h`, `--help`, or bare `ioc` — successful exit 0 */
-export const IOC_CLI_HELP_TEXT = `ioc — generate and inspect Awilix manifests produced by ioc-manifest
-
-Usage:
-  ioc [--help|-h]
-  ioc generate [--config <path> | -c <path>] [--project <path>]
-  ioc generate [--help|-h]
-  ioc inspect [--discovery] [--verbose] [--contract <substring>] [--json] [--config <path> | -c <path>] [--project <path>]
-  ioc inspect [--help|-h]
-  ioc explain <key> [--discovery] [--json] [--config <path> | -c <path>] [--project <path>]
-  ioc explain [--help|-h]
-  ioc validate [--json] [--config <path> | -c <path>] [--project <path>]
-  ioc validate [--help|-h]
-
-Commands:
-  ioc generate   Discover factories, build registration plan, and emit ioc-manifest.ts + ioc-registry.types.ts.
-  ioc inspect    Load generated ioc-manifest.ts (unless --discovery), print summary.
-  ioc explain    Explain ONE cradle key: what it resolves to, its lifetime and where that came from, its dependencies and its dependents. Read-only.
-  ioc validate   App mode only: cross-manifest composition checks (externals, conflicts, groups, defaults). Read-only.
-
-Options:
-  --discovery           (inspect, explain) Re-run discovery and registration planning; do not read manifest. Required for lifetime provenance and scope-root subtree reach.
-  --verbose             (inspect) Also show not-a-candidate rows and every group rejection, both collapsed by default.
-  --contract SUBSTRING  (inspect only) Show only rows whose contract name (or, with --discovery, export name) contains SUBSTRING, case-insensitively.
-  --json                (inspect, explain, validate) Emit the full report as JSON for CI and tooling.
-  --config PATH   -c    Path to ioc.config.ts
-  --project PATH       Directory to resolve config from (default: cwd)
-
-Errors:
-  Set IOC_DEBUG=1 for stack traces alongside messages.
-`;
+import {
+  isIocCliVerbName,
+  isKnownFlagOfVerb,
+  suggestCommand,
+  suggestFlag,
+  type IocCliVerbName,
+} from "./commandMap.js";
 
 const isHelpFlag = (s: string): boolean => s === "--help" || s === "-h";
 
-const conciseUsageTail = (): string =>
-  "\nUsage: ioc (--help|-h) | ioc generate [--config <path>|-c <path>] [--project <path>] | ioc inspect [--discovery] [--verbose] [--contract <substring>] [--json] [--config <path>|-c <path>] [--project <path>] | ioc explain <key> [--discovery] [--json] [--config <path>|-c <path>] [--project <path>] | ioc validate [--json] [--config <path>|-c <path>] [--project <path>]";
+/**
+ * The second line of any parse error: where the full answer lives.
+ *
+ * A verb-scoped pointer when the verb parsed and only its flags did not — `ioc inspect --help` is
+ * a shorter walk to "what flags does inspect take" than the whole map is.
+ */
+const helpPointer = (verb?: string): string =>
+  verb === undefined
+    ? "\n  Run `ioc --help` for the full command list."
+    : `\n  Run \`ioc ${verb} --help\` for this command's flags.`;
 
 export type IocGenerateCliOptions = {
   iocConfigPath?: string;
@@ -73,14 +63,14 @@ export type IocValidateCliOptions = {
 };
 
 export type ParseIocCliArgvResult =
-  | { kind: "help" }
+  | { kind: "help"; verb?: IocCliVerbName }
   | { kind: "generate"; options: IocGenerateCliOptions }
   | { kind: "inspect"; options: IocInspectCliOptions }
   | { kind: "explain"; options: IocExplainCliOptions }
   | { kind: "validate"; options: IocValidateCliOptions };
 
-const cliParseError = (detail: string): Error =>
-  new Error(`${detail}${conciseUsageTail()}`);
+const cliParseError = (detail: string, verb?: string): Error =>
+  new Error(`${detail}${helpPointer(verb)}`);
 
 /**
  * Parses `process.argv`-style arrays (starts with executable and script paths).
@@ -94,31 +84,18 @@ export const parseIocCliArgv = (
     return { kind: "help" };
   }
 
-  if (args[0] === "inspect" && args.slice(1).some(isHelpFlag)) {
-    return { kind: "help" };
+  const maybeVerb = args[0] ?? "";
+  if (isIocCliVerbName(maybeVerb) && args.slice(1).some(isHelpFlag)) {
+    return { kind: "help", verb: maybeVerb };
   }
 
-  if (args[0] === "generate" && args.slice(1).some(isHelpFlag)) {
-    return { kind: "help" };
-  }
-
-  if (args[0] === "validate" && args.slice(1).some(isHelpFlag)) {
-    return { kind: "help" };
-  }
-
-  if (args[0] === "explain" && args.slice(1).some(isHelpFlag)) {
-    return { kind: "help" };
-  }
-
-  const command = args[0];
-  if (
-    command !== "inspect" &&
-    command !== "generate" &&
-    command !== "validate" &&
-    command !== "explain"
-  ) {
+  const command = args[0] ?? "";
+  if (!isIocCliVerbName(command)) {
+    const suggestion = suggestCommand(command);
     throw cliParseError(
-      `Unknown command ${JSON.stringify(command)}. Supported: generate, inspect, explain, validate.`,
+      `Unknown command ${JSON.stringify(command)}.${
+        suggestion === undefined ? "" : ` Did you mean \`ioc ${suggestion}\`?`
+      }`,
     );
   }
 
@@ -140,6 +117,7 @@ export const parseIocCliArgv = (
       if (command !== "inspect" && command !== "explain") {
         throw cliParseError(
           "--discovery is only valid with the inspect and explain commands.",
+          command,
         );
       }
       discovery = true;
@@ -147,7 +125,10 @@ export const parseIocCliArgv = (
     }
     if (a === "--verbose") {
       if (command !== "inspect") {
-        throw cliParseError("--verbose is only valid with the inspect command.");
+        throw cliParseError(
+          "--verbose is only valid with the inspect command.",
+          command,
+        );
       }
       verbose = true;
       continue;
@@ -160,6 +141,7 @@ export const parseIocCliArgv = (
       ) {
         throw cliParseError(
           "--json is only valid with the inspect, explain and validate commands.",
+          command,
         );
       }
       json = true;
@@ -169,6 +151,7 @@ export const parseIocCliArgv = (
       if (command !== "inspect") {
         throw cliParseError(
           "--contract is only valid with the inspect command.",
+          command,
         );
       }
       contract = args[i + 1];
@@ -186,7 +169,22 @@ export const parseIocCliArgv = (
       continue;
     }
     if (a.startsWith("-")) {
-      throw cliParseError(`Unknown flag ${JSON.stringify(a)}.`);
+      // A flag this verb DOES know only reaches here by having been written without the value it
+      // takes — the value-consuming branches above all require `args[i + 1]`. Saying "unknown" to
+      // a correctly-spelled flag sends the reader hunting for a typo that is not there.
+      if (isKnownFlagOfVerb(command, a)) {
+        throw cliParseError(
+          `${a} needs a value, e.g. \`ioc ${command} ${a} <value>\`.`,
+          command,
+        );
+      }
+      const suggestion = suggestFlag(command, a);
+      throw cliParseError(
+        `Unknown flag ${JSON.stringify(a)} for \`ioc ${command}\`.${
+          suggestion === undefined ? "" : ` Did you mean \`${suggestion}\`?`
+        }`,
+        command,
+      );
     }
     if (positional === undefined) {
       positional = a;
@@ -207,6 +205,7 @@ export const parseIocCliArgv = (
     if (positional === undefined || positional.length === 0) {
       throw cliParseError(
         "explain needs the cradle key to explain, e.g. `ioc explain uow`.",
+        command,
       );
     }
     return {

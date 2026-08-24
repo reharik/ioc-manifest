@@ -27,10 +27,12 @@ import type {
   IocGroupNodeManifest,
   IocGroupRootManifest,
   IocImplementationLifetime,
+  IocLifetimeProvenance,
 } from "../core/manifest.js";
 import { resolveManifestAccessKey } from "../core/contractAccessKey.js";
 import { parseGeneratedManifestSource } from "./parseGeneratedManifestSource.js";
 import { resolvePackageExportPath } from "./resolveComposedPackageExport.js";
+import type { ComposedManifestContractNames } from "./loadComposedManifestContracts.js";
 
 /**
  * One registration unit carried in by a composed package manifest.
@@ -50,6 +52,15 @@ export type ComposedManifestUnit = {
   /** Package-qualified module path — see the note above. */
   modulePath: string;
   lifetime: IocImplementationLifetime;
+  /**
+   * WHICH MECHANISM decided {@link lifetime}, when the manifest records it.
+   *
+   * `undefined` means "not recorded" and never "nothing decided it" — the same ambiguity
+   * {@link dependencyKeys} has, answered the same way, by
+   * {@link ComposedManifestSupply.packagesWithoutLifetimeProvenance}. Surfaced here and consumed by
+   * `ioc explain`; nothing in the walk reads it, and nothing in the walk should.
+   */
+  lifetimeSource?: IocLifetimeProvenance;
   /** True when the manifest marked this implementation the contract's default. */
   isDefault: boolean;
   /**
@@ -133,6 +144,28 @@ export type ComposedManifestSupply = {
    * callers must disclose rather than paper over.
    */
   packagesWithoutDependencyData: readonly string[];
+  /**
+   * Composed packages whose manifest records no lifetime provenance, sorted.
+   *
+   * Separate from {@link packagesWithoutDependencyData} because the consequences are unrelated: a
+   * package with no dependency keys makes a subtree unwalkable, while a package with no lifetime
+   * provenance is walked perfectly well and merely cannot say WHY its units live as long as they
+   * do. Conflating them would caveat a verdict for a reason that has nothing to do with it.
+   */
+  packagesWithoutLifetimeProvenance: readonly string[];
+  /**
+   * Composed packages whose manifest could not be resolved or read at all, sorted.
+   *
+   * A strict subset of {@link packagesWithoutDependencyData}, and kept apart from it because the
+   * two answer different questions. That list means "some part of a subtree is unwalkable", which
+   * an unreadable package and a package predating the field both cause. This one means "nothing at
+   * all is known about this package" — which is what a reader has to know before concluding that a
+   * name is unknown, since the name may perfectly well live in the file that could not be opened.
+   *
+   * Always empty unless {@link LoadComposedManifestSupplyOptions.tolerateUnreadablePackages} is set;
+   * without it an unreadable package throws.
+   */
+  unreadablePackages: readonly string[];
 };
 
 export const EMPTY_COMPOSED_MANIFEST_SUPPLY: ComposedManifestSupply = {
@@ -141,6 +174,8 @@ export const EMPTY_COMPOSED_MANIFEST_SUPPLY: ComposedManifestSupply = {
   groupMembersByGroupKey: new Map(),
   groupRootsByGroupKey: new Map(),
   packagesWithoutDependencyData: [],
+  packagesWithoutLifetimeProvenance: [],
+  unreadablePackages: [],
 };
 
 /** One package's contribution, before the per-package results are merged. */
@@ -151,6 +186,8 @@ export type ComposedManifestPackageSupply = {
   groupRootsByGroupKey: ReadonlyMap<string, ComposedGroupRoot>;
   /** True when the manifest declares that it carries `dependencyKeys` in full. */
   carriesDependencyKeys: boolean;
+  /** True when the manifest declares that it carries `lifetimeSource` in full. */
+  carriesLifetimeSource: boolean;
 };
 
 /** Member registration keys of a group node, for both group kinds (array and object). */
@@ -246,6 +283,9 @@ export const parseComposedManifestSupplySource = (
         ...(meta.dependencyKeys !== undefined
           ? { dependencyKeys: meta.dependencyKeys }
           : {}),
+        ...(meta.lifetimeSource !== undefined
+          ? { lifetimeSource: meta.lifetimeSource }
+          : {}),
       });
     }
 
@@ -284,7 +324,36 @@ export const parseComposedManifestSupplySource = (
     carriesDependencyKeys: (parsed.declaredFeatures ?? []).includes(
       "dependencyKeys",
     ),
+    carriesLifetimeSource: (parsed.declaredFeatures ?? []).includes(
+      "lifetimeSource",
+    ),
   };
+};
+
+/**
+ * The composed contract-name universe, projected off supply this run has already parsed.
+ *
+ * `loadComposedManifestContractNames` answers the same question by opening the same files a second
+ * time, which is the right shape for generation (it needs the names before it needs anything else)
+ * and the wrong one for a caller that is about to read the whole supply anyway. Same manifests,
+ * same parser, one pass — the widening pattern the composed group-membership index already
+ * follows: reuse what was read, never re-read it.
+ */
+export const composedContractNamesFromSupply = (
+  supply: ComposedManifestSupply,
+): ComposedManifestContractNames => {
+  const byPackage = new Map<string, Set<string>>();
+  const all = new Set<string>();
+  for (const unit of supply.units) {
+    let names = byPackage.get(unit.packageName);
+    if (names === undefined) {
+      names = new Set<string>();
+      byPackage.set(unit.packageName, names);
+    }
+    names.add(unit.contractName);
+    all.add(unit.contractName);
+  }
+  return { all, byPackage };
 };
 
 export type LoadComposedManifestSupplyOptions = {
@@ -315,6 +384,8 @@ export const loadComposedManifestSupply = async (
   const groupMemberKeysByGroup = new Map<string, string[]>();
   const groupRoots = new Map<string, ComposedGroupRoot>();
   const packagesWithoutDependencyData: string[] = [];
+  const packagesWithoutLifetimeProvenance: string[] = [];
+  const unreadablePackages: string[] = [];
 
   for (const packageName of composedPackageNames) {
     let parsed: ComposedManifestPackageSupply;
@@ -335,6 +406,8 @@ export const loadComposedManifestSupply = async (
         // Unreadable is not "carries no dependency data" — but from a walk's point of view the
         // consequence is identical, and saying so is strictly better than saying nothing.
         packagesWithoutDependencyData.push(packageName);
+        packagesWithoutLifetimeProvenance.push(packageName);
+        unreadablePackages.push(packageName);
         continue;
       }
       throw error;
@@ -364,6 +437,9 @@ export const loadComposedManifestSupply = async (
     if (!parsed.carriesDependencyKeys) {
       packagesWithoutDependencyData.push(packageName);
     }
+    if (!parsed.carriesLifetimeSource) {
+      packagesWithoutLifetimeProvenance.push(packageName);
+    }
   }
 
   return {
@@ -373,6 +449,12 @@ export const loadComposedManifestSupply = async (
     groupRootsByGroupKey: new Map(groupRoots),
     packagesWithoutDependencyData: [...packagesWithoutDependencyData].sort(
       (a, b) => a.localeCompare(b),
+    ),
+    packagesWithoutLifetimeProvenance: [
+      ...packagesWithoutLifetimeProvenance,
+    ].sort((a, b) => a.localeCompare(b)),
+    unreadablePackages: [...unreadablePackages].sort((a, b) =>
+      a.localeCompare(b),
     ),
   };
 };

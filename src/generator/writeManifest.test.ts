@@ -509,11 +509,66 @@ describe("writeManifest", () => {
       // of the manifest object is read back as a GROUP ROOT, by this runtime and by older ones.
       assert.match(
         manifestSource,
-        /export const IOC_MANIFEST_FEATURES = \["dependencyKeys"\] as const;/,
+        /export const IOC_MANIFEST_FEATURES = \["dependencyKeys", "lifetimeSource"\] as const;/,
       );
       assert.ok(
         !/^\s*IOC_MANIFEST_FEATURES:/m.test(manifestSource),
         "the feature list must never become a manifest property",
+      );
+    });
+
+    it("should write the lifetime's provenance beside the lifetime it explains", async () => {
+      // The stated blind spot of `ioc explain` since it shipped: a manifest recorded WHAT the
+      // lifetime resolved to and nothing about what decided it, so a composing app could say
+      // nothing at all about a composed unit's lifetime — the one unit whose sources the reader
+      // cannot go and open.
+      const tempRoot = await fs.mkdtemp(
+        path.join(os.tmpdir(), "ioc-write-manifest-"),
+      );
+      const generatedDir = path.join(tempRoot, "src", "generated");
+      await fs.mkdir(generatedDir, { recursive: true });
+      const manifestOutPath = path.join(generatedDir, "ioc-manifest.ts");
+
+      const acceptedFactories: DiscoveredFactory[] = [
+        mkFactory({
+          contractName: "Reader",
+          implementationName: "reader",
+          exportName: "buildReader",
+          registrationKey: "reader",
+        }),
+      ];
+      const plans: ResolvedContractRegistration[] = [
+        mkPlan({
+          contractName: "Reader",
+          contractTypeRelImport: "../fixtures/contracts.js",
+          contractKey: "reader",
+          defaultImplementationName: "reader",
+          implementations: [
+            {
+              implementationName: "reader",
+              exportName: "buildReader",
+              modulePath: "fixtures/impl.ts",
+              relImport: "../fixtures/impl.js",
+              registrationKey: "reader",
+              lifetime: "scoped",
+              lifetimeSource: "lifetime-marker",
+            },
+          ],
+        }),
+      ];
+
+      await writeWithDemandSupply(
+        acceptedFactories,
+        plans,
+        undefined,
+        manifestOutPath,
+      );
+      const manifestSource = await fs.readFile(manifestOutPath, "utf8");
+
+      assert.match(manifestSource, /lifetimeSource: "lifetime-marker",/);
+      assert.match(
+        manifestSource,
+        /export const IOC_MANIFEST_FEATURES = \["dependencyKeys", "lifetimeSource"\] as const;/,
       );
     });
 
@@ -558,9 +613,12 @@ describe("writeManifest", () => {
       // Same omit-when-empty discipline every other optional field follows. The feature export is
       // what makes the absence readable — without it, "no keys" and "old manifest" look alike.
       assert.ok(!/^\s*dependencyKeys:/m.test(manifestSource));
+      // Provenance follows the same rule: a plan built without a lifetime context carries none, so
+      // none is written, and the feature export is what tells the two absences apart.
+      assert.ok(!/^\s*lifetimeSource:/m.test(manifestSource));
       assert.match(
         manifestSource,
-        /export const IOC_MANIFEST_FEATURES = \["dependencyKeys"\] as const;/,
+        /export const IOC_MANIFEST_FEATURES = \["dependencyKeys", "lifetimeSource"\] as const;/,
       );
     });
   });

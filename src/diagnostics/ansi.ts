@@ -58,7 +58,11 @@ export const shouldColorize = (): boolean => {
   if (process.env.NO_COLOR !== undefined && process.env.NO_COLOR !== "") {
     return false;
   }
-  if (process.env.FORCE_COLOR !== undefined && process.env.FORCE_COLOR !== "0") {
+  // An EMPTY `FORCE_COLOR` is not a request for colour. It is what a CI expression that resolved to
+  // nothing leaves behind, and reading it as "force" turns every piped log in that job into escape
+  // soup. Same reading `NO_COLOR` gets one line up: set-but-empty is set to nothing, so unset.
+  const force = process.env.FORCE_COLOR;
+  if (force !== undefined && force !== "" && force !== "0") {
     return true;
   }
   return process.stdout.isTTY === true;

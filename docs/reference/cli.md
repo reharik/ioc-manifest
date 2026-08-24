@@ -1,16 +1,38 @@
 # CLI: `ioc`
 
-```bash
-npx ioc                       # prints help
-npx ioc generate              # discover units, emit manifest + types (and ioc-composed.ts in app mode)
-npx ioc generate -c ./ioc.config.test.ts   # generate with a specific config
-npx ioc inspect               # loads the generated manifest and prints a summary
-npx ioc inspect --discovery   # re-runs discovery without reading the manifest
-npx ioc explain uow           # one key: what it resolves to, its lifetime, its deps, its dependents
-npx ioc explain uow --discovery   # …with lifetime provenance and scope-root subtree reach
-npx ioc validate              # the composition suite without regenerating (app mode)
-npx ioc validate --json       # machine-readable report: { issues, staleness?, freshness? }
+## The command map
+
+`ioc` with no arguments, and `ioc --help`, print this. It is the same list, in the same order and the same words, that the tool prints for itself — the composite spellings get their own rows because they are the ones nobody remembers.
+
 ```
+ioc — convention-based DI for TypeScript: discovery, generation, verification
+
+  generate                    scan, verify, and write the manifest + registry types (the main verb)
+  validate                    run the same checks against committed artifacts, without regenerating
+  inspect                     what registered under which keys, and why
+  inspect --discovery         what was found, what was skipped and why, group membership
+  inspect --contract <name>   the same, narrowed to one name — the drill-down for a collapsed report
+  explain <key>               one unit: lifetime + provenance, deps, dependents, which scopes reach it
+  explain <key> --discovery   the same, re-read from source, so scope-root subtree reach is included
+
+  ioc <command> --help        that command's flags, in detail
+  --json                      (inspect, explain, validate) the same report, machine-readable
+  IOC_DEBUG=1                 env var: stack traces alongside messages
+```
+
+`discovery` is **not** a verb — it is `inspect --discovery`. Nor are `check`, `gen`, `info` or `describe` verbs; type one anyway and the CLI names the spelling that works:
+
+```
+$ ioc discovery
+Unknown command "discovery". Did you mean `ioc inspect --discovery`?
+  Run `ioc --help` for the full command list.
+```
+
+Typos are answered the same way (`vaildate` → `validate`), and an unknown flag is answered against the flags the verb it followed actually takes. A word close to nothing is not guessed at: the map pointer stands alone rather than inventing a suggestion.
+
+`ioc <command> --help` prints that command's row, its composites, and every flag it takes with a line each.
+
+## Flags
 
 | Flag                       | Purpose                                                                                 |
 | -------------------------- | --------------------------------------------------------------------------------------- |
@@ -132,6 +154,8 @@ The envelope is the same shape either way — `staleness` is simply absent when 
 
 Per-issue field names are untouched: `category`, `severity`, `summary`, `details`, `suggestedFix`, `docUrl` — plus `possiblyStale: true` on any finding that resolves through a package whose artifacts may predate its sources. Migration is `JSON.parse(out)` → `JSON.parse(out).issues`.
 
+## `ioc inspect`
+
 `inspect --discovery` is the tool for "why isn't this registered?". It lists every scanned file with each export's outcome — discovered (with its contract and registration key) or skipped with a categorized reason, including the class-unit reasons such as `class_inherited_contract_not_declared` and `missing_return_type_annotation`. Unlike plain `inspect`, it re-runs discovery from source rather than reading the generated manifest, and it tolerates units that would abort a real generation so the report can list every offender at once.
 
 ### Group rejections are collapsed
@@ -180,7 +204,60 @@ Reached from scope roots:
   ⬢ IRouter variant: authRouter  opener: openAuthRouterScope
 ```
 
-It reads the generated manifest by default and re-runs discovery with `--discovery`. The manifest records the lifetime it resolved but not the reasoning that produced it, and no scope-root subtree, so manifest mode says so rather than guessing — `--discovery` is the mode with provenance and subtree reach. Both modes are read-only and parse the manifest rather than importing it. `--json` emits the same record.
+It reads the generated manifest by default and re-runs discovery with `--discovery`. A manifest records no scope-root subtree, so manifest mode says so rather than guessing — `--discovery` is the mode with subtree reach. Lifetime provenance is available in both since manifests began carrying `lifetimeSource`; the manifest chain is one step thinner, because the marker's *name* is a fact about sources manifest mode never read. Both modes are read-only and parse the manifest rather than importing it. `--json` emits the same record.
+
+### In an app: the composed picture
+
+In a package with `composedManifests`, most cradle keys are supplied by somebody else — which is where the question gets asked most often and where a package-local answer is least useful. So in app mode `explain` answers over the **same merged picture** `ioc validate` and app-mode `ioc generate` read: the same slice loader, the same [default-election](/concepts/conventions#default-implementation-selection) helpers, the same group membership index. It cannot name an implementation behind a slot key that the composition suite would reject.
+
+Every answer names its supplier package:
+
+```
+mediaStorage → contract slot for MediaStorage — resolves whichever implementation is elected
+  ★ elected: s3Storage (@packages/media-core/src/factories/buildS3Storage.ts#buildS3Storage) of 2: localStorage, s3Storage
+  supplied by @packages/media-core
+
+Lifetime: singleton ← lifetime-marker ← on the contract site of buildS3Storage
+
+Depends on:
+  mediaClock  scoped  registration of MediaClock  from @packages/media-core
+      ![lifetime-inversion] a singleton freezes its scoped dependency at first construction and reuses it across every scope
+
+Demanded by:
+  mediaIndexer (@packages/media-core/src/factories/buildMediaIndexer.ts)  in @packages/media-core
+  uploadHandler (src/factories/buildUploadHandler.ts)  in @apps/api (this app)
+```
+
+Two answers exist only here, and both replace what used to be a bare miss:
+
+**A grouped member's would-be key.** [Grouped means group-only](/concepts/groups#grouped-means-group-only): a grouped contract claims no cradle key, so nothing can supply one. That is the rule working, not drift, and `explain` states it as an answer — the teaching-register sibling of the `grouped-member-demand` error, with the spelling that does work. For a record group that is the record's **own property key**, which diverges from the registration key whenever an implementation is named differently from its contract:
+
+```
+trackWriteService → member of composed group "writeServices" — no individual cradle key
+  group:     "writeServices"  (kind: object, base: WriteServiceBase, declared by @packages/media-core)
+  contract:  "TrackWriteService"
+  A grouped contract is consumed through its group and through nothing else …
+  Consume it through the group: `writeServices: IocGroupWriteServices`, then `writeServices.trackWriteService`.
+  → docs: https://reharik.github.io/ioc-manifest/concepts/groups#grouped-means-group-only
+```
+
+**An external.** Nothing in the composed manifests registers it because the app registers it on the root container before composing. `explain` describes the demand side honestly — the demanded type and every package expecting it — rather than reporting a key it could not find:
+
+```
+logger → external — supplied by the composing app at bootstrap
+  demanded:    Logger
+  demanded by: @apps/api (this app), @packages/media-core
+```
+
+Freshness travels with the answer. `explain` already banners this package's own [staleness](#the-other-half-artifacts-that-may-predate-their-sources); additionally, when the **supplier** of the explained key may predate its sources, the answer carries the same inline caveat a validate finding does:
+
+```
+note: @packages/media-core may be stale; this finding may describe the old world
+```
+
+If the composed picture cannot be read at all — an unresolvable composed package — `explain` says so on stderr and answers over this package alone. It is a view: a half-answer beats a refused question.
+
+`--json` extends, never renames. The composed answer adds `supplier`, `packages` (the `sourceId`s the answer rests on), `possiblyStale` / `stalenessNote`, per-dependency and per-dependent `packageLabel`, and the `grouped-member` / `external` resolution kinds, alongside every field it has always emitted.
 
 ## `ioc generate` in app mode: the composition suite
 

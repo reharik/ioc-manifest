@@ -61,6 +61,7 @@ export const iocManifest = {
         discoveredBy: "naming",
         dependencyContractNames: ["MediaStorage"],
         dependencyKeys: ["mediaStorage"],
+        lifetimeSource: "default",
       },
     },
     CacheClient: {
@@ -75,6 +76,7 @@ export const iocManifest = {
         moduleIndex: 3,
         default: true,
         discoveredBy: "naming",
+        lifetimeSource: "default",
       },
     },
     DispatchService: {
@@ -90,6 +92,7 @@ export const iocManifest = {
         default: true,
         discoveredBy: "naming",
         dependencyKeys: ["notificationChannels"],
+        lifetimeSource: "default",
       },
     },
     EmailChannel: {
@@ -103,6 +106,7 @@ export const iocManifest = {
         lifetime: "singleton",
         moduleIndex: 3,
         discoveredBy: "naming",
+        lifetimeSource: "default",
       },
     },
     Logger: {
@@ -118,6 +122,7 @@ export const iocManifest = {
         default: true,
         discoveredBy: "naming",
         configOverridesApplied: ["default"],
+        lifetimeSource: "default",
       },
     },
     MediaStorage: {
@@ -134,6 +139,7 @@ export const iocManifest = {
         discoveredBy: "implements",
         dependencyContractNames: ["MediaStorage"],
         dependencyKeys: ["mediaStorage"],
+        lifetimeSource: "default",
       },
       auditedMediaStorage: {
         exportName: "buildAuditedMediaStorage",
@@ -145,6 +151,7 @@ export const iocManifest = {
         lifetime: "singleton",
         moduleIndex: 2,
         discoveredBy: "naming",
+        lifetimeSource: "default",
       },
       localMediaStorage: {
         exportName: "buildLocalMediaStorage",
@@ -156,6 +163,7 @@ export const iocManifest = {
         lifetime: "singleton",
         moduleIndex: 1,
         discoveredBy: "naming",
+        lifetimeSource: "default",
       },
       s3MediaStorage: {
         exportName: "buildS3MediaStorage",
@@ -169,6 +177,7 @@ export const iocManifest = {
         default: true,
         discoveredBy: "naming",
         configOverridesApplied: ["default"],
+        lifetimeSource: "default",
       },
     },
     ReportGateway: {
@@ -184,6 +193,7 @@ export const iocManifest = {
         default: true,
         discoveredBy: "naming",
         dependencyKeys: ["openRequestReportScope"],
+        lifetimeSource: "default",
       },
     },
     SmsChannel: {
@@ -197,6 +207,7 @@ export const iocManifest = {
         lifetime: "singleton",
         moduleIndex: 3,
         discoveredBy: "naming",
+        lifetimeSource: "default",
       },
     },
     Widget: {
@@ -212,6 +223,7 @@ export const iocManifest = {
         default: true,
         discoveredBy: "naming",
         configOverridesApplied: ["default"],
+        lifetimeSource: "default",
       },
       secondaryWidget: {
         exportName: "buildSecondaryWidget",
@@ -223,6 +235,7 @@ export const iocManifest = {
         lifetime: "singleton",
         moduleIndex: 2,
         discoveredBy: "naming",
+        lifetimeSource: "default",
       },
     },
     WidgetInspector: {
@@ -239,6 +252,7 @@ export const iocManifest = {
         discoveredBy: "naming",
         dependencyContractNames: ["Widget"],
         dependencyKeys: ["widget", "secondaryWidget"],
+        lifetimeSource: "default",
       },
     },
   },
@@ -289,5 +303,8 @@ export const iocManifest = {
 export const IOC_SCOPE_PROVIDED_KEYS = [] as const;
 
 /* Optional manifest data this file is known to carry in full. A composing app reads it to tell
-   "this unit has no dependency keys" apart from "this manifest predates dependency keys". */
-export const IOC_MANIFEST_FEATURES = ["dependencyKeys"] as const;
+   "this unit records none of this" apart from "this manifest predates the field". */
+export const IOC_MANIFEST_FEATURES = [
+  "dependencyKeys",
+  "lifetimeSource",
+] as const;

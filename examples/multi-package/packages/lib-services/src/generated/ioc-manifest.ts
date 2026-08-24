@@ -38,6 +38,7 @@ export const iocManifest = {
         default: true,
         discoveredBy: "naming",
         dependencyKeys: ["config"],
+        lifetimeSource: "default",
       },
     },
     RequestTracingLogger: {
@@ -52,6 +53,7 @@ export const iocManifest = {
         moduleIndex: 1,
         default: true,
         discoveredBy: "naming",
+        lifetimeSource: "lifetime-marker",
       },
     },
     ServiceLogger: {
@@ -67,6 +69,7 @@ export const iocManifest = {
         default: true,
         discoveredBy: "naming",
         dependencyKeys: ["logger"],
+        lifetimeSource: "default",
       },
     },
     UploadService: {
@@ -82,6 +85,7 @@ export const iocManifest = {
         default: true,
         discoveredBy: "naming",
         dependencyKeys: ["storage", "logger"],
+        lifetimeSource: "default",
       },
     },
     ViewerReadService: {
@@ -97,6 +101,7 @@ export const iocManifest = {
         default: true,
         discoveredBy: "naming",
         dependencyKeys: ["viewerId"],
+        lifetimeSource: "lifetime-marker",
       },
     },
   },
@@ -105,5 +110,8 @@ export const iocManifest = {
 export const IOC_SCOPE_PROVIDED_KEYS = ["viewerId"] as const;
 
 /* Optional manifest data this file is known to carry in full. A composing app reads it to tell
-   "this unit has no dependency keys" apart from "this manifest predates dependency keys". */
-export const IOC_MANIFEST_FEATURES = ["dependencyKeys"] as const;
+   "this unit records none of this" apart from "this manifest predates the field". */
+export const IOC_MANIFEST_FEATURES = [
+  "dependencyKeys",
+  "lifetimeSource",
+] as const;
