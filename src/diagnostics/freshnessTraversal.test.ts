@@ -37,7 +37,18 @@ import {
   currentInputsForPackageRoot,
   MAX_FINGERPRINTED_SOURCE_FILES,
 } from "./currentInputsHash.js";
-import { hashGenerationInputs } from "./generationState.js";
+import {
+  hashGenerationInputs,
+  writeGenerationRecord,
+  generationStatePathFor,
+} from "./generationState.js";
+import {
+  recordedPhaseTimings,
+  resetPhaseTimings,
+} from "./phaseTiming.js";
+import { assessFreshness } from "../composition/freshnessPass.js";
+import type { ParsedManifestSlice } from "../composition/types.js";
+import type { IocConfig } from "../config/iocConfig.js";
 import { getDiscoveryTargetFiles } from "../generator/iocProgramContext.js";
 import { resolveScanDirEntries } from "../generator/manifestPaths.js";
 
@@ -309,5 +320,118 @@ describe("freshness declines rather than guessing", () => {
       elapsedMs < WALL_TIME_CEILING_MS,
       `took ${elapsedMs.toFixed(0)}ms — the ceiling exists so a freshness heuristic never dominates the run it advises on`,
     );
+  });
+});
+
+/**
+ * The profile, per package.
+ *
+ * A field run held `composition: freshness` for 150 seconds with four packages, two megabytes of
+ * source, every record a success and no ceiling breach — every candidate the phase name could
+ * account for, ruled out, and no way to look inside. One number over a loop is a black box: it
+ * cannot say which package, and it cannot say which of resolve / transpile / glob / read.
+ *
+ * These pins are about the SHAPE, not the durations. What has to hold is that every package emits
+ * every step, that the two steps whose cost depends on volume carry that volume in the label, and
+ * that a caller with no profile to fold them into gets none of it.
+ */
+describe("freshness reports a sub-phase per package", () => {
+  const sliceFor = (name: string, generatedDir: string): ParsedManifestSlice => ({
+    packageLabel: name,
+    sourceId: name,
+    manifestPath: path.join(generatedDir, "ioc-manifest.ts"),
+    typesPath: path.join(generatedDir, "ioc-registry.types.ts"),
+    manifestSchemaVersion: 1,
+    declaredFeatures: undefined,
+    contracts: {},
+    groupRoots: {},
+    cradleKeys: new Set<string>(),
+    cradleTypes: {},
+    externals: {},
+  });
+
+  it("names the package and the step, with counts on the steps that read", async () => {
+    const ws = buildWorkspace("src/factories");
+    const generatedDir = path.join(ws.realRootOf("lib-a"), "src", "generated");
+    await writeGenerationRecord(generationStatePathFor(generatedDir), {
+      outcome: "success",
+      at: "2026-08-23T11:00:00.000Z",
+      inputsHash: "sha256:whatever",
+    });
+
+    resetPhaseTimings();
+    await assessFreshness({
+      projectRoot: ws.realRootOf("app"),
+      configPath: path.join(ws.realRootOf("app"), "src", "ioc.config.ts"),
+      config: {} as IocConfig,
+      slices: [sliceFor("@scope/lib-a", generatedDir)],
+      includeLocal: false,
+    });
+
+    const phases = recordedPhaseTimings().map((timing) => timing.phase);
+
+    // Order is the order the work happens in, so the reader walks the list top to bottom and stops
+    // at the big number rather than correlating names.
+    assert.deepEqual(
+      phases.map((phase) => phase.replace(/ — .*$/, "")),
+      [
+        "freshness @scope/lib-a: record read",
+        "freshness @scope/lib-a: package resolve",
+        "freshness @scope/lib-a: config resolve",
+        "freshness @scope/lib-a: config load",
+        "freshness @scope/lib-a: scan-set glob",
+        "freshness @scope/lib-a: content hash",
+        "freshness @scope/lib-a: compare",
+      ],
+    );
+
+    // The two volume-dependent steps carry their volume: a four-second glob over 41,234 files and a
+    // four-second glob over 12 are opposite bugs, and the duration alone cannot tell them apart.
+    assert.equal(
+      phases.find((phase) => phase.includes("scan-set glob")),
+      `freshness @scope/lib-a: scan-set glob — ${FACTORY_COUNT} files`,
+    );
+    assert.match(
+      phases.find((phase) => phase.includes("content hash")) ?? "",
+      new RegExp(`^freshness @scope/lib-a: content hash — ${FACTORY_COUNT} files, [\\d.]+ KB$`),
+    );
+  });
+
+  it("emits a full set for every package, so the loop is a profile and not a total", async () => {
+    const ws = buildWorkspace("src/factories");
+    const slices = ["lib-a", "lib-b"].map((name) =>
+      sliceFor(
+        `@scope/${name}`,
+        path.join(ws.realRootOf(name), "src", "generated"),
+      ),
+    );
+
+    resetPhaseTimings();
+    await assessFreshness({
+      projectRoot: ws.realRootOf("app"),
+      configPath: path.join(ws.realRootOf("app"), "src", "ioc.config.ts"),
+      config: {} as IocConfig,
+      slices,
+      includeLocal: false,
+    });
+
+    const phases = recordedPhaseTimings().map((timing) => timing.phase);
+    for (const name of ["@scope/lib-a", "@scope/lib-b"]) {
+      assert.ok(
+        phases.some((phase) => phase.startsWith(`freshness ${name}: config load`)),
+        `no config-load timing for ${name}: ${phases.join(" | ")}`,
+      );
+    }
+  });
+
+  it("stays silent for a caller that has no profile to fold it into", async () => {
+    const ws = buildWorkspace("src/factories");
+
+    resetPhaseTimings();
+    // `ioc inspect` and `ioc explain` pass no label. A verb that prints no phases at all must not
+    // start printing them because it happens to check freshness.
+    await currentInputsForPackageRoot(ws.linkedRootOf("lib-a"));
+
+    assert.deepEqual(recordedPhaseTimings(), []);
   });
 });

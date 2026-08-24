@@ -29,12 +29,18 @@ import {
   tryLoadIocConfig,
 } from "../config/loadIocConfig.js";
 import type { IocConfig } from "../config/iocConfig.js";
-import { hashGenerationInputs } from "./generationState.js";
+import { fingerprintGenerationInputs } from "./generationState.js";
 import { getDiscoveryTargetFiles } from "../generator/iocProgramContext.js";
 import {
   mergeManifestOptionsWithIocConfig,
   resolveManifestOptions,
 } from "../generator/manifestOptions.js";
+import {
+  timePhase,
+  timePhaseAsync,
+  timePhaseAsyncDetailed,
+  timePhaseDetailed,
+} from "./phaseTiming.js";
 import type { FreshnessUnknownReason } from "./freshness.js";
 
 /**
@@ -74,6 +80,66 @@ const UNREADABLE: CurrentInputsFingerprint = {
 };
 
 /**
+ * How one package's fingerprint labels its sub-phases, or `undefined` for no timing at all.
+ *
+ * The freshness pass is a LOOP, and a single `composition: freshness` number over four packages is
+ * a black box: a field run sat at 150 seconds with the hashing provably innocent — four packages,
+ * two megabytes, no ceiling breach — and nothing in the output could say which package, let alone
+ * which of resolve / transpile / glob / read was eating it. Every step below is timed under this
+ * label so one run names the eater.
+ *
+ * Optional because the single-package callers (`ioc inspect`, `ioc explain`) have no phase display
+ * to fold these into, and an unasked-for `[ioc:phase]` line on a verb that prints none would be
+ * noise rather than a profile.
+ */
+export type FreshnessPhaseLabel = string | undefined;
+
+/** `freshness @scope/media-core: config load`. */
+const subPhase = (label: string, step: string): string =>
+  `freshness ${label}: ${step}`;
+
+/** Runs `body`, timed under the package's label when there is one, plain when there is not. */
+const timedStep = async <T>(
+  label: FreshnessPhaseLabel,
+  step: string,
+  body: () => Promise<T>,
+): Promise<T> =>
+  label === undefined ? body() : timePhaseAsync(subPhase(label, step), body);
+
+const timedStepSync = <T>(
+  label: FreshnessPhaseLabel,
+  step: string,
+  body: () => T,
+): T => (label === undefined ? body() : timePhase(subPhase(label, step), body));
+
+/** {@link timedStep} for a step whose label carries what it turned out to be working over. */
+const timedStepDetailed = async <T>(
+  label: FreshnessPhaseLabel,
+  step: string,
+  detail: (result: T) => string,
+  body: () => Promise<T>,
+): Promise<T> =>
+  label === undefined
+    ? body()
+    : timePhaseAsyncDetailed(subPhase(label, step), detail, body);
+
+const timedStepDetailedSync = <T>(
+  label: FreshnessPhaseLabel,
+  step: string,
+  detail: (result: T) => string,
+  body: () => T,
+): T =>
+  label === undefined
+    ? body()
+    : timePhaseDetailed(subPhase(label, step), detail, body);
+
+/** `2411520` → `"2.30 MB"` — the volume a reader compares against the clock beside it. */
+const formatBytes = (bytes: number): string =>
+  bytes >= 1024 * 1024
+    ? `${(bytes / (1024 * 1024)).toFixed(2)} MB`
+    : `${(bytes / 1024).toFixed(1)} KB`;
+
+/**
  * The fingerprint of a package's sources as they are RIGHT NOW, given its already-resolved config.
  *
  * For the running package, where the caller loaded the config to do its real work and passing it
@@ -85,18 +151,29 @@ export const currentInputsForConfig = async (
   projectRoot: string,
   configPath: string,
   config: IocConfig,
+  label?: FreshnessPhaseLabel,
 ): Promise<CurrentInputsFingerprint> => {
   let files: string[];
   try {
-    const options = mergeManifestOptionsWithIocConfig(
-      resolveManifestOptions({ paths: { projectRoot } }),
-      config,
-    );
-    files = await getDiscoveryTargetFiles(
-      options.paths.scanDirs,
-      options.includePatterns,
-      options.excludePatterns,
-      options.paths.generatedDir,
+    // The count goes in the phase label rather than beside it: a glob that took four seconds says
+    // nothing on its own, and "4.10s over 41234 files" and "4.10s over 12 files" are two entirely
+    // different bugs.
+    files = await timedStepDetailed(
+      label,
+      "scan-set glob",
+      (resolved) => `${resolved.length} files`,
+      async () => {
+        const options = mergeManifestOptionsWithIocConfig(
+          resolveManifestOptions({ paths: { projectRoot } }),
+          config,
+        );
+        return getDiscoveryTargetFiles(
+          options.paths.scanDirs,
+          options.includePatterns,
+          options.excludePatterns,
+          options.paths.generatedDir,
+        );
+      },
     );
   } catch {
     return UNREADABLE;
@@ -112,7 +189,13 @@ export const currentInputsForConfig = async (
   }
 
   try {
-    return { hash: hashGenerationInputs(projectRoot, configPath, files) };
+    const fingerprint = timedStepDetailedSync(
+      label,
+      "content hash",
+      (taken) => `${taken.fileCount} files, ${formatBytes(taken.bytes)}`,
+      () => fingerprintGenerationInputs(projectRoot, configPath, files),
+    );
+    return { hash: fingerprint.hash };
   } catch {
     return UNREADABLE;
   }
@@ -128,10 +211,15 @@ export const currentInputsForConfig = async (
  */
 export const currentInputsForConfigPath = async (
   configPath: string,
+  label?: FreshnessPhaseLabel,
 ): Promise<CurrentInputsFingerprint> => {
   let config: IocConfig | undefined;
   try {
-    config = await tryLoadIocConfig(configPath);
+    // Timed on its own because it is the step nobody expects to cost anything: it transpiles the
+    // package's `ioc.config.ts` through `tsx`, which the field measured at ~1.5s apiece.
+    config = await timedStep(label, "config load", () =>
+      tryLoadIocConfig(configPath),
+    );
   } catch {
     return UNREADABLE;
   }
@@ -142,6 +230,7 @@ export const currentInputsForConfigPath = async (
     resolveProjectRootFromIocConfigPath(configPath),
     configPath,
     config,
+    label,
   );
 };
 
@@ -158,9 +247,12 @@ export const currentInputsForConfigPath = async (
  */
 export const currentInputsForPackageRoot = async (
   packageRoot: string,
+  label?: FreshnessPhaseLabel,
 ): Promise<CurrentInputsFingerprint> => {
-  const configPath = resolvePackageLocalIocConfigPath(packageRoot);
+  const configPath = timedStepSync(label, "config resolve", () =>
+    resolvePackageLocalIocConfigPath(packageRoot),
+  );
   return configPath === undefined
     ? UNREADABLE
-    : currentInputsForConfigPath(configPath);
+    : currentInputsForConfigPath(configPath, label);
 };

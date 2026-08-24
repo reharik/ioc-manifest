@@ -146,6 +146,16 @@ Real work on this branch that the section below does not record.
   still returns `unknown`; nothing falls back to walking a package root. Above a 5,000-file ceiling
   the check declines and says the count, because a heuristic must never dominate the run it advises
   on.
+
+- **`composition: freshness` breaks down per package.** It is a loop, and one number over it is a
+  black box: a field run held there for 150 seconds with the hashing provably innocent — four
+  packages, ~2 MB of source, every record a success, no ceiling breach — and nothing in the output
+  could say which package, let alone which step. Under `IOC_DEBUG=1` every package now emits
+  `record read`, `package resolve`, `config resolve`, `config load`, `scan-set glob`,
+  `content hash` and `compare`, with the file count on the glob and the file count and byte total
+  on the hash, because a slow glob over 12 files and a slow glob over 41,234 are opposite problems.
+  Instrumentation only — no behaviour changed. Sub-phases use the same two registers as every other
+  phase, so one past five seconds names itself without the flag.
 - **`ioc validate --json` emits `{ issues, staleness?, freshness? }`.** The envelope break is
   `issues` (see above); `freshness` is an added array, one entry per package judged, carrying
   `name`, `outcome`, `generatedAt` and `currentMatches` — the last **omitted rather than `false`**

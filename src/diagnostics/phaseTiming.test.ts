@@ -18,6 +18,8 @@ import { afterEach, describe, it } from "node:test";
 import {
   formatDuration,
   formatPhaseLine,
+  timePhaseAsyncDetailed,
+  timePhaseDetailed,
   formatSlowPhaseLine,
   recordedPhaseTimings,
   resetPhaseTimings,
@@ -188,6 +190,48 @@ describe("formatPhaseLine / formatSlowPhaseLine", () => {
         formatSlowPhaseLine("analysis: demand/supply", 164_800),
         "[ioc] analysis: demand/supply took 164.80s." +
           " Re-run with IOC_DEBUG=1 for a per-phase breakdown.",
+      );
+    });
+  });
+});
+
+describe("timePhaseDetailed", () => {
+  describe("When the label needs something only the result knows", () => {
+    it("should append the detail the result supplies", () => {
+      resetPhaseTimings();
+
+      const files = timePhaseDetailed(
+        "freshness @pkg/a: scan-set glob",
+        (resolved: string[]) => `${resolved.length} files`,
+        () => ["a.ts", "b.ts"],
+      );
+
+      assert.deepEqual(files, ["a.ts", "b.ts"]);
+      assert.equal(
+        recordedPhaseTimings()[0]!.phase,
+        "freshness @pkg/a: scan-set glob — 2 files",
+      );
+    });
+
+    /**
+     * The duration is the whole reason the phase is timed, and a phase that fails after two minutes
+     * is the case a reader most needs the number for. There is no result to describe, so the bare
+     * name is recorded rather than the phase being dropped.
+     */
+    it("should still record, under the bare name, when the body throws", async () => {
+      resetPhaseTimings();
+
+      await assert.rejects(
+        timePhaseAsyncDetailed(
+          "freshness @pkg/a: config load",
+          () => "unreachable",
+          () => Promise.reject(new Error("boom")),
+        ),
+      );
+
+      assert.deepEqual(
+        recordedPhaseTimings().map((timing) => timing.phase),
+        ["freshness @pkg/a: config load"],
       );
     });
   });

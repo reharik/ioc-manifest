@@ -137,7 +137,30 @@ export const hashGenerationInputs = (
   projectRoot: string,
   configPath: string | undefined,
   discoveryFiles: readonly string[],
-): string => {
+): string =>
+  fingerprintGenerationInputs(projectRoot, configPath, discoveryFiles).hash;
+
+/**
+ * The fingerprint plus what it cost to take — how many files were read and how many bytes of them.
+ *
+ * The size is a by-product, not a second pass: the loop below already holds every file's content,
+ * so the count is free where measuring it afterwards would mean a `stat` per file. It exists
+ * because "freshness took 150 seconds" is not a diagnosis, and the first question it raises is
+ * whether the reading was the cost — which only the volume actually read can answer.
+ */
+export type GenerationInputsFingerprint = {
+  readonly hash: string;
+  readonly fileCount: number;
+  /** Bytes of scanned-file content read. The config source is not counted. */
+  readonly bytes: number;
+};
+
+/** {@link hashGenerationInputs}, keeping the volume it read. */
+export const fingerprintGenerationInputs = (
+  projectRoot: string,
+  configPath: string | undefined,
+  discoveryFiles: readonly string[],
+): GenerationInputsFingerprint => {
   const hash = createHash("sha256");
 
   if (configPath !== undefined) {
@@ -158,10 +181,13 @@ export const hashGenerationInputs = (
     }))
     .sort((a, b) => a.rel.localeCompare(b.rel));
 
+  let bytes = 0;
   for (const { rel, file } of entries) {
     let contentHash: string;
     try {
-      contentHash = sha256Of(fs.readFileSync(file, "utf8"));
+      const content = fs.readFileSync(file, "utf8");
+      bytes += Buffer.byteLength(content, "utf8");
+      contentHash = sha256Of(content);
     } catch {
       // A file the scan listed but that cannot be read now is a change worth mismatching on.
       contentHash = "<unreadable>";
@@ -172,7 +198,11 @@ export const hashGenerationInputs = (
     hash.update(" ");
   }
 
-  return `sha256:${hash.digest("hex")}`;
+  return {
+    hash: `sha256:${hash.digest("hex")}`,
+    fileCount: entries.length,
+    bytes,
+  };
 };
 
 /**

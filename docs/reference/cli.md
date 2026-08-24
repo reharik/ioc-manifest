@@ -90,6 +90,26 @@ The hot phase is the one with the big number; no external profiler is needed to 
 `composition:` rows are app mode only — a library package has no composed set to check against, so
 none of them runs.
 
+`composition: freshness` is a loop over packages, so it breaks itself down further — one row per
+package per step, above the total:
+
+```
+[ioc:phase] freshness @example/lib-storage: record read 0ms
+[ioc:phase] freshness @example/lib-storage: package resolve 0ms
+[ioc:phase] freshness @example/lib-storage: config resolve 0ms
+[ioc:phase] freshness @example/lib-storage: config load 267ms
+[ioc:phase] freshness @example/lib-storage: scan-set glob — 7 files 3ms
+[ioc:phase] freshness @example/lib-storage: content hash — 7 files, 3.4 KB 1ms
+[ioc:phase] freshness @example/lib-storage: compare 0ms
+```
+
+Read top to bottom: `package resolve` finds the installed directory, `config resolve` finds the
+`ioc.config.ts` inside it, `config load` transpiles it through `tsx` (usually the expensive one),
+`scan-set glob` resolves the files, `content hash` reads them, `compare` matches the fingerprint
+against the record. The two steps whose cost depends on volume carry that volume in the label — a
+four-second glob over 41,234 files and a four-second glob over 12 are opposite problems, and the
+duration alone cannot tell them apart.
+
 Without the flag, a phase that takes longer than **five seconds** prints one line naming itself, and
 nothing else prints at all:
 

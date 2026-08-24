@@ -115,3 +115,48 @@ export const timePhaseAsync = async <T>(
     report(phase, performance.now() - started);
   }
 };
+
+/**
+ * {@link timePhase} where the label gains a detail only the RESULT can supply — a file count, a
+ * byte total.
+ *
+ * A duration alone is rarely a diagnosis. "scan-set glob 4.10s" says a glob was slow; "scan-set
+ * glob — 41234 files 4.10s" says which bug it is, and the two readings point at opposite fixes. The
+ * detail therefore belongs in the label rather than on a line of its own, where it would be one
+ * more thing for a reader to correlate.
+ *
+ * A body that THROWS still reports, under the bare phase name: there is no result to describe, and
+ * the duration of a phase that failed after two minutes is exactly the number the reader came for.
+ */
+export const timePhaseDetailed = <T>(
+  phase: string,
+  detail: (result: T) => string,
+  body: () => T,
+): T => {
+  const started = performance.now();
+  let label = phase;
+  try {
+    const result = body();
+    label = `${phase} — ${detail(result)}`;
+    return result;
+  } finally {
+    report(label, performance.now() - started);
+  }
+};
+
+/** {@link timePhaseDetailed} for a phase that awaits. */
+export const timePhaseAsyncDetailed = async <T>(
+  phase: string,
+  detail: (result: T) => string,
+  body: () => Promise<T>,
+): Promise<T> => {
+  const started = performance.now();
+  let label = phase;
+  try {
+    const result = await body();
+    label = `${phase} — ${detail(result)}`;
+    return result;
+  } finally {
+    report(label, performance.now() - started);
+  }
+};

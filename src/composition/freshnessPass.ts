@@ -36,6 +36,7 @@ import {
   currentInputsForConfig,
   currentInputsForPackageRoot,
 } from "../diagnostics/currentInputsHash.js";
+import { timePhase } from "../diagnostics/phaseTiming.js";
 import { findPackageDirectory } from "../generator/resolveComposedPackageExport.js";
 import { isLocalSlice, sliceLabel } from "./sliceLabel.js";
 import type { ParsedManifestSlice, ValidationIssue } from "./types.js";
@@ -65,6 +66,20 @@ export type AssessFreshnessInput = {
 const generatedDirOf = (slice: ParsedManifestSlice): string =>
   path.dirname(slice.manifestPath);
 
+/**
+ * How this package's sub-phases are labelled — the machine token, never the rendered prose.
+ *
+ * `composition: freshness` is a loop, and one number over it is a black box: a field run held there
+ * for 150 seconds with the hashing provably innocent, and nothing in the output could say which of
+ * four packages, let alone which of resolve / load / glob / hash. Each step below is timed under
+ * this label, so `IOC_DEBUG=1` profiles the loop instead of summarising it.
+ *
+ * The `sourceId` and not `sliceLabel`, because a profile line is read against the config that
+ * produced it: `@packages/media-core` is greppable in an `ioc.config.ts`, and `media-core (this
+ * app)` is not.
+ */
+const phaseLabelOf = (slice: ParsedManifestSlice): string => slice.sourceId;
+
 export const assessFreshness = async (
   input: AssessFreshnessInput,
 ): Promise<readonly PackageFreshness[]> => {
@@ -76,29 +91,41 @@ export const assessFreshness = async (
       continue;
     }
 
-    const record = readGenerationRecord(generatedDirOf(slice));
+    const label = phaseLabelOf(slice);
+    const record = timePhase(`freshness ${label}: record read`, () =>
+      readGenerationRecord(generatedDirOf(slice)),
+    );
     const current = local
       ? await currentInputsForConfig(
           input.projectRoot,
           input.configPath,
           input.config,
+          label,
         )
       : await currentInputsForPackageRoot(
-          resolvePackageRootQuietly(input.projectRoot, slice.sourceId),
+          // Timed apart from the config lookup inside: finding the installed directory walks up to
+          // eight `node_modules` levels, and finding the config inside it is two `existsSync`
+          // calls. In a workspace where either can surprise, one number over both would hide which.
+          timePhase(`freshness ${label}: package resolve`, () =>
+            resolvePackageRootQuietly(input.projectRoot, slice.sourceId),
+          ),
+          label,
         );
 
     out.push(
-      judgeFreshness({
-        // The rendered label, because this is what the banner prints. The `sourceId` beside it is
-        // what the taint matches on.
-        name: local ? slice.packageLabel : sliceLabel(slice),
-        sourceId: slice.sourceId,
-        record,
-        currentHash: current.hash,
-        ...(current.unknown !== undefined
-          ? { currentUnknown: current.unknown }
-          : {}),
-      }),
+      timePhase(`freshness ${label}: compare`, () =>
+        judgeFreshness({
+          // The rendered label, because this is what the banner prints. The `sourceId` beside it is
+          // what the taint matches on.
+          name: local ? slice.packageLabel : sliceLabel(slice),
+          sourceId: slice.sourceId,
+          record,
+          currentHash: current.hash,
+          ...(current.unknown !== undefined
+            ? { currentUnknown: current.unknown }
+            : {}),
+        }),
+      ),
     );
   }
 
