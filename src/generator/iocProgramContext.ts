@@ -12,7 +12,39 @@ import {
 
 const normalizePath = (p: string): string => path.normalize(p);
 
-/** Absolute paths sorted lexically; globs run per scan root with merged manifest options. */
+/**
+ * Exclusions the walk applies whatever the config's `discovery.excludes` says.
+ *
+ * The default excludes already list a `node_modules` pattern and a `dist` one, but a glob `ignore`
+ * is ANCHORED at its scan root: it removes `<root>/node_modules` and nothing nested, and it removes
+ * matched *results* rather than pruning the *walk*. Neither limitation shows up when the scan root
+ * is a tight `src/factories`; both do the moment a scan root contains a package boundary, which is
+ * where the freshness pass spent 223 seconds in the field.
+ *
+ * A directory under `node_modules` is another package by definition, and cross-package scanning was
+ * removed in v2 (see {@link import("./manifestPaths.js").resolveScanDirEntries}, which refuses a
+ * scan dir outside the package root). So these are not a policy the config may override — they are
+ * the same boundary stated in the one place a walk can be pruned by it.
+ */
+export const STRUCTURAL_EXCLUDE_PATTERNS: readonly string[] = [
+  "**/node_modules/**",
+  "**/.git/**",
+];
+
+/**
+ * Absolute paths sorted lexically; globs run per scan root with merged manifest options.
+ *
+ * The single enumeration: generation discovers from this, and `diagnostics/currentInputsHash.ts`
+ * fingerprints exactly what it returns. Two functions that could disagree about "the scanned files"
+ * would make a freshness verdict a claim about a different file set than the one generation read.
+ *
+ * Symlinks are NOT followed. A symlinked directory inside a scan root either leaves the package —
+ * which `resolveScanDirEntries` already forbids by path — or aliases a directory inside it, which
+ * would discover the same factory twice under two module paths. In an npm/pnpm/nx workspace it does
+ * something worse than either: `packages/a/node_modules/@scope/b` links to `packages/b`, whose own
+ * `node_modules` links back, and the walk has no end at all. Not following symlinks is what makes
+ * the traversal terminating rather than merely usually-finite.
+ */
 export const getDiscoveryTargetFiles = async (
   scanDirs: ResolvedScanDir[],
   includePatterns: string[],
@@ -25,8 +57,10 @@ export const getDiscoveryTargetFiles = async (
       fg(includePatterns, {
         cwd: absPath,
         absolute: true,
+        followSymbolicLinks: false,
         ignore: [
           ...excludePatterns,
+          ...STRUCTURAL_EXCLUDE_PATTERNS,
           generatedExcludePatternForScanRoot(absPath, genAbs),
         ],
       }),

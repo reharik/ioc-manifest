@@ -34,6 +34,8 @@ export default defineIocConfig({
 | `factoryPrefix` | Export name prefix for factory discovery. (Class units trigger on `implements`, not on a prefix.)                                            | `"build"`                            |
 | `generatedDir`  | Output directory for generated files.                                                                                                        | `"generated"`                        |
 
+Whatever `excludes` says, the scan never descends into a `node_modules` or `.git` directory and never follows a symbolic link. A directory under `node_modules` is another package by definition, and cross-package scanning was removed in v2 — `scanDirs` already refuses a path outside the package root, and a symlink out of it is the same boundary crossed by other means. Setting `excludes` replaces the defaults, so these are stated where a walk can actually be pruned by them rather than left to a pattern list a config may drop.
+
 ### `registrations`
 
 Override defaults, lifetimes, and keys per contract and implementation.

@@ -210,6 +210,55 @@ describe("the quiet advisory", () => {
         "note: @packages/media-core's sources could not be re-read — whether its artifacts predate them is unknown.",
       );
     });
+
+    /**
+     * The safety valve's line, and the count is the whole of its usefulness.
+     *
+     * A developer told only that their package "could not be re-read" would go looking for a
+     * permissions problem. The number is what says the actual thing: `scanDirs` is pointed at
+     * something far wider than one package's sources, which is why the check declined rather than
+     * spending minutes fingerprinting the wrong files.
+     */
+    it("should name the count when the scan set breached the ceiling", () => {
+      const advisory = formatFreshnessAdvisory(
+        judgeFreshness({
+          name: LIB,
+          sourceId: LIB,
+          record: { outcome: "success", at: "2026-08-23T11:00:00.000Z", inputsHash: "sha256:aaa" },
+          currentHash: undefined,
+          currentUnknown: {
+            reason: "source-set-too-large",
+            detail: "41234 files resolved, over the 5000-file ceiling",
+          },
+        }),
+      );
+
+      assert.equal(
+        advisory,
+        "note: @packages/media-core's scan set is too large to fingerprint (41234 files resolved, over the 5000-file ceiling) — whether its artifacts predate its sources is unknown. Narrow that package's discovery.scanDirs.",
+      );
+      assert.doesNotMatch(advisory, /⚠/);
+      assert.equal(advisory.includes("\n"), false);
+    });
+
+    /**
+     * A hash that exists is the answer. A producer may report a reason alongside one — the ceiling
+     * check runs before hashing, so it never does today — and a verdict that let the reason win
+     * would turn a perfectly good comparison into an advisory.
+     */
+    it("should ignore a reported reason when the sources did fingerprint", () => {
+      const freshness = judgeFreshness({
+        name: LIB,
+        sourceId: LIB,
+        record: { outcome: "success", at: "2026-08-23T11:00:00.000Z", inputsHash: "sha256:aaa" },
+        currentHash: "sha256:aaa",
+        currentUnknown: { reason: "source-set-too-large", detail: "ignored" },
+      });
+
+      assert.equal(freshness.currentMatches, true);
+      assert.equal(freshness.unknownReason, undefined);
+      assert.equal(freshness.unknownDetail, undefined);
+    });
   });
 });
 

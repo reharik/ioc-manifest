@@ -70,7 +70,7 @@ import {
   readGenerationState,
   type IocGenerationStateMarker,
 } from "../diagnostics/generationState.js";
-import { currentInputsHashForConfigPath } from "../diagnostics/currentInputsHash.js";
+import { currentInputsForConfigPath } from "../diagnostics/currentInputsHash.js";
 import {
   formatFreshnessAdvisory,
   formatFreshnessBanner,
@@ -182,11 +182,13 @@ const bannerIfNotFresh = async (
   if (json) {
     return;
   }
+  const current = await currentInputsForConfigPath(cfgPath);
   const freshness = judgeFreshness({
     name: LOCAL_PACKAGE_IDENTIFIER,
     sourceId: LOCAL_PACKAGE_IDENTIFIER,
     record: readGenerationRecord(generatedDir),
-    currentHash: await currentInputsHashForConfigPath(cfgPath),
+    currentHash: current.hash,
+    ...(current.unknown !== undefined ? { currentUnknown: current.unknown } : {}),
   });
   if (isStale(freshness)) {
     console.error(formatFreshnessBanner(freshness));

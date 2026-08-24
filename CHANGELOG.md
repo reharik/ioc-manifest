@@ -134,6 +134,18 @@ Real work on this branch that the section below does not record.
   The fingerprint stops at the scan set: a type imported from outside `discovery.scanDirs` can
   change generation's output without moving it, which is why the wording is always "may predate" and
   never a claim of proof. Cost is a fraction of a millisecond for a small package, and about 19 ms over a 480-file, 2.4 MB tree.
+
+- **The freshness check reads the discovery scan set, and only that.** A field run spent 223 of its
+  226 seconds here. Two defects met in a workspace layout: a glob `ignore` is anchored at its scan
+  root and filters *results*, so `node_modules` was never pruned from the *walk* below the top
+  level; and `fast-glob` follows symbolic links, so once inside a `node_modules` whose entries link
+  back to sibling packages the walk had no end. The scan now refuses `node_modules` and `.git`
+  structurally — whatever `excludes` says, since setting it replaces the defaults — and does not
+  follow symbolic links, in the one enumeration generation and freshness share, so the two cannot
+  disagree about what "the scanned files" means. A composed package whose config cannot be resolved
+  still returns `unknown`; nothing falls back to walking a package root. Above a 5,000-file ceiling
+  the check declines and says the count, because a heuristic must never dominate the run it advises
+  on.
 - **`ioc validate --json` emits `{ issues, staleness?, freshness? }`.** The envelope break is
   `issues` (see above); `freshness` is an added array, one entry per package judged, carrying
   `name`, `outcome`, `generatedAt` and `currentMatches` — the last **omitted rather than `false`**

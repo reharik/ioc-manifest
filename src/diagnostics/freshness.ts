@@ -53,11 +53,16 @@ import {
 /**
  * Why a package could not be judged, when it could not be.
  *
- * Two different absences, kept apart because the remedies differ: `no-record` is fixed by
+ * Three different absences, kept apart because the remedies differ: `no-record` is fixed by
  * generating that package once, `unreadable-sources` usually means a published package that ships
- * its manifest but not the sources it was generated from, where there is nothing to fix.
+ * its manifest but not the sources it was generated from, where there is nothing to fix, and
+ * `source-set-too-large` is the safety valve declining to spend minutes fingerprinting a scan set
+ * that cannot plausibly be one package's sources — fixed by narrowing that package's `scanDirs`.
  */
-export type FreshnessUnknownReason = "no-record" | "unreadable-sources";
+export type FreshnessUnknownReason =
+  | "no-record"
+  | "unreadable-sources"
+  | "source-set-too-large";
 
 export type PackageFreshness = {
   /** How the package is named in prose: its npm name, or `this app` for the running package. */
@@ -78,6 +83,14 @@ export type PackageFreshness = {
   readonly currentMatches?: boolean;
   /** Set only alongside an absent {@link currentMatches}. */
   readonly unknownReason?: FreshnessUnknownReason;
+  /**
+   * The specifics the reason alone cannot carry — the file count behind `source-set-too-large`.
+   *
+   * A reason names a category; a developer told their package was skipped needs the number that
+   * made the tool skip it, because that number is the evidence their `scanDirs` is pointed at
+   * something wider than they think.
+   */
+  readonly unknownDetail?: string;
 };
 
 /** The package's artifacts may predate its sources — the loud case. */
@@ -112,8 +125,17 @@ export const judgeFreshness = (input: {
   readonly sourceId: string;
   readonly record: IocGenerationRecord | undefined;
   readonly currentHash: string | undefined;
+  /**
+   * Why there is no `currentHash`, when the producer knows something more specific than "could not
+   * be read". Consulted only in that case: a hash that exists is the answer, whatever else came
+   * with it.
+   */
+  readonly currentUnknown?: {
+    readonly reason: FreshnessUnknownReason;
+    readonly detail?: string;
+  };
 }): PackageFreshness => {
-  const { name, sourceId, record, currentHash } = input;
+  const { name, sourceId, record, currentHash, currentUnknown } = input;
   if (record === undefined) {
     return { name, sourceId, unknownReason: "no-record" };
   }
@@ -128,7 +150,13 @@ export const judgeFreshness = (input: {
   // A record written before its inputs were resolved carries no hash, and a package whose sources
   // cannot be re-read gives nothing to compare it against. Both are unknown, not stale.
   if (record.inputsHash === undefined || currentHash === undefined) {
-    return { ...base, unknownReason: "unreadable-sources" };
+    const reason = currentUnknown?.reason ?? "unreadable-sources";
+    const detail = currentUnknown?.detail;
+    return {
+      ...base,
+      unknownReason: reason,
+      ...(detail !== undefined ? { unknownDetail: detail } : {}),
+    };
   }
 
   return { ...base, currentMatches: record.inputsHash === currentHash };
@@ -183,9 +211,15 @@ export const formatFreshnessAdvisory = (
   freshness: PackageFreshness,
 ): string => {
   const subject = subjectOf(freshness);
-  return freshness.unknownReason === "no-record"
-    ? `note: no generation record for ${subject} — whether its artifacts predate its sources is unknown until it next generates.`
-    : `note: ${subject}'s sources could not be re-read — whether its artifacts predate them is unknown.`;
+  if (freshness.unknownReason === "no-record") {
+    return `note: no generation record for ${subject} — whether its artifacts predate its sources is unknown until it next generates.`;
+  }
+  if (freshness.unknownReason === "source-set-too-large") {
+    const detail =
+      freshness.unknownDetail === undefined ? "" : ` (${freshness.unknownDetail})`;
+    return `note: ${subject}'s scan set is too large to fingerprint${detail} — whether its artifacts predate its sources is unknown. Narrow that package's discovery.scanDirs.`;
+  }
+  return `note: ${subject}'s sources could not be re-read — whether its artifacts predate them is unknown.`;
 };
 
 /**

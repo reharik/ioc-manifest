@@ -170,6 +170,14 @@ note: no generation record for @packages/media-core — whether its artifacts pr
 
 Absence of evidence is not evidence, and it is reported at that volume deliberately.
 
+**A package whose scan set is implausibly large** gets the same quiet treatment. The check fingerprints exactly the files discovery would read for that package — its `discovery.scanDirs` with its own includes and excludes, never a package root and never a bare recursive walk — and declines above a 5,000-file ceiling rather than spending minutes on a heuristic:
+
+```
+note: @packages/media-core's scan set is too large to fingerprint (41234 files resolved, over the 5000-file ceiling) — whether its artifacts predate its sources is unknown. Narrow that package's discovery.scanDirs.
+```
+
+The count is the actionable part: a scan set that size is a `scanDirs` pointed at something wider than one package, so the fingerprint would have been over the wrong files anyway.
+
 ### Breaking in 4.0: `ioc validate --json` emits an object
 
 Through 3.x the document was the bare issue array. It is now an object:

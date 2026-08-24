@@ -33,8 +33,8 @@ import {
   type PackageFreshness,
 } from "../diagnostics/freshness.js";
 import {
-  currentInputsHashForConfig,
-  currentInputsHashForPackageRoot,
+  currentInputsForConfig,
+  currentInputsForPackageRoot,
 } from "../diagnostics/currentInputsHash.js";
 import { findPackageDirectory } from "../generator/resolveComposedPackageExport.js";
 import { isLocalSlice, sliceLabel } from "./sliceLabel.js";
@@ -77,13 +77,13 @@ export const assessFreshness = async (
     }
 
     const record = readGenerationRecord(generatedDirOf(slice));
-    const currentHash = local
-      ? await currentInputsHashForConfig(
+    const current = local
+      ? await currentInputsForConfig(
           input.projectRoot,
           input.configPath,
           input.config,
         )
-      : await currentInputsHashForPackageRoot(
+      : await currentInputsForPackageRoot(
           resolvePackageRootQuietly(input.projectRoot, slice.sourceId),
         );
 
@@ -94,7 +94,10 @@ export const assessFreshness = async (
         name: local ? slice.packageLabel : sliceLabel(slice),
         sourceId: slice.sourceId,
         record,
-        currentHash,
+        currentHash: current.hash,
+        ...(current.unknown !== undefined
+          ? { currentUnknown: current.unknown }
+          : {}),
       }),
     );
   }
