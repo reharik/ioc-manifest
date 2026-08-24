@@ -47,7 +47,7 @@ const THE_MAP = `ioc — convention-based DI for TypeScript: discovery, generati
 
   ioc <command> --help        that command's flags, in detail
   --json                      (inspect, explain, validate) the same report, machine-readable
-  IOC_DEBUG=1                 env var: stack traces alongside messages
+  IOC_DEBUG=1                 env var: per-phase timings, and stack traces alongside messages
 
   docs: https://reharik.github.io/ioc-manifest/reference/cli#the-command-map`;
 

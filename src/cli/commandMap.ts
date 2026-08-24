@@ -377,7 +377,7 @@ const MAP_FOOTER_ROWS: readonly IocCliRow[] = [
   },
   {
     spelling: "IOC_DEBUG=1",
-    summary: "env var: stack traces alongside messages",
+    summary: "env var: per-phase timings, and stack traces alongside messages",
   },
 ];
 

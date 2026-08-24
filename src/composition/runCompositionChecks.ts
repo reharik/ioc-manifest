@@ -24,6 +24,7 @@ import { checkSameKeyConflicts } from "./checks/sameKeyConflict.js";
 import { checkSchemaVersions } from "./checks/schemaVersion.js";
 import { checkSlotOccupancy } from "./checks/slotOccupancy.js";
 import { createCompositionProgram } from "./compositionProgram.js";
+import { timePhase } from "../diagnostics/phaseTiming.js";
 import type { CompositionContext, ValidationIssue } from "./types.js";
 
 /**
@@ -39,26 +40,34 @@ export const runCompositionChecks = (
 ): ValidationIssue[] => {
   // Built once, here, and shared: the integrity gate must adjudicate the SAME program the
   // comparisons then read types out of, or it is vouching for something else.
-  const programCtx = createCompositionProgram({
-    projectRoot: ctx.projectRoot,
-    sourceFiles: ctx.sourceFiles,
-    typesPaths: ctx.slices.map((slice) => slice.typesPath),
-    ...(ctx.pendingArtifacts !== undefined
-      ? { overlay: ctx.pendingArtifacts }
-      : {}),
-    ...(ctx.tsconfig !== undefined ? { tsconfig: ctx.tsconfig } : {}),
-  });
-  const integrity = checkRegistryIntegrity(ctx, programCtx);
+  const programCtx = timePhase("composition: TypeScript program", () =>
+    createCompositionProgram({
+      projectRoot: ctx.projectRoot,
+      sourceFiles: ctx.sourceFiles,
+      typesPaths: ctx.slices.map((slice) => slice.typesPath),
+      ...(ctx.pendingArtifacts !== undefined
+        ? { overlay: ctx.pendingArtifacts }
+        : {}),
+      ...(ctx.tsconfig !== undefined ? { tsconfig: ctx.tsconfig } : {}),
+    }),
+  );
+  const integrity = timePhase("composition: registry integrity", () =>
+    checkRegistryIntegrity(ctx, programCtx),
+  );
 
   return [
     ...checkSchemaVersions(ctx),
     ...integrity.issues,
-    ...checkExternalsSatisfaction(ctx, {
-      typeCheckerCtx: programCtx,
-      brokenTypesPaths: integrity.brokenTypesPaths,
-    }),
+    ...timePhase("composition: externals satisfaction", () =>
+      checkExternalsSatisfaction(ctx, {
+        typeCheckerCtx: programCtx,
+        brokenTypesPaths: integrity.brokenTypesPaths,
+      }),
+    ),
     ...checkSameKeyConflicts(ctx),
-    ...checkGroupConsistency(ctx),
+    ...timePhase("composition: group consistency", () =>
+      checkGroupConsistency(ctx),
+    ),
     ...checkDefaultAmbiguity(ctx),
     ...checkSlotOccupancy(ctx),
     ...checkAppConfigSanity(config, ctx),

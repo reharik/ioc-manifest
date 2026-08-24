@@ -62,6 +62,7 @@ import {
 } from "../diagnostics/freshness.js";
 import type { ValidationIssue } from "../composition/types.js";
 import type { IocTsconfigContext } from "./iocProgramContext.js";
+import { timePhaseAsync } from "../diagnostics/phaseTiming.js";
 
 export type CompositionSuiteAtCodegenInput = {
   readonly projectRoot: string;
@@ -122,14 +123,16 @@ const formatFailure = (
 export const runCompositionSuiteAtCodegen = async (
   input: CompositionSuiteAtCodegenInput,
 ): Promise<readonly ValidationIssue[]> => {
-  const loaded = await loadCompositionContext({
-    projectRoot: input.projectRoot,
-    configPath: input.configPath,
-    config: input.config,
-    pendingLocalArtifacts: input.pendingLocalArtifacts,
-    sourceFiles: input.sourceFiles,
-    tsconfig: input.tsconfig,
-  });
+  const loaded = await timePhaseAsync("composition: context load", () =>
+    loadCompositionContext({
+      projectRoot: input.projectRoot,
+      configPath: input.configPath,
+      config: input.config,
+      pendingLocalArtifacts: input.pendingLocalArtifacts,
+      sourceFiles: input.sourceFiles,
+      tsconfig: input.tsconfig,
+    }),
+  );
 
   if (!loaded.ok) {
     throw new Error(
@@ -140,13 +143,15 @@ export const runCompositionSuiteAtCodegen = async (
     );
   }
 
-  const freshness = await assessFreshness({
-    projectRoot: input.projectRoot,
-    configPath: input.configPath,
-    config: input.config,
-    slices: loaded.context.slices,
-    includeLocal: false,
-  });
+  const freshness = await timePhaseAsync("composition: freshness", () =>
+    assessFreshness({
+      projectRoot: input.projectRoot,
+      configPath: input.configPath,
+      config: input.config,
+      slices: loaded.context.slices,
+      includeLocal: false,
+    }),
+  );
   for (const entry of freshness.filter(isStale)) {
     console.error(formatFreshnessBanner(entry));
   }

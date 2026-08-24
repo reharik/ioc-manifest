@@ -17,7 +17,7 @@ ioc — convention-based DI for TypeScript: discovery, generation, verification
 
   ioc <command> --help        that command's flags, in detail
   --json                      (inspect, explain, validate) the same report, machine-readable
-  IOC_DEBUG=1                 env var: stack traces alongside messages
+  IOC_DEBUG=1                 env var: per-phase timings, and stack traces alongside messages
 ```
 
 `discovery` is **not** a verb — it is `inspect --discovery`. Nor are `check`, `gen`, `info` or `describe` verbs; type one anyway and the CLI names the spelling that works:
@@ -43,7 +43,62 @@ Typos are answered the same way (`vaildate` → `validate`), and an unknown flag
 | `--config PATH`, `-c PATH` | Explicit path to `ioc.config.ts`                                                        |
 | `--project PATH`           | Project directory for config resolution (default: cwd)                                  |
 
-Set `IOC_DEBUG=1` for full stack traces on errors.
+Set `IOC_DEBUG=1` for full stack traces on errors, and for per-phase timings (below).
+
+### Why is generation slow? — phase timings
+
+Generation does most of its work in silence: the emission lines and the summary all print at the
+end, so a run that spends its time in analysis looks the same as a run that has hung. Two lines fix
+that, both on **stderr** so that nothing here can move the stdout the generated-output and snapshot
+comparisons assert.
+
+With `IOC_DEBUG=1`, every phase reports as it completes:
+
+```
+$ IOC_DEBUG=1 ioc generate
+[ioc:phase] config: load ioc.config 626ms
+[ioc:phase] discovery: file glob 10ms
+[ioc:phase] discovery: tsconfig 10ms
+[ioc:phase] discovery: TypeScript program 355ms
+[ioc:phase] check: generated references 3ms
+[ioc:phase] discovery: factories 142ms
+[ioc:phase] composed: contract names 13ms
+[ioc:phase] groups: membership 0ms
+[ioc:phase] check: group lifetimes 0ms
+[ioc:phase] lifetime markers 3ms
+[ioc:phase] plan: registrations 2ms
+[ioc:phase] plan: groups 0ms
+[ioc:phase] composed: group names 9ms
+[ioc:phase] composed: opener keys 10ms
+[ioc:phase] composed: manifest supply 13ms
+[ioc:phase] analysis: demand/supply 113ms
+[ioc:phase] check: lifetime inversions 0ms
+[ioc:phase] scope roots: verification 3ms
+[ioc:phase] scope roots: openers 2ms
+[ioc:phase] scope roots: externals exclusion 2ms
+[ioc:phase] emit: artifact sources 5ms
+[ioc:phase] composition: context load 21ms
+[ioc:phase] composition: freshness 510ms
+[ioc:phase] composition: TypeScript program 290ms
+[ioc:phase] composition: registry integrity 15ms
+[ioc:phase] composition: externals satisfaction 12ms
+[ioc:phase] composition: group consistency 0ms
+[ioc:phase] composition suite 854ms
+```
+
+The hot phase is the one with the big number; no external profiler is needed to find it. The
+`composition:` rows are app mode only — a library package has no composed set to check against, so
+none of them runs.
+
+Without the flag, a phase that takes longer than **five seconds** prints one line naming itself, and
+nothing else prints at all:
+
+```
+[ioc] analysis: demand/supply took 164.80s. Re-run with IOC_DEBUG=1 for a per-phase breakdown.
+```
+
+So a slow run identifies itself in ordinary use, and a fast run stays silent. Set
+`IOC_SLOW_PHASE_MS` to change that threshold.
 
 ### Two worlds: the staleness banner
 
