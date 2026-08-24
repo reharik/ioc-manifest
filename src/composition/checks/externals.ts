@@ -7,6 +7,12 @@ import {
 import { createCompositionProgram } from "../compositionProgram.js";
 import { isLocalSlice, sliceLabel } from "../sliceLabel.js";
 import {
+  buildComposedGroupKeyIndex,
+  type ComposedGroupKeyHit,
+} from "../composedGroupIndex.js";
+import { docsUrlForCode } from "../../diagnostics/errorDocs.js";
+import { groupKeyToTypeAliasName } from "../../generator/naming.js";
+import {
   findFirstMismatchedPropertyAcrossSuppliers,
   formatCheckerType,
   formatSupplierTypes,
@@ -26,6 +32,21 @@ export const TYPE_NOT_RESOLVED_CAVEAT =
 
 const formatSupplierLabel = (slice: SupplierSlice): string =>
   isLocalSlice(slice) ? `${sliceLabel(slice)} cradle` : sliceLabel(slice);
+
+/**
+ * The packages an externals verdict rests on: the one that demanded the key, and every one that
+ * supplies it.
+ *
+ * Both halves, because either can be the stale one. A demand that looks unsatisfied may come from a
+ * demander whose artifacts predate the source that stopped demanding it; a type mismatch may come
+ * from a supplier whose artifacts predate the source that fixed the type.
+ */
+const attributionFor = (
+  slice: ParsedManifestSlice,
+  suppliers: readonly SupplierSlice[] = [],
+): readonly string[] => [
+  ...new Set([slice.sourceId, ...suppliers.map((s) => s.sourceId)]),
+];
 
 const findSuppliersForKey = (
   slices: readonly ParsedManifestSlice[],
@@ -207,7 +228,65 @@ const buildUnverifiedKeyWarning = (
     `supplied by: ${suppliers.map((s) => formatSupplierLabel(s)).join(", ")}`,
     caveat,
   ],
+  packages: attributionFor(slice, suppliers),
 });
+
+/**
+ * The grouped mirror of codegen's `grouped-member-demand`, for a key validate meets on disk.
+ *
+ * Reached only when NOTHING supplies the key, which for a grouped member is not drift but the rule
+ * working: a grouped contract claims no individual cradle key, so nothing can supply one. The
+ * generic externals remedy — "register a factory for it in this app" — would be a shadow of another
+ * package's family member, and is exactly what the group law forbids. So the issue keeps its
+ * category (a `grep '^\[externals\]'` still finds it) and its severity, and swaps its guidance.
+ *
+ * The regenerate hint is the third register and belongs here rather than in the docs: an app whose
+ * artifacts still demand a member key is an app whose artifacts predate the grouping, and the fix
+ * that actually reports the demand at its source is `ioc generate` in this package.
+ */
+const buildGroupedMemberIssue = (
+  slice: ParsedManifestSlice,
+  externalKey: string,
+  demandedText: string,
+  hit: ComposedGroupKeyHit,
+): ValidationIssue => {
+  const alias = groupKeyToTypeAliasName(hit.groupKey);
+  const groupPhrase = hit.declaredByComposedPackage
+    ? `composed group ${JSON.stringify(hit.groupKey)}`
+    : `group ${JSON.stringify(hit.groupKey)}`;
+
+  const consume =
+    hit.kind === "object" && hit.memberProperty !== undefined
+      ? `Consume it through the group: \`${hit.groupKey}: ${alias}\`, then \`${hit.groupKey}.${hit.memberProperty}\`.`
+      : `Consume it through the group: \`${hit.groupKey}: ${alias}\` — a collection group's members are individually anonymous by declaration, so ${JSON.stringify(externalKey)} names nothing.`;
+
+  return {
+    category: "externals",
+    severity: "error",
+    summary: `Unsatisfied: ${JSON.stringify(externalKey)} is a member of ${groupPhrase} and has no individual cradle key.`,
+    details: [
+      `key:       ${JSON.stringify(externalKey)}  demanded by ${sliceLabel(slice)}`,
+      `demanded:  ${demandedText}`,
+      `group:     ${JSON.stringify(hit.groupKey)}  (kind: ${hit.kind}, declared by ${hit.declaredBy})`,
+      ...(hit.contractName !== undefined
+        ? [`contract:  ${JSON.stringify(hit.contractName)}`]
+        : [`base:      ${JSON.stringify(hit.baseType)}`]),
+      "A grouped contract is consumed through its group and through nothing else — it has no contract key and its implementations claim no individual cradle keys.",
+      consume,
+      `This app's generated artifacts predate the grouping: re-run \`ioc generate\` here, which reports the demand at its source.`,
+    ],
+    suggestedFix: `Demand the group (\`${hit.groupKey}: ${alias}\`) instead of the member key, then re-run \`ioc generate\` in this app.`,
+    // The group's DECLARER as well as the demander: this finding says "that package groups this
+    // contract", which is a claim read straight out of the declarer's manifest — so if the
+    // declarer's artifacts predate its sources, this is exactly the finding that turns out wrong.
+    packages: [...new Set([slice.sourceId, hit.declaredBySourceId])],
+    // The rule broken here is the group law, not the externals contract, so the pointer goes there
+    // — the same code the codegen-side door links to.
+    ...(docsUrlForCode("grouped-member-demand") !== undefined
+      ? { docUrl: docsUrlForCode("grouped-member-demand")! }
+      : {}),
+  };
+};
 
 export type CheckExternalsOptions = {
   /**
@@ -246,6 +325,9 @@ export const checkExternalsSatisfaction = (
   const issues: ValidationIssue[] = [];
   const skipped: SkippedComparison[] = [];
   const checkerUnavailable = typeCheckerCtx === undefined;
+  // Built once: every unsatisfied key is asked the same question, and the roots do not change
+  // during the run.
+  const groupKeyIndex = buildComposedGroupKeyIndex(compositionCtx);
 
   for (const slice of compositionCtx.slices) {
     for (const [externalKey, { typeText: demandedText }] of Object.entries(
@@ -271,11 +353,22 @@ export const checkExternalsSatisfaction = (
           externalKey,
           demandedBy: sliceLabel(slice),
           taintedByPaths,
+          packages: attributionFor(slice, suppliers),
         });
         continue;
       }
 
       if (suppliers.length === 0) {
+        // Grouped ⇒ group-only, seen from the artifact side. Checked before the generic remedy is
+        // composed, because for a grouped member that remedy names a forbidden fix.
+        const groupHit = groupKeyIndex.get(externalKey);
+        if (groupHit !== undefined) {
+          issues.push(
+            buildGroupedMemberIssue(slice, externalKey, demandedText, groupHit),
+          );
+          continue;
+        }
+
         issues.push({
           category: "externals",
           severity: "error",
@@ -287,6 +380,9 @@ export const checkExternalsSatisfaction = (
           ],
           suggestedFix:
             `Register a factory for ${demandedText} under key ${JSON.stringify(externalKey)} in this app, or compose another manifest that supplies it.`,
+          // No suppliers to name — the whole finding is that there are none. The demander alone is
+          // the package whose artifacts this rests on, and the one the field kept finding stale.
+          packages: attributionFor(slice),
         });
         continue;
       }
@@ -334,6 +430,7 @@ export const checkExternalsSatisfaction = (
         ],
         suggestedFix:
           `Align the IocGeneratedCradle type for key ${JSON.stringify(externalKey)} with the demanded ${demandedText}, or adjust the external declaration in ${sliceLabel(slice)}.`,
+        packages: attributionFor(slice, suppliers),
       });
     }
   }

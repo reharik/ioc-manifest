@@ -201,12 +201,13 @@ describe("Named<T> demands", () => {
           ),
         (error: Error) => {
           assert.match(error.message, /\[named-contract-mismatch\]/);
-          // Both contracts named: the one demanded and the one the implementation declares.
-          assert.match(error.message, /demands `Named<AuditSink>`/);
-          assert.match(
-            error.message,
-            /implementation "strictAuthMiddleware" \(in this package\) declares contract "AuthMiddleware"/,
-          );
+          // Both contracts named: the one demanded and the one the implementation declares —
+          // each on its own labeled line.
+          assert.match(error.message, /Demands `Named<AuditSink>`/);
+          assert.match(error.message, /^ +key: +"strictAuthMiddleware"$/m);
+          assert.match(error.message, /^ +demanded: +"AuditSink"$/m);
+          assert.match(error.message, /^ +declares: +"AuthMiddleware"$/m);
+          assert.match(error.message, /^ +registered: +in this package$/m);
           return true;
         },
       );
@@ -221,7 +222,7 @@ describe("Named<T> demands", () => {
             ["contracts.ts", "auth.ts", "bad-named-on-contract-key.ts"],
             electOptional,
           ),
-        /\[named-on-contract-key\][\s\S]*is the contract key of "AuthMiddleware"/,
+        /\[named-on-contract-key\][\s\S]*^ +contract: +"AuthMiddleware"$/m,
       );
     });
 
@@ -232,7 +233,7 @@ describe("Named<T> demands", () => {
             ["contracts.ts", "auth.ts", "bad-named-on-group-key.ts"],
             withGroup,
           ),
-        /\[named-on-group-key\][\s\S]*is a group root key/,
+        /\[named-on-group-key\][\s\S]*^ +group: +"/m,
       );
     });
 
@@ -245,7 +246,7 @@ describe("Named<T> demands", () => {
             "scope-root-reexports.ts",
             "bad-named-on-opener-key.ts",
           ]),
-        /\[named-on-opener-key\][\s\S]*is a scope-root opener key/,
+        /\[named-on-opener-key\][\s\S]*^ +opener: +"/m,
       );
     });
 

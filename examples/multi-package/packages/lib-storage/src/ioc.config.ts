@@ -26,5 +26,15 @@ export default defineIocConfig({
       kind: "collection",
       baseType: "LoggingService",
     },
+    /**
+     * The other kind. A record group keys its members by contract, which is what lets `addComment`
+     * reach `toggleReaction` — the only road to a sibling, since neither member has a cradle key.
+     * Members resolve when they are READ, so holding the group inside a member is free and
+     * `buildAddComment` reads its sibling at call time.
+     */
+    writeServices: {
+      kind: "object",
+      baseType: "WriteService",
+    },
   },
 });

@@ -5,6 +5,202 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - Unreleased
+
+The first release written for someone **adopting** the tool rather than upgrading it, so this entry
+says what the tool *is*, and the per-version history below says how it got here. Most of this work
+was recorded during development under the `[3.0.0] - Unreleased` heading immediately following;
+3.0.0 never shipped, and everything under it ships here. Those entries are kept as written.
+
+**What it is.** A build step over your TypeScript sources. `ioc generate` discovers registration
+units, resolves what supplies what, verifies that the resulting picture holds together, and emits a
+manifest and a typed cradle that hand straight to Awilix. Nothing scans at runtime; the output is
+plain TypeScript with static imports, and it is the registration code you would otherwise have
+written by hand.
+
+**Everything is declared at the site and read syntactically.** Whether something registers (a
+`build` prefix, an `implements` clause), what contract it supplies (the name written at the contract
+site, resolved to the declaration it names), and which of its dependencies is which — all of it is
+answerable by reading one declaration. The checker is used to locate declarations and never to
+normalize types, so identity is the pair (declaration file, declared name) and what you wrote is
+what is registered.
+
+**The demand model is the centrepiece.** A deps property is exactly one of five things, and which
+one is written down:
+
+| written | means |
+| --- | --- |
+| contract key — `mediaStorage: MediaStorage` | the contract's **elected default**, whichever implementation that is |
+| `Named<T>` implementation key — `s3MediaStorage: Named<MediaStorage>` | **that specific implementation**; does not follow the election |
+| group root key — `mediaStorages: MediaStorages` | the whole group |
+| scope-root opener key — `openRequestScope: OpenRequestScope` | the opener for that boundary |
+| anything else | an **external**: the composing app supplies it |
+
+The first two both name the contract type. Before `Named<T>` they were spelled identically and
+differed only by facts invisible at the site; a bare implementation-key demand is now a hard error
+naming both legal spellings, and `Named<…>` on a contract key, group key, opener key or unregistered
+name is a hard error too. `Named<T>` **is** `T` — transparent to TypeScript, recognized
+syntactically off the written annotation, and never seen by emission.
+
+**Grouped means group-only, and lifetime belongs to the base.** A contract in a group is consumed
+through the group and through nothing else: no contract key (categorically, not merely unelected),
+and no individual cradle keys for its implementations. A record group exposes each member as a
+property keyed by the member's contract-derived name; a collection group's members are anonymous by
+declaration. Membership is nominal — declared heritage to the base, never structural similarity —
+and read from composed manifests as well as from local config, so a demand in an app for a library's
+grouped member lands on the group law rather than on spelling advice. Because the family is handed
+out interchangeably, the family ranks one lifetime and the base is the only place it may be
+declared; a member's own marker or per-implementation `lifetime` override is refused, not outranked.
+
+**Contract slots.** Every ungrouped contract that elects a default claims one cradle key beyond its
+implementations' own — the camel-cased contract name, or a configured `$contract.accessKey` — typed
+as the *contract*, because it means "whichever implementation is elected". It lives in the emitted
+cradle, in the supply set the demand/supply pass and `ioc validate` read, and in the scope-root
+subtree walk, all four deriving it through one function. No election, no key. A registration may
+occupy the slot key only if it is the electee.
+
+**Scope roots.** A factory returning `ScopeRoot<TContract, TLateBound>` declares a request- or
+work-scoped boundary: the late-bound set is *declared* and never inferred, and the second argument
+may be omitted to declare the empty set. Generation emits one typed **opener** per variant into the
+cradle — a plain function taking exactly those values, which opens a child scope, registers them on
+it, resolves the unit there, and returns it with an async disposer. No `AwilixContainer` appears in
+its signature, so it is legal in a deps position. Verification is per variant and walks the real
+resolution subtree, across composed packages where their manifests carry dependency keys and saying
+so out loud where they do not: missing keys fail, type mismatches fail, declared-and-unused warns.
+A scope-rooted contract is opener-only.
+
+**`generate` is the enforcing verb.** Everything gen can know, gen enforces; `validate` exists to
+run the same checks without regenerating. In app mode, generation runs the full composition suite —
+externals with real type comparison, the registry-integrity gate, cross-manifest key and group
+consistency, composed default ambiguity, schema versions, app-config sanity — after every emission
+input is resolved and before anything is written. Both verbs build one program: your
+`tsconfig.json`, your full source set, resolution as your own `tsc` performs it. A failing run
+aggregates every offender into one report and writes **nothing**, so nothing broken lands on disk —
+and because that leaves the previous run's artifacts in place, a failed attempt drops a marker that
+makes `validate`, `inspect` and `explain` banner their output as stale until the next green run.
+
+**Diagnostics are a surface, not a byproduct.** Every diagnostic renders in three registers: what
+happened in a sentence, the mechanism (key, contract, file, line, types), and `→ docs: <url>`
+resolving to the page that articulates the rule. The URLs come from one code→page map, and a test
+resolves every one against the docs sources and against the rendered HTML, so a heading rename fails
+the suite instead of 404ing a reader; a code with no page prints no arrow. Findings aggregate —
+one run lists every offender, never first-failure-wins. `ioc inspect --discovery` reports every
+scanned file and every export's outcome, with a footer counting the files config excluded; group
+rejections collapse to a count unless they are informative. `ioc explain <key>` answers one key on
+one screen: what it resolves to, its lifetime with a provenance chain, what it depends on, who
+depends on it, and which scope-root subtrees reach it.
+
+### If you ran a 4.0 rc
+
+You are the only reader this section has, and the list is short.
+
+- **Regenerate every package**, in lockstep. Manifests gained `dependencyKeys` and the
+  `IOC_MANIFEST_FEATURES` export during the rcs; a composed manifest predating them is not wrong,
+  but a scope-root subtree that runs through it is reported as a blind spot rather than walked.
+- **`ioc validate --json` now emits an object, not a bare array.** `JSON.parse(out)` →
+  `JSON.parse(out).issues`. See
+  [Breaking in 4.0](https://reharik.github.io/ioc-manifest/reference/cli#breaking-in-4-0-ioc-validate-json-emits-an-object)
+  for the envelope and the `staleness` field beside it. Per-issue field names are untouched.
+- **`ScopeRoot<TContract>` is legal.** The one-argument form declares the empty late-bound set and
+  emits a zero-parameter opener; it was a hard error in the earliest rc.
+- **A previously-green app-mode `gen` may go red**, because generation now runs the composition
+  suite it used to skip. Those are the errors `ioc validate` would have reported all along.
+
+### Also in 4.0
+
+Real work on this branch that the section below does not record.
+
+- **Every generation leaves a record.** `.ioc-generation-state.json`, beside (never inside) the
+  generated directory, records the outcome, a timestamp, the offender count on a failure, and a
+  fingerprint of the inputs the run read. A FAILED record drives the staleness banner exactly as
+  before: `validate`, `inspect` and `explain` banner to **stderr** while it is there, and carry the
+  record as a `staleness` field under `--json`. A successful generation now **replaces** it with a
+  success record in the same step that publishes the artifacts, rather than removing it — which is
+  what makes the next entry possible. Recommended `.gitignore` entry:
+  `**/.ioc-generation-state.json`.
+- **Artifacts that may predate their sources are called out.** The staleness banner covers a
+  generation that failed. The commoner mistake is the one where nothing fails: edit a library,
+  forget the regenerate/rebuild ordering, and the app's `validate` reports the old world with total
+  confidence. The record's fingerprint is a sha256 over the config source and
+  `relativePath:sha256(content)` for every scanned file, so any byte changed, added or removed
+  mismatches. `ioc validate` checks this package and every composed package; app-mode `ioc generate`
+  checks the composed packages it reads; `inspect` and `explain` check this package. A mismatch is
+  reported twice — a **banner** at the top of the output, and an inline `note:` on every finding
+  that resolves through the package, which is the one the reader who skims the banner still meets.
+  It never changes an exit code: `validate`'s job is checking committed artifacts, and the signal is
+  a heuristic. When both a dependency and this app are behind, the banner names the dependency
+  order. A package with **no** record gets one quiet advisory line, not the banner.
+
+  The fingerprint stops at the scan set: a type imported from outside `discovery.scanDirs` can
+  change generation's output without moving it, which is why the wording is always "may predate" and
+  never a claim of proof. Cost is a fraction of a millisecond for a small package, and about 19 ms over a 480-file, 2.4 MB tree.
+- **`ioc validate --json` emits `{ issues, staleness?, freshness? }`.** The envelope break is
+  `issues` (see above); `freshness` is an added array, one entry per package judged, carrying
+  `name`, `outcome`, `generatedAt` and `currentMatches` — the last **omitted rather than `false`**
+  when nothing could be concluded. Tainted issues gain `possiblyStale: true`. No field was renamed.
+- **The discovery footer counts config-excluded files.** An excluded file never enters the scan set,
+  so nothing emits a skip row for it — the count is the only heartbeat it has, and `--verbose` and
+  `--json` name the files. This is what makes an over-broad `excludes` glob findable at all.
+- **Emission verifies its own import closure.** Named contracts are emitted **by reference**, and
+  every printed name must be bound by an emitted import that its module actually exports. When it
+  is not, generation hard-errors naming the contract, the position and the offending names, and
+  writes nothing, rather than shipping a registry file the consumer cannot compile.
+- **`registry-integrity` gates the type comparisons.** If a generated registry-types file does not
+  compile, the suite reports that and **skips** the comparisons that read types out of it, instead
+  of adjudicating them against error types (which pass unconditionally). Skipped comparisons are
+  listed as skipped and never read as coverage.
+- **Manifests carry per-unit `dependencyKeys`**, plus a sibling `IOC_MANIFEST_FEATURES` export so
+  absence is not ambiguous. A composing app's scope-root subtree walk crosses package boundaries on
+  that field, and states the blind spot where a composed manifest predates it.
+- **Composed group membership is read at demand time.** All four grouped-member spellings now reach
+  a library's members through the composed manifests, instead of prescribing a forbidden `Named<T>`
+  and drifting out as an external.
+- **Opener types are sanctioned in deps positions**, by alias and by cradle index, with opener keys
+  joining the known-key and supply universes.
+- **An lbv key is excluded from `IocExternals` only when every demand of it sits inside a declaring
+  variant's subtree.** A declaration speaks for its own subtree and nothing else, so a unit
+  reachable from outside one keeps the key in externals — and the discovery report lists those units
+  under **Shared scope-root units** rather than leaving the entry to be deduced.
+- **`ioc inspect` in manifest mode parses the generated manifest** through the shared loader parser
+  instead of importing it, and marks the contract default only where the election was contested.
+- **Group members resolve lazily, so a member can reach its sibling.** Group values were built
+  eagerly — resolving a group constructed every member of it — which meant the one road grouped ⇒
+  group-only leaves open was impassable: a member naming the group named something that was
+  mid-construction *because of that member*, and Awilix reported a cycle for a graph that has none.
+  Member slots are now memoized getters over the cradle captured at group construction. Resolving a
+  group resolves no members; a member resolves the first time it is read and stays that instance for
+  that group value; per-scope identity is unchanged, and a member read out of a group is the same
+  object the cradle hands out for its key. Both kinds get it: a collection group's value stays a real
+  array (`Array.isArray`, `length`, indexing, spread) whose elements are accessor properties, so a
+  member that holds its own family and iterates it at call time works the same way. What still fails
+  is a genuine cycle — a unit reading a member property while it is itself under construction — and
+  it now surfaces with the `(group)` hop in the chain plus a note naming the read and the fix
+  (read members at call time, not at the top level of a factory body). Enumerating a group value
+  (`{ ...group }`, `Object.values`, spreading a collection) reads every slot and resolves every
+  member; hold the group and read what you need. `console.log`/`util.inspect` is unaffected — an
+  unread slot renders as `[Getter]`.
+- **The runtime is strict by default.** `registerIocFromManifest` now enables Awilix **strict mode**
+  on the container it is given, with an explicit opt-out:
+  `registerIocFromManifest(container, manifests, overrides, { strict: false })`. Strict refuses to
+  register a singleton on a scoped container, resolves singletons against the root container, and
+  throws at first resolve when a longer-lived unit is handed a shorter-lived dependency instead of
+  quietly freezing the first instance. The leak error arrives normalized as an
+  `IocResolutionError` with the usual manifest-aware chain. **Behaviour change worth reading:** our
+  static model ranks `singleton → transient` and `scoped → transient` as WARNINGS, and strict errors
+  on them — so an edge generation only warned about now fails at first resolve. The warning text
+  says so where it fires, and states the other half: `allowLifetimeInversion` suppresses the static
+  report ONLY and is not a runtime exemption; if you suppress, fix the edge or turn strict off and
+  own the tolerance. Two boundaries: strict backstops DIRECT edges only — a `consumer → group →
+  member` edge is invisible to it, because lazy member slots resolve outside any enclosing
+  `resolve()`, so the generation-time check through the group hop is the sole guard there; and
+  contract default slots, group roots and scope-root openers are marked leak-safe, since their
+  transient registration is a detail of how they are wired rather than a claim about how long their
+  values live. Requires **awilix 13** (`^13.0.5`), up from `^12.0.5`.
+- **Docs.** [How it fits together](https://reharik.github.io/ioc-manifest/guide/how-it-fits-together)
+  is the front door; [Adopting on an existing
+  codebase](https://reharik.github.io/ioc-manifest/guide/adopting) is the field guide for pointing
+  this at code that already exists.
+
 ## [3.0.0] - Unreleased
 
 The breaking release. Two design commitments that generated most of the library's post-1.0 bug

@@ -1,5 +1,5 @@
 import { LOCAL_PACKAGE_IDENTIFIER } from "../../config/packageIdentifier.js";
-import { sliceLabel } from "../sliceLabel.js";
+import { sliceLabel, sourceIdsForSliceIndexes } from "../sliceLabel.js";
 import type { CompositionContext, ValidationIssue } from "../types.js";
 
 type KeyOwner = {
@@ -106,6 +106,10 @@ export const checkSameKeyConflicts = (
           `- ${o.packageLabel}: contract ${o.contractName}, implementation ${o.implementationName}`,
       ),
       suggestedFix: `Declare registrations.${a.contractName}.${a.implementationName}.source or registrations.${b.contractName}.${b.implementationName}.source in your app's ioc.config.ts as "local" or a package from composedManifests.`,
+      packages: sourceIdsForSliceIndexes(
+        ctx.slices,
+        owners.map((o) => o.sliceIndex),
+      ),
     });
   }
 

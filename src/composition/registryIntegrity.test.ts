@@ -374,7 +374,7 @@ describe("validate registry integrity", () => {
       const json = formatValidationReportJson(
         buildValidationReport(runCompositionChecks(appConfig, ctx)),
       );
-      const parsed = JSON.parse(json) as ValidationIssue[];
+      const parsed = (JSON.parse(json) as { issues: ValidationIssue[] }).issues;
       assert.ok(Array.isArray(parsed));
 
       const integrity = parsed.find(

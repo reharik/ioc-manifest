@@ -16,6 +16,14 @@ export type IocResolutionFrame = {
   modulePath?: string;
 };
 
+/**
+ * `implementationName` a group-hop frame carries, so rendering can tell it from a unit frame.
+ *
+ * A group root has no implementation — it is the hop from a group value into one of its members —
+ * and the chain reads better saying so than printing the bare cradle key.
+ */
+export const IOC_GROUP_FRAME_IMPLEMENTATION_NAME = "(group)";
+
 const stack: IocResolutionFrame[] = [];
 
 export const pushIocResolutionFrame = (frame: IocResolutionFrame): void => {

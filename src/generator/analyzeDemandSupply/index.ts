@@ -22,6 +22,7 @@ import {
 } from "../emit/index.js";
 import { assertGeneratedReferenceClaimed } from "./assertGeneratedReferenceClaimed.js";
 import { validateNamedDepsType } from "./enforceNamedDepsType.js";
+import { withOffenderCount } from "../../diagnostics/offenderCount.js";
 import {
   buildDemandKeyUniverse,
   checkNamedDemand,
@@ -794,7 +795,10 @@ export const analyzeDemandSupply = (
   // One aggregated error for the whole package, thrown after the walk so a run reports every
   // offending property rather than the first.
   if (namedDemandFindings.length > 0) {
-    throw new Error(formatNamedDemandErrors(namedDemandFindings));
+    throw withOffenderCount(
+      new Error(formatNamedDemandErrors(namedDemandFindings)),
+      namedDemandFindings.length,
+    );
   }
 
   const rawEntries = Array.from(cradleMap.values()).sort((a, b) =>

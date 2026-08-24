@@ -55,12 +55,99 @@ import {
   runValidate,
 } from "../validate/runValidate.js";
 import { formatCaughtErrorForTerminal } from "../diagnostics/colorizeDiagnostic.js";
+import {
+  formatStalenessBanner,
+  readGenerationRecord,
+  readGenerationState,
+  type IocGenerationStateMarker,
+} from "../diagnostics/generationState.js";
+import { currentInputsHashForConfigPath } from "../diagnostics/currentInputsHash.js";
+import {
+  formatFreshnessAdvisory,
+  formatFreshnessBanner,
+  isStale,
+  isUnknown,
+  judgeFreshness,
+} from "../diagnostics/freshness.js";
+import { LOCAL_PACKAGE_IDENTIFIER } from "../config/packageIdentifier.js";
 
 const formatResolvedScanDir = (e: ResolvedScanDir): string => {
   if (e.scope !== undefined) {
     return `${e.absPath} [scope=${e.scope}]`;
   }
   return e.absPath;
+};
+
+/**
+ * Prints the staleness banner ahead of an artifact-derived report, and returns the marker.
+ *
+ * On stderr, deliberately: the report itself goes to stdout and is routinely piped into a file or
+ * another tool. A caveat that vanished into that pipe would be a caveat nobody reads, and one that
+ * rode along inside the payload would corrupt it. stderr is where `logInspectContext` already puts
+ * the same kind of framing.
+ *
+ * `--json` gets the marker as data instead, so nothing is printed here.
+ */
+const bannerIfStale = (
+  generatedDir: string,
+  json: boolean,
+): IocGenerationStateMarker | undefined => {
+  const marker = readGenerationState(generatedDir);
+  if (marker !== undefined && !json) {
+    console.error(formatStalenessBanner(marker));
+    console.error("");
+  }
+  return marker;
+};
+
+/**
+ * Prints the freshness banner for THIS package ahead of a manifest-derived report.
+ *
+ * Banner only, and local only. `inspect` and `explain` describe one package's artifacts; there is
+ * no composed picture here to attribute a per-finding caveat to, and nothing in their reports is a
+ * "finding" in the sense the composition suite means. What a reader needs is the one fact that
+ * changes how to read everything below: the manifest being summarised may predate the sources.
+ *
+ * Manifest mode only. `--discovery` re-reads the source, so its answer is current by construction
+ * and a freshness caveat on it would be about a document it is not showing.
+ *
+ * Nothing is added to `--json`: these documents carry `staleness` because a failed generation is a
+ * fact about the artifacts they are reporting. Freshness here is advisory-only by ruling, and the
+ * verb that publishes it as data is `ioc validate`.
+ */
+const bannerIfNotFresh = async (
+  generatedDir: string,
+  cfgPath: string,
+  json: boolean,
+): Promise<void> => {
+  if (json) {
+    return;
+  }
+  const freshness = judgeFreshness({
+    name: LOCAL_PACKAGE_IDENTIFIER,
+    sourceId: LOCAL_PACKAGE_IDENTIFIER,
+    record: readGenerationRecord(generatedDir),
+    currentHash: await currentInputsHashForConfigPath(cfgPath),
+  });
+  if (isStale(freshness)) {
+    console.error(formatFreshnessBanner(freshness));
+    console.error("");
+  } else if (isUnknown(freshness)) {
+    console.error(formatFreshnessAdvisory(freshness));
+    console.error("");
+  }
+};
+
+/** Adds the `staleness` field to a JSON report document, when there is one. Never renames. */
+const withStalenessField = (
+  json: string,
+  marker: IocGenerationStateMarker | undefined,
+): string => {
+  if (marker === undefined) {
+    return json;
+  }
+  const parsed = JSON.parse(json) as Record<string, unknown>;
+  return JSON.stringify({ ...parsed, staleness: marker }, null, 2);
 };
 
 const logInspectContext = (
@@ -128,21 +215,32 @@ const main = async (): Promise<void> => {
     // Two modes, the same two sources `inspect` uses: the manifest on disk, or a fresh scan. The
     // scan is the only one that can say WHY a lifetime is what it is; the report says so itself
     // rather than leaving a reader to wonder why the chain is missing.
-    const report = cli.discovery
-      ? explainFromDiscovery(
-          cli.key,
-          await runDiscoveryAnalysis({
-            iocConfigPath: cli.iocConfigPath,
-            searchStartDir: searchStart,
-          }),
-        )
-      : explainFromManifest(
-          cli.key,
-          await loadManifestForInspection(cli.iocConfigPath, searchStart),
-        );
+    let staleness: IocGenerationStateMarker | undefined;
+    let report;
+    if (cli.discovery) {
+      const analysis = await runDiscoveryAnalysis({
+        iocConfigPath: cli.iocConfigPath,
+        searchStartDir: searchStart,
+      });
+      // Discovery mode reads SOURCE, so its own answer is never stale — but a reader who reaches
+      // for `--discovery` after a failing generation is reconciling two worlds, and saying that the
+      // artifacts beside it are stale is the whole point of the banner.
+      staleness = bannerIfStale(analysis.generatedDir, cli.json);
+      report = explainFromDiscovery(cli.key, analysis);
+    } else {
+      const manifest = await loadManifestForInspection(
+        cli.iocConfigPath,
+        searchStart,
+      );
+      staleness = bannerIfStale(manifest.generatedDir, cli.json);
+      await bannerIfNotFresh(manifest.generatedDir, manifest.cfgPath, cli.json);
+      report = explainFromManifest(cli.key, manifest);
+    }
 
     console.log(
-      cli.json ? formatExplainReportJson(report) : formatExplainReport(report),
+      cli.json
+        ? withStalenessField(formatExplainReportJson(report), staleness)
+        : formatExplainReport(report),
     );
     // An unknown key is a failed question, not a healthy report — CI and shell scripts need to see
     // that in the exit code.
@@ -161,6 +259,10 @@ const main = async (): Promise<void> => {
       searchStartDir: searchStart,
     });
     logInspectContext(resolved.cfgPath, resolved.options.paths.scanDirs);
+    const staleness = bannerIfStale(
+      resolved.options.paths.generatedDir,
+      cli.json,
+    );
 
     const analysis = await runDiscoveryAnalysis({
       reuseResolution: resolved,
@@ -185,7 +287,7 @@ const main = async (): Promise<void> => {
         : full;
     console.log(
       cli.json
-        ? formatDiscoveryReportJson(report)
+        ? withStalenessField(formatDiscoveryReportJson(report), staleness)
         : formatDiscoveryReport(report, { verbose: cli.verbose }),
     );
     return;
@@ -196,6 +298,8 @@ const main = async (): Promise<void> => {
     searchStart,
   );
   logInspectContext(manifest.cfgPath, manifest.scanDirs);
+  const staleness = bannerIfStale(manifest.generatedDir, cli.json);
+  await bannerIfNotFresh(manifest.generatedDir, manifest.cfgPath, cli.json);
 
   const full = buildInspectionReport(manifest.contracts, {
     groups: manifest.groups,
@@ -207,7 +311,7 @@ const main = async (): Promise<void> => {
       : full;
   console.log(
     cli.json
-      ? formatInspectionReportJson(report)
+      ? withStalenessField(formatInspectionReportJson(report), staleness)
       : formatInspectionReport(report, { verbose: cli.verbose }),
   );
 };

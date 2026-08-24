@@ -54,6 +54,14 @@ const DOC_TARGET_BY_CODE: Readonly<Record<string, string>> = {
   "demand-model":
     "concepts/conventions#demanding-a-dependency-the-five-things-a-deps-property-can-be",
 
+  /**
+   * Contract identity: the annotated type must be a name-importable declaration. One code, one
+   * spelling — the discovery report prints it as the skip reason and the aggregated generation
+   * error prints it as its bracketed code, so both look the rule up here.
+   */
+  contract_annotation_default_export:
+    "guide/adopting#foreign-types-need-local-names",
+
   // ── Lifetimes ─────────────────────────────────────────────────────────────────────────────────
   "lifetime-inversion": "concepts/lifetimes#the-floor-rule",
   lifetime_inversion: "concepts/lifetimes#the-floor-rule",

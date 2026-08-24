@@ -1,6 +1,6 @@
 import { areCanonicalBaseTypeIdsEquivalent } from "../../runtime/groupBaseTypeEquivalence.js";
 import { LOCAL_PACKAGE_IDENTIFIER } from "../../config/packageIdentifier.js";
-import { sliceLabel } from "../sliceLabel.js";
+import { sliceLabel, sourceIdsForSliceIndexes } from "../sliceLabel.js";
 import type { ParsedGroupRoot, CompositionContext, ValidationIssue } from "../types.js";
 
 type GroupContributor = {
@@ -105,6 +105,10 @@ export const checkGroupConsistency = (
           ],
           suggestedFix:
             "Ensure every composed package declares the same groups.<name>.kind in ioc.config.ts.",
+          packages: sourceIdsForSliceIndexes(ctx.slices, [
+            first.sliceIndex,
+            other.sliceIndex,
+          ]),
         });
       }
 
@@ -130,6 +134,10 @@ export const checkGroupConsistency = (
             `    ${JSON.stringify(groupName)}: [${JSON.stringify(first.root.baseTypeId)}, ${JSON.stringify(other.root.baseTypeId)}],`,
             "  }",
           ].join("\n"),
+          packages: sourceIdsForSliceIndexes(ctx.slices, [
+            first.sliceIndex,
+            other.sliceIndex,
+          ]),
         });
       }
     }
@@ -182,6 +190,10 @@ export const checkGroupConsistency = (
         details: owners.map((o) => `- ${o.packageLabel}`),
         suggestedFix:
           "Resolve via registrations.<Contract>.<implementation>.source in your app's ioc.config.ts.",
+        packages: sourceIdsForSliceIndexes(
+          ctx.slices,
+          owners.map((o) => o.sliceIndex),
+        ),
       });
     }
   }

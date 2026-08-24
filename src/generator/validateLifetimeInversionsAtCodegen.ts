@@ -39,8 +39,7 @@ type DepCandidate = {
 const isInversion = (
   consumerLifetime: IocLifetime,
   depLifetime: IocLifetime,
-): boolean =>
-  LIFETIME_RANK[depLifetime] < LIFETIME_RANK[consumerLifetime];
+): boolean => LIFETIME_RANK[depLifetime] < LIFETIME_RANK[consumerLifetime];
 
 /** Exported for the scope-root subgraph walk, which ranks the same pairs from its own consumers. */
 export const inversionSeverity = (
@@ -91,6 +90,20 @@ const formatInversionMessage = (inv: LifetimeInversion): string => {
     ` depends on ${formatDepPhrase(inv)}${via} — ${consequence}.`
   );
 };
+
+/**
+ * Appended to WARNED inversions only, where the static severity and the runtime's disagree.
+ *
+ * `singleton → transient` and `scoped → transient` are warnings here and errors in Awilix strict
+ * mode, which `registerIocFromManifest` turns on by default. Naming the consequence where the
+ * warning fires is the whole point: a warning the reader is entitled to skim, whose actual effect
+ * is a crash at first resolve, is a warning that lied. (The `singleton → scoped` ERROR needs no such
+ * line — generation refuses, so no runtime is reached.)
+ */
+export const STRICT_RUNTIME_CONSEQUENCE =
+  " Under the default runtime this edge throws at first resolve:" +
+  " `registerIocFromManifest` enables Awilix strict mode unless you pass `{ strict: false }`," +
+  " and `allowLifetimeInversion` suppresses this report only — it is not a runtime exemption.";
 
 /** Stated once, at the end, for however many offenders the run found. */
 const INVERSION_FIX_LINE =
@@ -283,7 +296,8 @@ export const validateLifetimeInversionsAtCodegen = (
     // A warning is printed alone, so it carries its own pointer; the aggregated error carries one
     // pointer for the whole list instead of repeating it per offender.
     console.warn(
-      `[ioc] ${formatInversionMessage(inv)}${docsPointerSuffix(LIFETIME_INVERSION_CODE)}`,
+      `[ioc] ${formatInversionMessage(inv)}${STRICT_RUNTIME_CONSEQUENCE}` +
+        `${docsPointerSuffix(LIFETIME_INVERSION_CODE)}`,
     );
   }
 

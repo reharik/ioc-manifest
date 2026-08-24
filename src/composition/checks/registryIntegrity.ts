@@ -92,6 +92,7 @@ const buildBrokenFileIssue = (
   );
 
   return {
+    packages: [slice.sourceId],
     category: "registry-integrity",
     severity: "error",
     summary: `Generated types for ${sliceLabel(slice)} do not compile (${diagnostics.length} error${diagnostics.length === 1 ? "" : "s"})`,
@@ -105,6 +106,8 @@ export type SkippedComparison = {
   readonly externalKey: string;
   readonly demandedBy: string;
   readonly taintedByPaths: readonly string[];
+  /** Machine tokens for the demanding and supplying packages — the same set the verdict read. */
+  readonly packages: readonly string[];
 };
 
 /**
@@ -136,6 +139,7 @@ export const buildSkippedComparisonsIssue = (
     ),
     suggestedFix:
       "Fix the reported [registry-integrity] errors, then re-run validate to get a verdict on these keys.",
+    packages: [...new Set(skipped.flatMap((s) => s.packages))],
   };
 };
 

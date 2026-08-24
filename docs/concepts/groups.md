@@ -121,7 +121,55 @@ groups: {
 },
 ```
 
-Now `container.resolve("readServices")` returns an object keyed by each contract's convention name — `{ userReadService: UserReadService, orderReadService: OrderReadService, ... }`. You can spread that straight onto your GraphQL context without importing each service individually.
+Now `container.resolve("readServices")` returns an object keyed by each contract's convention name — `{ userReadService: UserReadService, orderReadService: OrderReadService, ... }`. You can put that straight onto your GraphQL context without importing each service individually — hold the object rather than spreading it, for the reason [below](#members-resolve-when-you-read-them).
+
+## Members resolve when you read them
+
+Resolving a group resolves **no members**. The value you get back — the keyed object for a record group, the array for a collection — exists immediately, and each member slot resolves from the container the first time it is read, then stays that instance for the life of that group value.
+
+This is what makes the one sanctioned road to a sibling passable. Grouped ⇒ group-only, so a member that needs a sibling must name the group; if resolving the group built every member, then a member naming the group would be naming something that was mid-construction *because of that member*, and the container would report a cycle in a graph that has none. Lazy slots remove the manufactured half: the group is inert, and the sibling resolves at the moment it is read.
+
+So the rule for a member consuming a sibling is about **when you read**, not how you ask:
+
+```ts
+type AddCommentDeps = { writeServices: WriteServices };
+
+export const buildAddComment = ({
+  writeServices,
+}: AddCommentDeps): AddComment => ({
+  // Read at CALL time. `toggleReaction` resolves here, when the method runs.
+  add: (body) => writeServices.toggleReaction.react(body),
+});
+```
+
+Destructuring the group in the signature is fine — that is just taking the inert object. What is not fine is reading a **member property** at the top level of the factory body:
+
+```ts
+export const buildAddComment = ({ writeServices }: AddCommentDeps): AddComment => {
+  const toggle = writeServices.toggleReaction; // ✖ resolves now, mid-construction
+  return { add: (body) => toggle.react(body) };
+};
+```
+
+If that member's construction leads back to the one under construction, it is a genuine cycle and it is reported as one, with the group hop named:
+
+```
+[ioc] Cannot resolve group "writeServices".
+
+Resolution chain:
+  writeServices (group)
+    -> AddComment (addComment) [addComment.ts]
+      -> writeServices (group)
+        -> AddComment (addComment) [addComment.ts] ✖ cyclic dependency detected
+
+A member of group "writeServices" was read during construction.
+```
+
+::: warning Hold the group; don't spread it
+Member slots are getters, so anything that enumerates *and reads* the value resolves every member at once: `{ ...writeServices }`, `Object.values(writeServices)`, `structuredClone`, `JSON.stringify`, and iterating or spreading a collection group's array. That is legal — it is only the eager behaviour, on demand — but it is not what you want inside a member, and it undoes the laziness you were relying on. Hold the group and read the members you need.
+
+Logging is safe as-is: `console.log` and `util.inspect` render an unread slot as `[Getter]` rather than invoking it, so printing a group value does not detonate resolution.
+:::
 
 ## Generic base types
 

@@ -216,6 +216,29 @@ export const resolveProjectRootFromIocConfigPath = (
 };
 
 /**
+ * The `ioc.config` belonging to ONE package directory, without walking up.
+ *
+ * {@link resolveIocConfigPath} walks upward, which is right for a CLI invoked from somewhere inside
+ * a package and wrong for asking a question ABOUT a named package: from
+ * `packages/media-core` a walking search finds the monorepo root's config whenever that package has
+ * none of its own, and answers a question about `media-core` with another package's scan set.
+ *
+ * Returns `undefined` when the directory holds no config — for a published package that ships its
+ * manifest but not its sources, that is the ordinary answer and not an error.
+ */
+export const resolvePackageLocalIocConfigPath = (
+  packageRoot: string,
+): string | undefined => {
+  for (const rel of CONFIG_RELATIVE_SEARCH_PATHS) {
+    const candidate = path.join(packageRoot, rel);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+};
+
+/**
  * Resolves the absolute path to `ioc.config.ts`.
  *
  * - When `explicitPath` or `IOC_CONFIG` is set, resolves relative to `searchStartDir` if not absolute.

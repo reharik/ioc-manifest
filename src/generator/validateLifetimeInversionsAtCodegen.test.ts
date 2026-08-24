@@ -22,11 +22,16 @@ const mkFactory = (
 const mkPlan = (
   partial: Pick<
     ResolvedContractRegistration,
-    "contractName" | "contractTypeRelImport" | "defaultImplementationName" | "implementations"
+    | "contractName"
+    | "contractTypeRelImport"
+    | "defaultImplementationName"
+    | "implementations"
   > &
     Partial<ResolvedContractRegistration>,
 ): ResolvedContractRegistration => {
-  const contractKey = partial.contractKey ?? partial.contractName[0]!.toLowerCase() + partial.contractName.slice(1);
+  const contractKey =
+    partial.contractKey ??
+    partial.contractName[0]!.toLowerCase() + partial.contractName.slice(1);
   return {
     ...partial,
     contractKey,
@@ -184,6 +189,67 @@ describe("validateLifetimeInversionsAtCodegen", () => {
         /\[ioc\] \[lifetime-inversion\] 'grantSync' \(singleton\)/,
       );
       assert.match(warnings[0]!, /'token' \(transient\)/);
+    });
+
+    it("should name the runtime consequence — this warned edge throws under the default runtime", () => {
+      const plans = [
+        mkPlan({
+          contractName: "Token",
+          contractTypeRelImport: "../fixtures/contracts.js",
+          implementations: [
+            {
+              exportName: "buildToken",
+              implementationName: "token",
+              modulePath: "fixtures/token.ts",
+              relImport: "../fixtures/token.js",
+              registrationKey: "token",
+              lifetime: "transient",
+            },
+          ],
+        }),
+        mkPlan({
+          contractName: "GrantSync",
+          contractTypeRelImport: "../fixtures/contracts.js",
+          implementations: [
+            {
+              exportName: "buildGrantSync",
+              implementationName: "grantSync",
+              modulePath: "fixtures/sync.ts",
+              relImport: "../fixtures/sync.js",
+              registrationKey: "grantSync",
+              lifetime: "singleton",
+            },
+          ],
+        }),
+      ];
+
+      const warnings = captureWarnings(() => {
+        validateLifetimeInversionsAtCodegen(
+          [
+            mkFactory({
+              contractName: "GrantSync",
+              implementationName: "grantSync",
+              registrationKey: "grantSync",
+              dependencyKeys: ["token"],
+            }),
+          ],
+          plans,
+          undefined,
+          mkDemandSupply(),
+          undefined,
+        );
+      });
+
+      /* The severity gap made honest where it fires: our model warns, the default runtime errors. */
+      assert.match(
+        warnings[0]!,
+        /Under the default runtime this edge throws at first resolve/,
+      );
+      assert.match(warnings[0]!, /Awilix strict mode unless you pass/);
+      assert.match(
+        warnings[0]!,
+        /allowLifetimeInversion` suppresses this report only — it is not a runtime exemption/,
+      );
     });
   });
 
@@ -438,7 +504,10 @@ describe("validateLifetimeInversionsAtCodegen", () => {
           ),
         (err: unknown) => {
           assert.ok(err instanceof Error);
-          assert.match(err.message, /via group 'channels' member 'grantRepository'/);
+          assert.match(
+            err.message,
+            /via group 'channels' member 'grantRepository'/,
+          );
           assert.match(err.message, /'grantRepository' \(scoped\)/);
           return true;
         },
@@ -623,6 +692,61 @@ describe("validateLifetimeInversionsAtCodegen", () => {
     });
   });
 
+  describe("When the inversion is error-level", () => {
+    it("should NOT carry the runtime-consequence sentence — generation refuses, so no runtime is reached", () => {
+      const plans = [
+        mkPlan({
+          contractName: "RequestScope",
+          contractTypeRelImport: "../fixtures/contracts.js",
+          implementations: [
+            {
+              exportName: "buildRequestScope",
+              implementationName: "requestScope",
+              modulePath: "fixtures/scope.ts",
+              relImport: "../fixtures/scope.js",
+              registrationKey: "requestScope",
+              lifetime: "scoped",
+            },
+          ],
+        }),
+        mkPlan({
+          contractName: "GrantSync",
+          contractTypeRelImport: "../fixtures/contracts.js",
+          implementations: [
+            {
+              exportName: "buildGrantSync",
+              implementationName: "grantSync",
+              modulePath: "fixtures/sync.ts",
+              relImport: "../fixtures/sync.js",
+              registrationKey: "grantSync",
+              lifetime: "singleton",
+            },
+          ],
+        }),
+      ];
+
+      assert.throws(
+        () =>
+          validateLifetimeInversionsAtCodegen(
+            [
+              mkFactory({
+                contractName: "GrantSync",
+                implementationName: "grantSync",
+                registrationKey: "grantSync",
+                dependencyKeys: ["requestScope"],
+              }),
+            ],
+            plans,
+            undefined,
+            mkDemandSupply(),
+            undefined,
+          ),
+        (err: Error) =>
+          !err.message.includes("Under the default runtime this edge throws"),
+      );
+    });
+  });
+
   describe("When multiple error-level inversions exist", () => {
     it("should aggregate them into one thrown Error", () => {
       const plans = [
@@ -707,8 +831,14 @@ describe("validateLifetimeInversionsAtCodegen", () => {
           assert.strictEqual(lines.length, 5);
           assert.match(lines[0]!, /^\[ioc\] 2 lifetime inversions\./);
           assert.match(lines[1]!, /^→ docs: https:\/\/.*concepts\/lifetimes#/);
-          assert.match(lines[2]!, /'grantSync' \(singleton\).*'grantRepository' \(scoped\)/);
-          assert.match(lines[3]!, /'reportSync' \(singleton\).*'auditLog' \(scoped\)/);
+          assert.match(
+            lines[2]!,
+            /'grantSync' \(singleton\).*'grantRepository' \(scoped\)/,
+          );
+          assert.match(
+            lines[3]!,
+            /'reportSync' \(singleton\).*'auditLog' \(scoped\)/,
+          );
           assert.match(lines[4]!, /allowLifetimeInversion/);
           return true;
         },

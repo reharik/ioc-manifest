@@ -1,4 +1,7 @@
-export { registerIocFromManifest } from "./bootstrap.js";
+export {
+  registerIocFromManifest,
+  type IocRuntimeOptions,
+} from "./bootstrap.js";
 export type {
   ComposedContractOverride,
   ComposedRegistrationOverrides,

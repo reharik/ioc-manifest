@@ -6,7 +6,14 @@ import path from "node:path";
 import ts from "typescript";
 import type { IocConfig } from "../../config/iocConfig.js";
 import type { DiscoveredFactory, DiscoveredScopeRoot } from "../types.js";
-import { SCOPE_ROOT_MARKER_FORM } from "./contractSite.js";
+import {
+  resolveAnnotationContract,
+  SCOPE_ROOT_MARKER_FORM,
+  unitContractSiteTypeNode,
+  type NonNameImportableContractSite,
+} from "./contractSite.js";
+import { docsPointerLine } from "../../diagnostics/errorDocs.js";
+import { formatAggregatedOffenders } from "../../diagnostics/offenderLayout.js";
 import {
   resolveFactorySourceAbsPath,
   type FactoryDiscoveryPaths,
@@ -108,6 +115,135 @@ const formatScopeRootArityError = (
       (o) => `  - ${o.modulePath} export "${o.exportName}"`,
     ),
   ].join("\n");
+
+/**
+ * The one code in this family, spelled as both the discovery report's skip reason and the bracketed
+ * code on the aggregated error's offender line — one string, so a reader who has either in hand
+ * looks the rule up the same way.
+ */
+const DEFAULT_EXPORT_CONTRACT_CODE = "contract_annotation_default_export";
+
+type DefaultExportContractOffender = {
+  modulePath: string;
+  exportName: string;
+  unitKind: "factory" | "class";
+  site: NonNameImportableContractSite;
+  line: number;
+};
+
+/**
+ * Re-reads a refused contract site for the facts the error names.
+ *
+ * The scan carried the skip reason and the written name; the module the binding came from and the
+ * form it is published in live on the AST, and are re-derived here for the same reason
+ * {@link classOffenderDetail} re-derives its contract list — the outcome record is a report row, and
+ * widening it to carry every error's evidence would make the row about the error.
+ */
+const defaultExportContractSite = (
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+  exportName: string,
+): { site: NonNameImportableContractSite; unitKind: "factory" | "class"; line: number } | undefined => {
+  const analysis = collectFileAnalysisForFactoryDiscovery(sourceFile);
+  const unit = analysis.unitDeclByExport.get(exportName);
+  if (unit === undefined) {
+    return undefined;
+  }
+  const contractSite = unitContractSiteTypeNode(checker, unit);
+  if (contractSite === undefined) {
+    return undefined;
+  }
+  const resolution = resolveAnnotationContract(checker, contractSite);
+  if (resolution.kind !== "default_export_contract") {
+    return undefined;
+  }
+  const { line } = sourceFile.getLineAndCharacterOfPosition(
+    contractSite.getStart(),
+  );
+  return { site: resolution, unitKind: unit.unitKind, line: line + 1 };
+};
+
+/**
+ * The claim sentence, which is where the three forms diverge: a foreign default export, a foreign
+ * `export =`, and this project's own `export default` are one rule met in three places.
+ */
+const defaultExportClaim = (
+  site: NonNameImportableContractSite,
+  projectRoot: string,
+): string => {
+  switch (site.form) {
+    case "export-default":
+      return `Annotates \`${site.writtenName}\`, which ${JSON.stringify(site.foreignModule)} publishes only as its default export.`;
+    case "export-equals":
+      return `Annotates \`${site.writtenName}\`, which ${JSON.stringify(site.foreignModule)} publishes through \`export =\`, under no importable name.`;
+    case "local-default-export":
+      return `Annotates \`${site.writtenName}\`, declared in ${JSON.stringify(moduleLabel(site, projectRoot))} and published as that file's default export, so its exported name is \`default\`.`;
+  }
+};
+
+/** Foreign specifiers stay as written; a path is shown relative to the project it belongs to. */
+const moduleLabel = (
+  site: NonNameImportableContractSite,
+  projectRoot: string,
+): string =>
+  site.form === "local-default-export"
+    ? path.relative(projectRoot, site.foreignModule)
+    : site.foreignModule;
+
+/**
+ * The edit, written out against the offender's own names.
+ *
+ * Foreign types get the field guide's wrapper — an empty extending interface in a file of yours,
+ * which is a named declaration and is all contract identity ever asked for. A local declaration gets
+ * the smaller edit instead: it already has a name, it is only published without one.
+ */
+const defaultExportGuidance = (
+  site: NonNameImportableContractSite,
+): readonly string[] => {
+  if (site.form === "local-default-export") {
+    return [
+      `Export the declaration under its name: \`export class ${site.writtenName} { … }\` (or \`export interface\`) rather than \`export default\`.`,
+      "`export default` publishes a declaration under the name `default`, which is not a name a contract can be identified by.",
+    ];
+  }
+  return [
+    `Wrap it locally and annotate with the wrapper: \`import type ${site.writtenName} from ${JSON.stringify(site.foreignModule)}; export interface ${site.writtenName}Contract extends ${site.writtenName} {}\`.`,
+    "One wrapper per foreign type, not per factory: two local names for one foreign type are two contracts.",
+  ];
+};
+
+const formatDefaultExportContractError = (
+  offenders: readonly DefaultExportContractOffender[],
+  projectRoot: string,
+): string =>
+  formatAggregatedOffenders(
+    `[ioc] ${offenders.length} contract site${offenders.length === 1 ? "" : "s"} name${offenders.length === 1 ? "s" : ""} a type that has no importable name of its own. A contract is identified by the name written at its site resolved to the declaration it names, and a declaration published only as \`export default\` — or through \`export =\` — offers no such name: a default export is exported under the reserved word \`default\`, which nothing can import and the generated registry file cannot print. What is left at the site is the importer's local alias, which is a fact about the importing file rather than about the contract:`,
+    docsPointerLine(DEFAULT_EXPORT_CONTRACT_CODE),
+    offenders.map((o) => ({
+      code: DEFAULT_EXPORT_CONTRACT_CODE,
+      claim: defaultExportClaim(o.site, projectRoot),
+      fields: [
+        {
+          label: o.unitKind === "class" ? "class" : "factory",
+          value: JSON.stringify(o.exportName),
+        },
+        { label: "site", value: `${o.modulePath}:${o.line}` },
+        { label: "annotates", value: o.site.writtenName },
+        {
+          label: o.site.form === "local-default-export" ? "declared in" : "module",
+          value: JSON.stringify(moduleLabel(o.site, projectRoot)),
+        },
+        {
+          label: "resolves to",
+          value:
+            o.site.form === "export-equals"
+              ? "the `export =` binding, which no named import reaches"
+              : '"default" — the export name, not a binding',
+        },
+      ],
+      guidance: defaultExportGuidance(o.site),
+    })),
+  );
 
 /** Class-unit skips that mean "matched the trigger, cannot be registered" — never silent. */
 const CLASS_HARD_ERROR_SKIP_REASONS: ReadonlySet<IocDiscoverySkipReason> =
@@ -303,6 +439,7 @@ export const discoverFactories = (
   const invalidAnnotationOffenders: InvalidAnnotationOffender[] = [];
   const classUnitOffenders: ClassUnitOffender[] = [];
   const scopeRootOffenders: ScopeRootOffender[] = [];
+  const defaultExportOffenders: DefaultExportContractOffender[] = [];
   const scopeRoots: DiscoveredScopeRoot[] = [];
   /** contractName → declaration sites seen (first factory per declaring file). */
   const contractDeclSites = new Map<string, ContractDeclSite[]>();
@@ -349,6 +486,24 @@ export const discoverFactories = (
           modulePath: scan.modulePath,
           exportName: outcome.exportName,
         });
+        continue;
+      }
+      if (
+        outcome.skipReason ===
+        IocDiscoverySkipReason.CONTRACT_ANNOTATION_DEFAULT_EXPORT
+      ) {
+        const site = defaultExportContractSite(
+          checker,
+          sourceFile,
+          outcome.exportName,
+        );
+        if (site !== undefined) {
+          defaultExportOffenders.push({
+            modulePath: scan.modulePath,
+            exportName: outcome.exportName,
+            ...site,
+          });
+        }
         continue;
       }
       if (INVALID_ANNOTATION_SKIP_REASONS.has(outcome.skipReason)) {
@@ -438,6 +593,15 @@ export const discoverFactories = (
     runOptions?.tolerateInvalidAnnotations !== true
   ) {
     aggregatedErrors.push(formatScopeRootArityError(scopeRootOffenders));
+  }
+
+  if (
+    defaultExportOffenders.length > 0 &&
+    runOptions?.tolerateInvalidAnnotations !== true
+  ) {
+    aggregatedErrors.push(
+      formatDefaultExportContractError(defaultExportOffenders, projectRoot),
+    );
   }
 
   const collisions = new Map<string, readonly ContractDeclSite[]>();

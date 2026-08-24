@@ -47,6 +47,8 @@ npm install ioc-manifest
 
 Your app should already have **Awilix** installed — `ioc-manifest` lists it as a dependency for type and runtime alignment.
 
-`ioc-manifest` bundles `typescript` and `prettier` as dependencies because it uses the TypeScript compiler API for source analysis and Prettier for formatting generated output. If your project uses a different TypeScript version, they coexist without conflict (the generator uses its own copy).
+`typescript` is a peer dependency — the generator drives the TypeScript compiler API over *your* program, with *your* `tsconfig.json`, so it deliberately uses the version your build uses rather than one of its own. `prettier` is an optional peer dependency, used to format generated output when it is present.
+
+New here? [How it fits together](/guide/how-it-fits-together) is the one-page tour of the whole pipeline. Adding this to a codebase that already exists? [Adopting on an existing codebase](/guide/adopting).
 
 ---

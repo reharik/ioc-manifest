@@ -24,8 +24,10 @@ describe("formatValidationReport", () => {
       assert.match(text, /\[externals\]/);
       assert.match(text, /Validation failed: 1 error/);
 
-      const parsed = JSON.parse(formatValidationReportJson(report)) as unknown[];
-      assert.equal(parsed.length, 1);
+      const parsed = JSON.parse(formatValidationReportJson(report)) as {
+        issues: unknown[];
+      };
+      assert.equal(parsed.issues.length, 1);
     });
   });
 
@@ -50,10 +52,10 @@ describe("formatValidationReport", () => {
       assert.match(text, /→ docs: https:\/\/.*monorepo\/composition#externals/);
 
       const parsed = JSON.parse(formatValidationReportJson(report)) as {
-        docUrl?: string;
-      }[];
+        issues: { docUrl?: string }[];
+      };
       assert.equal(
-        parsed[0]!.docUrl,
+        parsed.issues[0]!.docUrl,
         "https://reharik.github.io/ioc-manifest/monorepo/composition#externals",
       );
     });

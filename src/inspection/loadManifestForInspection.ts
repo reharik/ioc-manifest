@@ -40,6 +40,14 @@ import { parseGeneratedManifestSource } from "../generator/parseGeneratedManifes
 export type InspectionManifestSource = {
   readonly manifestPath: string;
   readonly cfgPath: string;
+  /**
+   * The directory the artifacts were read from.
+   *
+   * Carried so a caller can ask whether the last generation attempt failed — the staleness marker
+   * lives beside this directory, and every surface that reports on artifacts has to be able to say
+   * they are the last SUCCESSFUL write rather than the current sources.
+   */
+  readonly generatedDir: string;
   readonly scanDirs: readonly ResolvedScanDir[];
   readonly contracts: IocContractManifest;
   /** Top-level group roots, per the fixed-key rule. */
@@ -102,6 +110,7 @@ export const loadManifestForInspection = async (
   return {
     manifestPath,
     cfgPath,
+    generatedDir: options.paths.generatedDir,
     scanDirs: options.paths.scanDirs,
     contracts: parsed.contracts,
     groups: parsed.groupRoots,

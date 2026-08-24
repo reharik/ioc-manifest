@@ -19,7 +19,7 @@ export default defineConfig({
   themeConfig: {
     // https://vitepress.dev/reference/default-theme-config
     nav: [
-      { text: "Guide", link: "/guide/introduction" },
+      { text: "Guide", link: "/guide/how-it-fits-together" },
       { text: "Config", link: "/config/reference" },
       { text: "Monorepo", link: "/monorepo/composition" },
       {
@@ -37,8 +37,16 @@ export default defineConfig({
       {
         text: "Getting started",
         items: [
+          {
+            text: "How it fits together",
+            link: "/guide/how-it-fits-together",
+          },
           { text: "Introduction", link: "/guide/introduction" },
           { text: "Quick start", link: "/guide/quick-start" },
+          {
+            text: "Adopting on an existing codebase",
+            link: "/guide/adopting",
+          },
           { text: "What gets generated", link: "/guide/what-gets-generated" },
           {
             text: "Migrating from loadModules",

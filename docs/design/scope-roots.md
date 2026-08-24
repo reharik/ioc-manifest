@@ -70,7 +70,9 @@ This inherits the Promise precedent's known trade: recognition is by name, so a 
 
 The marker is a factory-return form only, and falls out that way without a special case: an `implements` heritage entry is a `ts.ExpressionWithTypeArguments`, not a `ts.TypeReferenceNode`, so the marker read never matches there. A class scope-root unit is not designed; whether one makes sense is a stage-3 question, since what a scope root produces is a builder, not an instance.
 
-`ScopeRoot` written with any arity other than two is a **hard error**, not a skip. A one-argument `ScopeRoot<IRouter>` is unambiguously an attempt to declare a scope root, and the missing declaration is precisely the thing this feature refuses to infer; silently treating it as an unsupported annotation would drop the unit into the "prefix-matched but unregisterable" bucket and hide the real message. The error names the expected form.
+`ScopeRoot` written with any arity other than one or two is a **hard error**, not a skip. Any `ScopeRoot<…>` is unambiguously an attempt to declare a scope root, so silently treating a malformed one as an unsupported annotation would drop the unit into the "prefix-matched but unregisterable" bucket and hide the real message. The error names the expected form.
+
+(The one-argument form was a hard error when this was first written, on the reasoning that the lbv declaration is precisely the thing this feature refuses to infer. It was subsequently admitted as the explicit declaration of the EMPTY set — see above — which infers nothing; only zero, three or more arguments are malformed.)
 
 ## Variants
 

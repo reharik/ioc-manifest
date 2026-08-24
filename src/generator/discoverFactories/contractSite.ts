@@ -411,9 +411,88 @@ export type AnnotationContractResolution =
   | { kind: "unsupported" }
   | { kind: "unresolved"; writtenName: string }
   /**
+   * The site names a binding the generated file cannot reproduce — a module's default export, or an
+   * `export =`. A hard error, never a silent skip: see {@link NonNameImportableContractSite}.
+   */
+  | ({ kind: "default_export_contract" } & NonNameImportableContractSite)
+  /**
    * `ScopeRoot` written with neither one nor two type arguments — a hard error, never a silent skip.
    */
   | { kind: "scope_root_wrong_arity"; typeArgumentCount: number };
+
+/**
+ * A contract site whose written name is not a NAME-IMPORTABLE declaration.
+ *
+ * Contract identity is the name written at the site resolved to the declaration it names, and both
+ * halves of that fail here. A module that publishes its type only as `export default` gives the
+ * declaration the exported name `default` — a reserved word, so `import type { default }` is not
+ * merely wrong but unparseable — and one that publishes through `export =` gives it no importable
+ * name at all. What survives at the site is the *importer's* local alias, which is a fact about the
+ * consuming file rather than about the contract: two files importing the same foreign type under
+ * two aliases would declare two contracts, and neither name is reachable from the generated file.
+ *
+ * The fix is one local declaration, not a smarter resolver — see the field guide's
+ * "Foreign types need local names".
+ */
+export type NonNameImportableContractSite = {
+  /** Leftmost identifier as written at the contract site — the importer's local binding. */
+  writtenName: string;
+  /**
+   * Module specifier the binding is imported from, as written — or, when the site names the
+   * declaration directly, the absolute path of the file declaring it.
+   */
+  foreignModule: string;
+  /** How that module publishes the declaration. */
+  form: NonNameImportableForm;
+};
+
+/**
+ * Which shape of unnamed publication the site ran into — and therefore which fix it is told to make.
+ *
+ * `export-default` and `export-equals` are FOREIGN: the declaration lives in another module, and the
+ * fix is a local wrapper. `local-default-export` is the same rule met at home — the declaration is
+ * in the annotating file itself, published under `export default`, and the fix is smaller: export it
+ * under a name. Telling the two apart is the difference between prescribing the right edit and the
+ * merely defensible one.
+ */
+export type NonNameImportableForm =
+  | "export-default"
+  | "export-equals"
+  | "local-default-export";
+
+/** What TypeScript calls the export symbol of `export default …` — and never a usable binding. */
+const DEFAULT_EXPORT_SYMBOL_NAME = "default";
+
+/**
+ * The module specifier binding {@link leftmost}, when the binding form is one no named import can
+ * reproduce: a default import clause (`import Router from "…"`), or an import-equals
+ * (`import Router = require("…")`). `undefined` for every other form — a named import, a namespace
+ * import, or a declaration in this file — all of which have a name the generated file can ask for.
+ */
+const nonNameImportableBindingSpecifier = (
+  checker: ts.TypeChecker,
+  leftmost: ts.Identifier,
+): string | undefined => {
+  const local = checker.getSymbolAtLocation(leftmost);
+  for (const decl of local?.declarations ?? []) {
+    // The default binding's symbol declares AT the clause; a named import declares at its own
+    // `ImportSpecifier` and a namespace import at its `NamespaceImport`, so neither reaches here.
+    if (ts.isImportClause(decl) && decl.name !== undefined) {
+      const specifier = decl.parent.moduleSpecifier;
+      return ts.isStringLiteralLike(specifier)
+        ? specifier.text
+        : specifier.getText();
+    }
+    if (ts.isImportEqualsDeclaration(decl)) {
+      const ref = decl.moduleReference;
+      return ts.isExternalModuleReference(ref) &&
+        ts.isStringLiteralLike(ref.expression)
+        ? ref.expression.text
+        : ref.getText();
+    }
+  }
+  return undefined;
+};
 
 /** The declared scope-root facts read off a contract site, before any verification. */
 export type DeclaredScopeRootSite = {
@@ -508,9 +587,36 @@ export const resolveAnnotationContract = (
     return { kind: "unsupported" };
   }
 
+  const contractName = symbol.getName();
+  // Two triggers, one verdict. The syntactic one is the binding FORM at the site — a default import
+  // or an import-equals binds a name of the importer's choosing, not the declaration's. The semantic
+  // one is the resolved name itself coming back as `default`, which is what a module's default
+  // export is called and is not a name anything can import. Either alone is the breach; both are
+  // checked so a path that reaches a `default` declaration some other way still lands here.
+  const bindingSpecifier = nonNameImportableBindingSpecifier(checker, leftmost);
+  if (bindingSpecifier !== undefined || contractName === DEFAULT_EXPORT_SYMBOL_NAME) {
+    const declFile = decl.getSourceFile();
+    // A default export resolves to the name `default`; an `export =` keeps the declaration's own
+    // name and is unreachable for a different reason; and a default export named directly in the
+    // annotating file is the same rule with a smaller fix. Reporting which one is what makes the
+    // prescribed edit read as an instruction rather than a guess.
+    const form: NonNameImportableForm =
+      bindingSpecifier === undefined && declFile === unwrapped.getSourceFile()
+        ? "local-default-export"
+        : contractName === DEFAULT_EXPORT_SYMBOL_NAME
+          ? "export-default"
+          : "export-equals";
+    return {
+      kind: "default_export_contract",
+      writtenName,
+      foreignModule: bindingSpecifier ?? declFile.fileName,
+      form,
+    };
+  }
+
   return {
     kind: "resolved",
-    contractName: symbol.getName(),
+    contractName,
     writtenName,
     declSourceFile: decl.getSourceFile(),
     ...(scopeRoot !== undefined ? { scopeRoot } : {}),

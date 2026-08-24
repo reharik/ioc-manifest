@@ -10,9 +10,21 @@
  *
  * Those two are computed by different traversals and can therefore disagree — the rendered text
  * spells out type arguments and computed-property brands that the import walk never visits. That
- * disagreement is what shipped a non-compiling `ioc-registry.types.ts` to a consumer. So the text
- * is re-parsed here and every name in it is checked against what the file will actually import,
- * declare, or inherit from the global lib; anything left over is a HARD ERROR at generation.
+ * disagreement is what shipped a non-compiling `ioc-registry.types.ts` to a consumer. So the
+ * emission is re-parsed here and every name in it is checked against what the file will actually
+ * import, declare, or inherit from the global lib; anything left over is a HARD ERROR at generation.
+ *
+ * ### What "the emission" means, and why it is not just the type text
+ *
+ * Both halves are parsed: the IMPORT LINES the specs will produce, and the printed type text. The
+ * import clause is the one position where an unusable name is a *syntax* error rather than a
+ * resolution failure, and probing only the type text is what let `import type { default } from
+ * "@koa/router"` be written — `default` is a reserved word tsc rejects at the import clause (TS1003)
+ * and reads without complaint in a type position. See {@link probeEmission}.
+ *
+ * The paths that build an import spec by hand rather than through the emitter get the same syntax
+ * gate through {@link verifyImportBindingName}, which needs no program and sits where every emitted
+ * import line funnels through.
  *
  * There is deliberately no fallback. "Print it and hope the consumer's tsc agrees" is removed as a
  * behavior, not patched per trigger.
@@ -145,25 +157,50 @@ const leftmostIdentifier = (name: ts.EntityName): string | undefined => {
 type ProbeResult = {
   /** Root identifiers the printed text references and the file must therefore resolve. */
   referenced: Set<string>;
-  /** Syntax errors from re-parsing the printed text, if it is not a well-formed type. */
+  /** Syntax errors from re-parsing the emission, if it is not well-formed TypeScript. */
   parseErrors: readonly string[];
   /** True when the text embeds an inline `import("…")` type, which is never emitted by design. */
   hasInlineImportType: boolean;
 };
 
 /**
- * Re-parses printed type text and collects the names it depends on.
+ * The import lines an emission's specs will produce, in the form `writeManifest` writes them.
  *
- * The text is what will land in the generated file verbatim, so parsing it is the only honest way
- * to enumerate its references: a hand-rolled scan over identifiers would count property names and
- * string literals, and a walk of the original `ts.Type` would count what the type IS rather than
- * what was printed — and it is precisely the gap between those two that this module exists to close.
+ * These are parsed alongside the type text and not merely tallied, because the import clause is the
+ * ONE position where an unusable name is a syntax error rather than a resolution failure. That
+ * asymmetry is what let `import type { default } from "@koa/router"` through: `default` is a
+ * reserved word, so tsc rejects the import clause with TS1003 — but the same word sitting in a type
+ * position parses without complaint, since the parser reads a type reference's name leniently and
+ * leaves reservedness to a grammar pass this probe never runs. Probing only the type text therefore
+ * asked the one question the breach could pass.
  */
-const probePrintedText = (text: string): ProbeResult => {
+const importLinesFor = (imports: readonly TypeImportSpec[]): string =>
+  imports
+    .map((imp) =>
+      imp.useDefaultImport
+        ? `import type ${imp.typeName} from ${JSON.stringify(imp.relImport)};`
+        : `import type { ${imp.typeName} } from ${JSON.stringify(imp.relImport)};`,
+    )
+    .join("\n");
+
+/**
+ * Re-parses an emission — its import lines and its printed type text — and collects the names the
+ * text depends on.
+ *
+ * Both halves are what will land in the generated file verbatim, so parsing them is the only honest
+ * way to judge them: a hand-rolled scan over identifiers would count property names and string
+ * literals, and a walk of the original `ts.Type` would count what the type IS rather than what was
+ * printed — and it is precisely the gap between those two that this module exists to close.
+ */
+const probeEmission = (
+  text: string,
+  imports: readonly TypeImportSpec[],
+): ProbeResult => {
   const referenced = new Set<string>();
+  const importLines = importLinesFor(imports);
   const probe = ts.createSourceFile(
     "__ioc_emit_probe.ts",
-    `type __IocEmitProbe = ${text};`,
+    `${importLines}${importLines.length > 0 ? "\n" : ""}type __IocEmitProbe = ${text};`,
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TS,
@@ -176,6 +213,10 @@ const probePrintedText = (text: string): ProbeResult => {
 
   let hasInlineImportType = false;
   const visit = (node: ts.Node): void => {
+    // The probe's own import lines are the emission's imports, not references it must resolve.
+    if (ts.isImportDeclaration(node)) {
+      return;
+    }
     if (ts.isImportTypeNode(node)) {
       hasInlineImportType = true;
     } else if (ts.isTypeReferenceNode(node)) {
@@ -289,9 +330,72 @@ const closureFailure = (
   );
 
 /** Offered when structure was printed because nothing named the type. */
+/**
+ * Offered when the emission does not parse. Almost always one thing: a name that is not a name.
+ * `default` is the one this was written for — a module publishing its type only as its default
+ * export has no importable name, and the fix is a local declaration rather than a cleverer emitter.
+ */
+const NOT_A_NAME_HINT =
+  "Every name the generated file imports and prints must be a real, name-importable declaration. " +
+  "A foreign type reachable only as a module's default export (or through `export =`) has none: " +
+  "wrap it locally — `export interface LocalName extends Foreign {}` — and annotate with the " +
+  "wrapper. See docs: guide/adopting#foreign-types-need-local-names.";
+
+/** The import lines plus the property, exactly as the generated file would carry them. */
+const emissionText = (emitted: EmittedTypeReference): string => {
+  const lines = importLinesFor(emitted.imports);
+  return `${lines}${lines.length > 0 ? "\n" : ""}<property>: ${emitted.typeName};`;
+};
+
+const indentBlock = (text: string): string =>
+  text
+    .split("\n")
+    .map((line) => `    ${line}`)
+    .join("\n");
+
 const NAME_THE_TYPE_HINT =
   "Every name the generated file prints must be import-closed. Give this type an exported name " +
   "and annotate with that name, so codegen emits it by reference instead of expanding its structure.";
+
+/**
+ * Hard-errors unless one import spec would produce a PARSEABLE import line.
+ *
+ * The full {@link verifyImportClosure} needs a program; the import-emission paths that build a spec
+ * by hand — `writeManifest`'s plan-driven contract imports, the group and opener alias imports —
+ * run where one is not always available, and they are exactly the paths that reach the generated
+ * file WITHOUT passing through `tryEmitTypeReference`. That bypass is how `import type { default }`
+ * was written despite an invariant whose whole job is to prevent it. This is the part of the
+ * invariant that needs nothing but the spec, placed where every import line funnels through, so a
+ * name that is not a name cannot reach the file by any route.
+ */
+export const verifyImportBindingName = (
+  spec: Pick<TypeImportSpec, "typeName" | "relImport" | "useDefaultImport">,
+  position?: string,
+): void => {
+  const line = importLinesFor([{ ...spec } as TypeImportSpec]);
+  const probe = ts.createSourceFile(
+    "__ioc_import_probe.ts",
+    line,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const errors = (
+    probe as ts.SourceFile & { parseDiagnostics?: ts.Diagnostic[] }
+  ).parseDiagnostics?.map((d) =>
+    ts.flattenDiagnosticMessageText(d.messageText, " "),
+  );
+  if (errors === undefined || errors.length === 0) {
+    return;
+  }
+  throw closureFailure(
+    `the generated file would carry the import line \`${line}\`, which is not parseable ` +
+      `(${errors.join("; ")}).`,
+    NOT_A_NAME_HINT,
+    spec.typeName,
+    position,
+  );
+};
 
 export type VerifyImportClosureContext = {
   program: ts.Program;
@@ -315,11 +419,12 @@ export const verifyImportClosure = (
   const checker = program.getTypeChecker();
   const containingFile = registryTypesFilePath(generatedDir);
 
-  const probe = probePrintedText(emitted.typeName);
+  const probe = probeEmission(emitted.typeName, emitted.imports);
   if (probe.parseErrors.length > 0) {
     throw closureFailure(
-      `the text is not a well-formed TypeScript type (${probe.parseErrors.join("; ")}).`,
-      "This is a bug in ioc-manifest. Please file an issue with the contract that triggered it.",
+      `the emission is not well-formed TypeScript (${probe.parseErrors.join("; ")}).\n` +
+        `  it would be written as:\n${indentBlock(emissionText(emitted))}`,
+      NOT_A_NAME_HINT,
       emitted.typeName,
       position,
     );
@@ -368,6 +473,12 @@ export const verifyImportClosure = (
     if (exported === undefined) {
       continue;
     }
+    // A NAMED spec asks for its own name; a default spec asks for `default`. Note that this
+    // comparison alone would be satisfied by a named spec whose typeName IS `default` — the module
+    // really does export that name. That is the third thing that let the breach through, and it is
+    // closed above rather than here: such a spec cannot reach this loop, because its import line
+    // does not parse. The check that a name is USABLE belongs at the syntax gate, not in a lookup
+    // whose question is whether the module has it.
     const wanted = imp.useDefaultImport ? "default" : imp.typeName;
     if (!exported.has(wanted)) {
       notExported.push({ spec: imp, specifier: imp.relImport });

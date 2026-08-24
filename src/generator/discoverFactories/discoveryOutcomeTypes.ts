@@ -17,6 +17,12 @@ export const IocDiscoverySkipReason = {
   CONTRACT_ANNOTATION_INLINE_OBJECT: "contract_annotation_inline_object",
   /** v3: return annotation is an inline/anonymous union — name it with a type alias (hard error at generation). */
   CONTRACT_ANNOTATION_ANONYMOUS_UNION: "contract_annotation_anonymous_union",
+  /**
+   * The contract site names a foreign type its module publishes only as `export default` or through
+   * `export =`. There is no name for identity to resolve to and none for the generated file to
+   * import, so the contract must be given a local name (hard error at generation).
+   */
+  CONTRACT_ANNOTATION_DEFAULT_EXPORT: "contract_annotation_default_export",
   /** v3: exported class lists more than one `implements` contract (hard error at generation). */
   CLASS_MULTIPLE_IMPLEMENTS: "class_multiple_implements",
   /** v3: `classes[Class].contract` names a type the class does not implement (hard error at generation). */

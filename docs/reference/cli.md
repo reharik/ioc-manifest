@@ -9,7 +9,7 @@ npx ioc inspect --discovery   # re-runs discovery without reading the manifest
 npx ioc explain uow           # one key: what it resolves to, its lifetime, its deps, its dependents
 npx ioc explain uow --discovery   # …with lifetime provenance and scope-root subtree reach
 npx ioc validate              # the composition suite without regenerating (app mode)
-npx ioc validate --json       # machine-readable issue list
+npx ioc validate --json       # machine-readable report: { issues, staleness?, freshness? }
 ```
 
 | Flag                       | Purpose                                                                                 |
@@ -22,6 +22,115 @@ npx ioc validate --json       # machine-readable issue list
 | `--project PATH`           | Project directory for config resolution (default: cwd)                                  |
 
 Set `IOC_DEBUG=1` for full stack traces on errors.
+
+### Two worlds: the staleness banner
+
+`ioc generate` describes your **sources**. When it finds a hard error it refuses to write anything, so the files in your generated directory stay exactly as the last successful run left them.
+
+`ioc validate`, `ioc inspect` and `ioc explain` describe **those files**. Both are correct — about different moments. When they disagree, that gap is the reason.
+
+So a failing generation leaves a marker, `.ioc-generation-state.json`, beside (never inside) the generated directory, and the three artifact-reading verbs banner their output while it is there:
+
+```
+[stale] Generated artifacts are STALE: the last generation attempt failed and wrote nothing.
+        last attempt:  3 minutes ago (2026-08-23T11:00:00.000Z), 1 error
+        Results below describe the LAST SUCCESSFUL generation, not the current sources.
+        Run `ioc generate` to see what the sources say now.
+```
+
+The banner goes to stderr, so piping a report into a file or another tool still gets only the report. A successful generation **replaces** the marker with a success record in the same step that publishes the artifacts, so the banner disappears the moment it stops being true — and the record it leaves behind is what powers the freshness check below.
+
+The marker records the outcome, a timestamp, how many offenders the failing attempt reported, and a fingerprint of the resolved inputs. The fingerprint is presence-and-mismatch data for the banner and nothing more — it cannot say *what* changed and does not try.
+
+**Recommended `.gitignore` entry**, since it is local, timestamped tooling state:
+
+```gitignore
+**/.ioc-generation-state.json
+```
+
+It is harmless if committed. CI running `ioc validate` against a committed marker and printing the banner is working as intended: that tree genuinely has a failing generation.
+
+With `--json` the marker is a `staleness` field carrying the same record, never a banner in the payload. `inspect` and `explain` gain the field alongside what they already emit.
+
+### The other half: artifacts that may predate their sources
+
+The staleness banner covers a generation that **failed**. The commoner mistake is the one where nothing fails at all:
+
+> Edit a library's source. Forget the regenerate/rebuild ordering. Run `ioc validate` in the app — and read a confidently-worded finding that describes the world as it was before the edit.
+
+Every generation records the fingerprint of its inputs. `ioc validate` recomputes that fingerprint for **this package and every composed package**, app-mode `ioc generate` recomputes it for the composed packages it reads, and `ioc inspect` / `ioc explain` recompute it for this package. A mismatch is reported twice — once at the top, and once on each finding that rests on the package in question:
+
+```
+⚠ @packages/media-core's generated artifacts may predate its sources (generated 12 minutes ago;
+  sources have changed since). Findings involving its keys may describe the old world — regenerate
+  there first.
+
+[externals] Unsatisfied: "s3MediaSink" is a member of composed group "mediaSinks" and has no individual cradle key.
+  note: @packages/media-core may be stale; this finding may describe the old world
+  …
+```
+
+The inline note is the one that matters. A banner at the top of a report is read by somebody reading from the top; the caveat on the finding reaches the developer who scrolled straight to the first error.
+
+**It never changes an exit code.** `ioc validate` exists to check committed artifacts, and refusing to report on out-of-date ones would remove the verb's job at the moment somebody needs it. The signal is a heuristic besides — so it warns loudly and always proceeds. (No `--strict-freshness` today; if CI users want one, it is a small addition on top of this.)
+
+**What "matches" means, exactly.** The fingerprint is a sha256 over the config's source text plus `relativePath:sha256(content)` for every scanned file. Any byte changed in any scanned file, and any file added or removed, mismatches. It does **not** cover types imported from outside your `discovery.scanDirs` — a sibling package's `.d.ts`, a type from `node_modules` — which can change generation's output without moving the hash. So a match says *the scanned sources and the config are byte-identical to what generation saw*, and the wording never claims more than "may predate". Cost is proportional to the scan set: a fraction of a millisecond for a small package, and about 19 ms over a 480-file, 2.4 MB tree.
+
+**When both are behind**, the banner names the dependency order:
+
+```
+⚠ @packages/media-core's generated artifacts may predate its sources …
+⚠ this app's generated artifacts may predate its sources …
+  Regenerate @packages/media-core before this app: this app's generation composes it, so
+  regenerating here first would just bake the old output in.
+```
+
+**A package with no record** — artifacts generated before records were written, or a package that has never generated — gets one quiet line instead, not the banner:
+
+```
+note: no generation record for @packages/media-core — whether its artifacts predate its sources is unknown until it next generates.
+```
+
+Absence of evidence is not evidence, and it is reported at that volume deliberately.
+
+### Breaking in 4.0: `ioc validate --json` emits an object
+
+Through 3.x the document was the bare issue array. It is now an object:
+
+```json
+{
+  "issues": [
+    { "category": "externals", "severity": "error", "summary": "…", "details": ["…"], "suggestedFix": "…", "docUrl": "…" }
+  ]
+}
+```
+
+with `staleness` beside `issues` when the package's last generation attempt failed:
+
+```json
+{
+  "staleness": { "outcome": "failed", "at": "2026-08-23T11:00:00.000Z", "errorCount": 1, "inputsHash": "sha256:…" },
+  "issues": [ … ]
+}
+```
+
+The envelope is the same shape either way — `staleness` is simply absent when generation last succeeded, matching how `inspect --json` and `explain --json` carry the same field. Consumers read `parsed.issues` unconditionally and never branch on the root type.
+
+`freshness` sits beside it, one entry per package judged, local first:
+
+```json
+{
+  "freshness": [
+    { "name": "@apps/api", "outcome": "success", "generatedAt": "2026-08-23T11:00:00.000Z", "currentMatches": true },
+    { "name": "@packages/media-core", "outcome": "success", "generatedAt": "2026-08-23T09:12:00.000Z", "currentMatches": false }
+  ],
+  "issues": [ … ]
+}
+```
+
+`currentMatches` is **omitted**, never `false`, when nothing could be concluded — so a consumer gating on `currentMatches === false` is never handed an unknown. A package with no record carries `name` alone.
+
+Per-issue field names are untouched: `category`, `severity`, `summary`, `details`, `suggestedFix`, `docUrl` — plus `possiblyStale: true` on any finding that resolves through a package whose artifacts may predate its sources. Migration is `JSON.parse(out)` → `JSON.parse(out).issues`.
 
 `inspect --discovery` is the tool for "why isn't this registered?". It lists every scanned file with each export's outcome — discovered (with its contract and registration key) or skipped with a categorized reason, including the class-unit reasons such as `class_inherited_contract_not_declared` and `missing_return_type_annotation`. Unlike plain `inspect`, it re-runs discovery from source rather than reading the generated manifest, and it tolerates units that would abort a real generation so the report can list every offender at once.
 

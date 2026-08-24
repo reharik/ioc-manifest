@@ -49,9 +49,13 @@ import path from "node:path";
 import ts from "typescript";
 import {
   docsPointerLine,
-  docsPointerSuffix,
   docsUrlForCode,
 } from "../../diagnostics/errorDocs.js";
+import {
+  formatAggregatedOffenders,
+  type Offender,
+  type OffenderField,
+} from "../../diagnostics/offenderLayout.js";
 import { resolveAnnotationContract } from "../discoverFactories/contractSite.js";
 import { resolveDepsPropertyTypeNode } from "./resolveIocGeneratedCradleIndexedAccess.js";
 import type { FactorySourceLocation } from "./types.js";
@@ -97,8 +101,12 @@ export type NamedDemandFinding = {
   code: NamedDemandFindingCode;
   /** The offending deps property name. */
   key: string;
-  /** Single-line offender text, already carrying its code and location. */
-  message: string;
+  /**
+   * The offender in the shared labeled-field layout: claim sentence, mechanism fields, guidance
+   * beats. Rendered by {@link formatNamedDemandErrors}; see `diagnostics/offenderLayout.ts` for why
+   * a generation offender is laid out the way a `ioc validate` issue is.
+   */
+  offender: Omit<Offender, "docsUrl">;
 };
 
 /** A `Named<…>` reference at a deps property's written type node. */
@@ -282,7 +290,7 @@ export const buildDemandKeyUniverse = (
 const groupedMemberGuidance = (
   membership: DemandGroupMembership,
   demandedKey: string,
-): string => {
+): readonly string[] => {
   const consume =
     membership.kind === "object" && membership.memberProperty !== undefined
       ? `Consume it through the group: \`${membership.groupKey}: ${groupKeyToAliasName(membership.groupKey)}\`, then \`${membership.groupKey}.${membership.memberProperty}\`.`
@@ -293,8 +301,23 @@ const groupedMemberGuidance = (
       ? `If you need keyed access to a different member, the group's \`kind\` is the lever — a record group already exposes every member as a property; a member that should not be reachable that way does not belong in groups.${membership.groupName}.`
       : `If you need keyed access to a member, the group's \`kind\` is the lever: flip groups.${membership.groupName}.kind to "object" so members are exposed as properties (record kind keys members by CONTRACT, so it fits a family of distinct contracts, not several implementations of one) — or the member does not belong in the group.`;
 
-  return `${consume} ${lever} Consumer-divergent group consumption — one consumer wanting the family, another wanting one member — is a known, deliberately deferred design question; see "Consumer-divergent group consumption — considered, deferred" in docs/design/per-package-manifest.md.`;
+  return [
+    "A grouped contract is consumed through its group and through nothing else — it has no contract key and its implementations claim no individual cradle keys.",
+    consume,
+    lever,
+    GROUPED_MEMBER_MONUMENT,
+  ];
 };
+
+/**
+ * The pointer to the deferred design question, rendered LAST among the beats.
+ *
+ * It is a monument, not an instruction: a reader with a legitimate need for both the family and one
+ * member should find out the case was considered rather than overlooked — but only after the two
+ * beats that tell them what to write today.
+ */
+const GROUPED_MEMBER_MONUMENT =
+  'Consumer-divergent group consumption — one consumer wanting the family, another wanting one member — is a known, deliberately deferred design question; see "Consumer-divergent group consumption — considered, deferred" in docs/design/per-package-manifest.md.';
 
 /** `channels` → `Channels`, matching the emitted group alias. Local copy: no import cycle. */
 const groupKeyToAliasName = (key: string): string =>
@@ -313,13 +336,23 @@ const formatLocation = (
 const unitLabel = (loc: FactorySourceLocation): string =>
   loc.unitKind === "class" ? "Class" : "Factory";
 
-const offenderPrefix = (
-  code: NamedDemandFindingCode,
+/**
+ * The `site:` field — `file:line` first, because that is what a reader clicks, with the unit that
+ * owns it in parentheses.
+ */
+const siteField = (
   projectRoot: string,
   loc: FactorySourceLocation,
-  propertyName: string,
-): string =>
-  `  - [${code}] ${unitLabel(loc)} ${JSON.stringify(loc.exportName)} at ${formatLocation(projectRoot, loc)} property ${JSON.stringify(propertyName)}`;
+): OffenderField => ({
+  label: "site",
+  value: `${formatLocation(projectRoot, loc)}  (${unitLabel(loc)} ${JSON.stringify(loc.exportName)})`,
+});
+
+/** The `key:` field — the offending deps property, which every code in this family has. */
+const keyField = (propertyName: string): OffenderField => ({
+  label: "key",
+  value: JSON.stringify(propertyName),
+});
 
 /** The origin clause an error uses to say where an implementation lives. */
 const implementationOrigin = (impl: DemandableImplementation): string =>
@@ -336,13 +369,19 @@ const implementationOrigin = (impl: DemandableImplementation): string =>
 const twoSpellings = (
   impl: DemandableImplementation,
   universe: DemandKeyUniverse,
-): string => {
+): readonly string[] => {
   const slotKey = universe.slotKeyByContractName.get(impl.contractName);
-  const named = `for this specific implementation, write \`${impl.registrationKey}: ${NAMED_MARKER_NAME}<${impl.contractName}>\``;
+  const named = `For this specific implementation, write \`${impl.registrationKey}: ${NAMED_MARKER_NAME}<${impl.contractName}>\`.`;
   if (slotKey === undefined) {
-    return `Contract ${JSON.stringify(impl.contractName)} elects no default, so it has no contract key; ${named}.`;
+    return [
+      `Contract ${JSON.stringify(impl.contractName)} elects no default, so it has no contract key.`,
+      named,
+    ];
   }
-  return `For the elected default, demand the contract key \`${slotKey}: ${impl.contractName}\`; ${named}.`;
+  return [
+    `For the elected default, demand the contract key \`${slotKey}: ${impl.contractName}\`.`,
+    named,
+  ];
 };
 
 /**
@@ -370,12 +409,22 @@ const groupedMemberFinding = (
 
   if (viaImplementation !== undefined) {
     const spelling = markerPresent
-      ? `carries \`${NAMED_MARKER_NAME}<…>\``
-      : "demands it by name";
+      ? `Carries \`${NAMED_MARKER_NAME}<…>\` on ${JSON.stringify(propertyName)}`
+      : `Demands ${JSON.stringify(propertyName)} by name`;
     return {
       code: "grouped-member-demand",
       key: propertyName,
-      message: `${offenderPrefix("grouped-member-demand", projectRoot, loc, propertyName)} ${spelling}, but ${JSON.stringify(propertyName)} is an implementation of ${JSON.stringify(impl!.contractName)}, a member of group ${JSON.stringify(viaImplementation.groupName)}. A grouped contract is consumed through its group and through nothing else — it has no contract key and its implementations claim no individual cradle keys. ${groupedMemberGuidance(viaImplementation, propertyName)}`,
+      offender: {
+        code: "grouped-member-demand",
+        claim: `${spelling}, which is an implementation of a GROUPED contract.`,
+        fields: [
+          keyField(propertyName),
+          { label: "contract", value: JSON.stringify(impl!.contractName) },
+          { label: "group", value: JSON.stringify(viaImplementation.groupName) },
+          siteField(projectRoot, loc),
+        ],
+        guidance: groupedMemberGuidance(viaImplementation, propertyName),
+      },
     };
   }
 
@@ -388,7 +437,17 @@ const groupedMemberFinding = (
       return {
         code: "grouped-member-demand",
         key: propertyName,
-        message: `${offenderPrefix("grouped-member-demand", projectRoot, loc, propertyName)} names the contract key ${JSON.stringify(propertyName)} of ${JSON.stringify(absentSlotContract)}, which is a member of group ${JSON.stringify(membership.groupName)} and therefore has no contract key — grouped contracts are consumed through the group and through nothing else. ${groupedMemberGuidance(membership, propertyName)}`,
+        offender: {
+          code: "grouped-member-demand",
+          claim: `Names the contract key ${JSON.stringify(propertyName)}, which belongs to a GROUPED contract and therefore does not exist.`,
+          fields: [
+            keyField(propertyName),
+            { label: "contract", value: JSON.stringify(absentSlotContract) },
+            { label: "group", value: JSON.stringify(membership.groupName) },
+            siteField(projectRoot, loc),
+          ],
+          guidance: groupedMemberGuidance(membership, propertyName),
+        },
       };
     }
   }
@@ -461,7 +520,14 @@ export const checkNamedDemand = (
     return {
       code: "named-wrong-arity",
       key: propertyName,
-      message: `${offenderPrefix("named-wrong-arity", projectRoot, loc, propertyName)} writes \`${NAMED_MARKER_NAME}\` with ${marker.typeArgumentCount} type argument(s). The marker takes exactly one: write \`${NAMED_MARKER_FORM}\`.`,
+      offender: {
+        code: "named-wrong-arity",
+        claim: `Writes \`${NAMED_MARKER_NAME}\` with ${marker.typeArgumentCount} type argument(s).`,
+        fields: [keyField(propertyName), siteField(projectRoot, loc)],
+        guidance: [
+          `The marker takes exactly one type argument: write \`${NAMED_MARKER_FORM}\`.`,
+        ],
+      },
     };
   }
 
@@ -486,7 +552,17 @@ export const checkNamedDemand = (
     return {
       code: "named-marker-required",
       key: propertyName,
-      message: `${offenderPrefix("named-marker-required", projectRoot, loc, propertyName)} is the registration key of implementation ${JSON.stringify(impl.registrationKey)} (contract ${JSON.stringify(impl.contractName)}, ${implementationOrigin(impl)}), demanded without saying so. ${twoSpellings(impl, universe)}`,
+      offender: {
+        code: "named-marker-required",
+        claim: `Demands the implementation registration key ${JSON.stringify(propertyName)} without saying so.`,
+        fields: [
+          keyField(propertyName),
+          { label: "contract", value: JSON.stringify(impl.contractName) },
+          { label: "registered", value: implementationOrigin(impl) },
+          siteField(projectRoot, loc),
+        ],
+        guidance: twoSpellings(impl, universe),
+      },
     };
   }
 
@@ -496,21 +572,52 @@ export const checkNamedDemand = (
     return {
       code: "named-on-contract-key",
       key: propertyName,
-      message: `${offenderPrefix("named-on-contract-key", projectRoot, loc, propertyName)} carries \`${NAMED_MARKER_NAME}<…>\`, but ${JSON.stringify(propertyName)} is the contract key of ${JSON.stringify(slotContract)} — it names whichever implementation is elected as the default, not a specific one. Drop the marker to demand the elected default, or name an implementation's own registration key.`,
+      offender: {
+        code: "named-on-contract-key",
+        claim: `Carries \`${NAMED_MARKER_NAME}<…>\` on a CONTRACT key, which names whichever implementation is elected as the default.`,
+        fields: [
+          keyField(propertyName),
+          { label: "contract", value: JSON.stringify(slotContract) },
+          siteField(projectRoot, loc),
+        ],
+        guidance: [
+          "Drop the marker to demand the elected default, or name an implementation's own registration key.",
+        ],
+      },
     };
   }
   if (universe.groupKeys.has(propertyName)) {
     return {
       code: "named-on-group-key",
       key: propertyName,
-      message: `${offenderPrefix("named-on-group-key", projectRoot, loc, propertyName)} carries \`${NAMED_MARKER_NAME}<…>\`, but ${JSON.stringify(propertyName)} is a group root key — it resolves the whole group, not one implementation. Drop the marker, or demand a member's own registration key with \`${NAMED_MARKER_NAME}<…>\`.`,
+      offender: {
+        code: "named-on-group-key",
+        claim: `Carries \`${NAMED_MARKER_NAME}<…>\` on a GROUP root key, which resolves the whole group rather than one implementation.`,
+        fields: [
+          keyField(propertyName),
+          { label: "group", value: JSON.stringify(propertyName) },
+          siteField(projectRoot, loc),
+        ],
+        guidance: [
+          `Drop the marker, or demand a member's own registration key with \`${NAMED_MARKER_NAME}<…>\`.`,
+        ],
+      },
     };
   }
   if (universe.openerKeys.has(propertyName)) {
     return {
       code: "named-on-opener-key",
       key: propertyName,
-      message: `${offenderPrefix("named-on-opener-key", projectRoot, loc, propertyName)} carries \`${NAMED_MARKER_NAME}<…>\`, but ${JSON.stringify(propertyName)} is a scope-root opener key — an opener is emitted by generation, not registered by an implementation. Demand it by its emitted alias instead.`,
+      offender: {
+        code: "named-on-opener-key",
+        claim: `Carries \`${NAMED_MARKER_NAME}<…>\` on a scope-root OPENER key, which generation emits rather than an implementation registering.`,
+        fields: [
+          keyField(propertyName),
+          { label: "opener", value: JSON.stringify(propertyName) },
+          siteField(projectRoot, loc),
+        ],
+        guidance: ["Demand it by its emitted alias instead."],
+      },
     };
   }
 
@@ -519,7 +626,14 @@ export const checkNamedDemand = (
     return {
       code: "named-unknown-key",
       key: propertyName,
-      message: `${offenderPrefix("named-unknown-key", projectRoot, loc, propertyName)} carries \`${NAMED_MARKER_NAME}<…>\`, but no implementation — local or composed — is registered under ${JSON.stringify(propertyName)}. \`${NAMED_MARKER_NAME}\` declares a demand for a specific registration; an unregistered key is an external and is demanded by its plain type.`,
+      offender: {
+        code: "named-unknown-key",
+        claim: `Carries \`${NAMED_MARKER_NAME}<…>\`, but no implementation — local or composed — is registered under ${JSON.stringify(propertyName)}.`,
+        fields: [keyField(propertyName), siteField(projectRoot, loc)],
+        guidance: [
+          `\`${NAMED_MARKER_NAME}\` declares a demand for a specific registration; an unregistered key is an external and is demanded by its plain type.`,
+        ],
+      },
     };
   }
 
@@ -531,7 +645,18 @@ export const checkNamedDemand = (
     return {
       code: "named-contract-mismatch",
       key: propertyName,
-      message: `${offenderPrefix("named-contract-mismatch", projectRoot, loc, propertyName)} writes \`${NAMED_MARKER_NAME}<${marker.contractSite.getText()}>\`, whose type argument is not a named contract reference. Implementation ${JSON.stringify(impl.registrationKey)} declares contract ${JSON.stringify(impl.contractName)}; write \`${NAMED_MARKER_NAME}<${impl.contractName}>\`.`,
+      offender: {
+        code: "named-contract-mismatch",
+        claim: `Writes \`${NAMED_MARKER_NAME}<${marker.contractSite.getText()}>\`, whose type argument is not a named contract reference.`,
+        fields: [
+          keyField(propertyName),
+          { label: "declares", value: JSON.stringify(impl.contractName) },
+          siteField(projectRoot, loc),
+        ],
+        guidance: [
+          `Implementation ${JSON.stringify(impl.registrationKey)} declares contract ${JSON.stringify(impl.contractName)}; write \`${NAMED_MARKER_NAME}<${impl.contractName}>\`.`,
+        ],
+      },
     };
   }
 
@@ -543,7 +668,21 @@ export const checkNamedDemand = (
     return {
       code: "named-contract-mismatch",
       key: propertyName,
-      message: `${offenderPrefix("named-contract-mismatch", projectRoot, loc, propertyName)} demands \`${NAMED_MARKER_NAME}<${demandedContractName}>\`, but implementation ${JSON.stringify(impl.registrationKey)} (${implementationOrigin(impl)}) declares contract ${JSON.stringify(impl.contractName)}. \`${NAMED_MARKER_NAME}\` matches the implementation's declared contract exactly — write \`${NAMED_MARKER_NAME}<${impl.contractName}>\`, or name an implementation of ${JSON.stringify(demandedContractName)}.`,
+      offender: {
+        code: "named-contract-mismatch",
+        claim: `Demands \`${NAMED_MARKER_NAME}<${demandedContractName}>\`, but the named implementation declares a different contract.`,
+        fields: [
+          keyField(propertyName),
+          { label: "demanded", value: JSON.stringify(demandedContractName) },
+          { label: "declares", value: JSON.stringify(impl.contractName) },
+          { label: "registered", value: implementationOrigin(impl) },
+          siteField(projectRoot, loc),
+        ],
+        guidance: [
+          `\`${NAMED_MARKER_NAME}\` matches the implementation's declared contract exactly.`,
+          `Write \`${NAMED_MARKER_NAME}<${impl.contractName}>\`, or name an implementation of ${JSON.stringify(demandedContractName)}.`,
+        ],
+      },
     };
   }
 
@@ -554,17 +693,19 @@ export const checkNamedDemand = (
 export const DEMAND_MODEL_FAMILY_CODE = "demand-model";
 
 /**
- * An offender line links only when its own code points somewhere the preamble does not.
+ * An offender links only when its own code points somewhere the preamble does not.
  *
  * Seven of the eight codes ARE the demand model, and the preamble has already linked it; repeating
  * that URL on every offender is how a link stops being read. `grouped-member-demand` is the one that
  * points elsewhere — at the group law, which is a different rule and a different fix — so it says so.
  */
-const offenderDocsSuffix = (
+const offenderDocsUrl = (
   code: NamedDemandFindingCode,
   familyUrl: string | undefined,
-): string =>
-  docsUrlForCode(code) === familyUrl ? "" : docsPointerSuffix(code);
+): string | undefined => {
+  const url = docsUrlForCode(code);
+  return url === undefined || url === familyUrl ? undefined : url;
+};
 
 /**
  * The aggregated error text for every offender in one run — the offender-bucket shape discovery and
@@ -586,12 +727,16 @@ export const formatNamedDemandErrors = (
   const familyUrl = docsUrlForCode(DEMAND_MODEL_FAMILY_CODE);
   const docsLine = docsPointerLine(DEMAND_MODEL_FAMILY_CODE);
 
-  return [
+  return formatAggregatedOffenders(
     `[ioc] ${subject} not name any of the five things a dependency can be ` +
       `(contract key, \`${NAMED_MARKER_FORM}\` implementation key, group key, opener key, external):`,
-    ...(docsLine !== undefined ? [docsLine] : []),
-    ...findings.map(
-      (finding) => finding.message + offenderDocsSuffix(finding.code, familyUrl),
-    ),
-  ].join("\n");
+    docsLine,
+    findings.map((finding) => {
+      const docsUrl = offenderDocsUrl(finding.code, familyUrl);
+      return {
+        ...finding.offender,
+        ...(docsUrl !== undefined ? { docsUrl } : {}),
+      };
+    }),
+  );
 };

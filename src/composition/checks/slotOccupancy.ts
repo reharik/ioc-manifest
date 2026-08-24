@@ -18,6 +18,7 @@ import {
   type ContractSlotOccupancyRow,
 } from "../../core/contractSlotOccupancy.js";
 import type { CompositionContext, ValidationIssue } from "../types.js";
+import { sourceIdsForSliceIndexes } from "../sliceLabel.js";
 import {
   composedContractNamesSorted,
   electedImplementationName,
@@ -30,6 +31,10 @@ export const checkSlotOccupancy = (
 ): ValidationIssue[] => {
   const groupedContractNames = groupedContractNamesAcrossSlices(ctx);
   const rows: ContractSlotOccupancyRow[] = [];
+  // Which packages contributed implementations to each contract. The violation the checker returns
+  // names a contract, not the slices behind it, so the attribution is collected on the way in
+  // rather than reconstructed from a rendered label on the way out.
+  const packagesByContract = new Map<string, readonly string[]>();
 
   for (const contractName of composedContractNamesSorted(ctx)) {
     // Grouped ⇒ group-only: no slot, so no key to occupy.
@@ -62,6 +67,14 @@ export const checkSlotOccupancy = (
       ),
     );
 
+    packagesByContract.set(
+      contractName,
+      sourceIdsForSliceIndexes(
+        ctx.slices,
+        merged.rows.map((row) => row.sliceIndex),
+      ),
+    );
+
     rows.push({
       contractName,
       slotKey,
@@ -86,6 +99,9 @@ export const checkSlotOccupancy = (
         `The slot key names the ELECTED implementation and keeps naming it when the election moves. A registration under that same name owns the key instead, so ${JSON.stringify(violation.slotKey)} hands out ${JSON.stringify(violation.occupantImplementationName)} while the election names ${JSON.stringify(violation.electedImplementationName)}.`,
       ],
       suggestedFix: formatSlotOccupancyRemedy(violation),
+      ...(packagesByContract.has(violation.contractName)
+        ? { packages: packagesByContract.get(violation.contractName)! }
+        : {}),
     };
   });
 };

@@ -89,6 +89,13 @@ import {
   buildComposedGroupDemandIndex,
   mergeWithLocalPrecedence,
 } from "./composedGroupMembership.js";
+import {
+  GENERATION_FAILURE_ARTIFACTS_NOTE,
+  generationStatePathFor,
+  hashGenerationInputs,
+  writeGenerationRecord,
+} from "../diagnostics/generationState.js";
+import { offenderCountOf } from "../diagnostics/offenderCount.js";
 import { warnUnusableFactoryExports } from "./warnUnusableFactoryExports.js";
 import { warnDivergentClassFileNames } from "./warnDivergentClassFileNames.js";
 
@@ -177,6 +184,59 @@ const formatGeneratedFileWithPrettier = (
   }
 };
 
+type GenerateManifestOverrides = Partial<Omit<ManifestOptions, "paths">> & {
+  paths?: Partial<ManifestRuntimePaths>;
+  iocConfigPath?: string;
+};
+
+/**
+ * What the failure path needs, filled in as the run learns it.
+ *
+ * Mutable and deliberately partial: a run can fail before it has resolved its config, and the
+ * marker still has to land somewhere sensible. Each field is written the moment it is known, so
+ * whatever the failure interrupts, the catch has the best answer available at that point.
+ */
+type GenerationFailureContext = {
+  projectRoot: string;
+  generatedDir?: string;
+  configPath?: string;
+  discoveryFiles?: readonly string[];
+};
+
+/**
+ * Records a failing generation so the artifact-reading verbs can say the artifacts are stale.
+ *
+ * Best effort and never rethrows: a generation error is already propagating, and replacing it with
+ * a filesystem error from the bookkeeping would hide the thing the developer needs to read.
+ *
+ * When the run failed before resolving its config there is no configured `generatedDir` to sit
+ * beside, so the marker lands beside the DEFAULT one for the project root the run started from —
+ * the same place a successful run would have cleared it from. That is the honest choice: a marker
+ * somewhere a reader will look beats no marker at all, and the surfaces that read it resolve their
+ * own generated dir the same way.
+ */
+const recordGenerationFailure = async (
+  ctx: GenerationFailureContext,
+  error: unknown,
+): Promise<void> => {
+  const generatedDir =
+    ctx.generatedDir ??
+    resolveManifestOptions({ paths: { projectRoot: ctx.projectRoot } }).paths
+      .generatedDir;
+
+  const inputsHash =
+    ctx.discoveryFiles !== undefined
+      ? hashGenerationInputs(ctx.projectRoot, ctx.configPath, ctx.discoveryFiles)
+      : undefined;
+
+  await writeGenerationRecord(generationStatePathFor(generatedDir), {
+    outcome: "failed",
+    at: new Date().toISOString(),
+    errorCount: offenderCountOf(error),
+    ...(inputsHash !== undefined ? { inputsHash } : {}),
+  });
+};
+
 /**
  * Full generation pipeline for a consuming project. Idempotent writes use atomic rename.
  *
@@ -184,10 +244,23 @@ const formatGeneratedFileWithPrettier = (
  *                    When `ioc.config.ts` is absent, defaults from {@link resolveManifestOptions} apply.
  */
 export const generateManifest = async (
-  overrides?: Partial<Omit<ManifestOptions, "paths">> & {
-    paths?: Partial<ManifestRuntimePaths>;
-    iocConfigPath?: string;
-  },
+  overrides?: GenerateManifestOverrides,
+): Promise<void> => {
+  const failureContext: GenerationFailureContext = {
+    projectRoot: path.resolve(overrides?.paths?.projectRoot ?? process.cwd()),
+  };
+  try {
+    await runGeneration(overrides, failureContext);
+  } catch (error) {
+    await recordGenerationFailure(failureContext, error);
+    console.error(GENERATION_FAILURE_ARTIFACTS_NOTE);
+    throw error;
+  }
+};
+
+const runGeneration = async (
+  overrides: GenerateManifestOverrides | undefined,
+  failureContext: GenerationFailureContext,
 ): Promise<void> => {
   const searchStart = path.resolve(
     overrides?.paths?.projectRoot ?? process.cwd(),
@@ -218,6 +291,12 @@ export const generateManifest = async (
     factoryExportPrefix,
   } = options;
 
+  failureContext.projectRoot = projectRoot;
+  failureContext.generatedDir = generatedDir;
+  if (config !== undefined) {
+    failureContext.configPath = configPath;
+  }
+
   await fs.mkdir(generatedDir, { recursive: true });
 
   const files = await getDiscoveryTargetFiles(
@@ -226,6 +305,7 @@ export const generateManifest = async (
     excludePatterns,
     generatedDir,
   );
+  failureContext.discoveryFiles = files;
   const tsconfigContext = loadIocTsconfigContext(projectRoot);
   const program = createIocProgramForDiscovery(projectRoot, files, tsconfigContext);
 
@@ -598,7 +678,30 @@ export const generateManifest = async (
   }
 
   try {
-    await writeGeneratedFilesAtomically(filesToWrite);
+    // Success RECORDS as part of the same step that publishes the artifacts: the moment these files
+    // become the newest truth is the moment their inputs are worth fingerprinting, and any gap
+    // between the two would leave a record describing sources these artifacts were not built from.
+    //
+    // It used to remove the marker here instead. Removal said only "the last run did not fail",
+    // which is silent about the case that brought this file back — a run that succeeded, and then
+    // the sources moved underneath its output. The fingerprint is what makes that sayable.
+    await writeGeneratedFilesAtomically(filesToWrite, {
+      recordOnSuccess: {
+        path: generationStatePathFor(generatedDir),
+        record: {
+          outcome: "success",
+          at: new Date().toISOString(),
+          // `config !== undefined` and not the bare path: when no config exists, `configPath` is
+          // the legacy default for a file that is not there, and fingerprinting an absent file
+          // would record the unreadable-config sentinel as if it were content.
+          inputsHash: hashGenerationInputs(
+            projectRoot,
+            config !== undefined ? configPath : undefined,
+            files,
+          ),
+        },
+      },
+    });
   } catch (error) {
     if (composedOutPath !== undefined) {
       await removeComposedManifestIfPresent(generatedDir);

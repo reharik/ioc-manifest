@@ -1,6 +1,6 @@
 # Quick start
 
-This walks through a single-package setup in library mode.
+This walks through a single-package setup in library mode: four steps, first success in a few minutes. For the shape of the whole system before you start, read [How it fits together](/guide/how-it-fits-together); for adding this to a codebase that already exists, read [Adopting on an existing codebase](/guide/adopting) afterwards.
 
 ## 1. Create factories
 
@@ -52,6 +52,19 @@ Three reasons:
 
 The cost is one extra line per factory. That's the deal.
 
+Each property of that deps type declares **which of five things** it is: `userRepository: UserRepository` names a contract, so it resolves to whichever implementation of `UserRepository` is elected as the default. When you want one *specific* implementation rather than the elected one, you say so with `Named<T>`:
+
+```ts
+import type { Named } from "ioc-manifest";
+
+type UserServiceDeps = {
+  userRepository: UserRepository;              // the elected default
+  cachedUserRepository: Named<UserRepository>; // that implementation, pinned
+};
+```
+
+With one implementation per contract you will not need the marker; it matters as soon as a contract has two. The other three things a property can be — a group, a scope-root opener, and an external the composing app supplies — are in [the demand model](/concepts/conventions#demanding-a-dependency-the-five-things-a-deps-property-can-be).
+
 ## 2. Configure
 
 Create `ioc.config.ts` at your package root or under `src/`:
@@ -81,6 +94,8 @@ Run this after changing factories or config. The generator prints a summary:
 Generated generated/ioc-manifest.ts — 12 module factory(ies), 8 contract(s).
 ```
 
+`generate` is the verb that decides. It does not only emit — it checks that what it read holds together, and a run that finds a hard error writes **nothing at all**, reporting every offender in one pass rather than failing on the first. That means a red run leaves the files from your last green run in place; `ioc generate` describes your sources, and `ioc inspect` describes those files. When the two disagree, [the staleness banner](/reference/cli#two-worlds-the-staleness-banner) says so.
+
 You can also call `generateManifest()` programmatically if you need to integrate generation into a custom build script.
 
 ## 4. Bootstrap Awilix
@@ -103,6 +118,15 @@ const userService = container.resolve("userService");
 
 Note that `registerIocFromManifest` takes an **array** of manifests, even when there's only one. The array is set-like — ordering is irrelevant, and the same input always produces the same registrations.
 
-That's all you need for most single-package applications. The sections below cover the conventions in more detail. For monorepo composition, see [Cross-package composition](/monorepo/composition).
+That's all you need for most single-package applications.
+
+## Where to go from here
+
+- **[How it fits together](/guide/how-it-fits-together)** — the whole pipeline on one page, with every stage linked to its chapter.
+- **[Adopting on an existing codebase](/guide/adopting)** — how to read the red first run you get when you point this at code that already exists.
+- **[How conventions work](/concepts/conventions)** — contract identity, keys, election, and the five things a deps property can be.
+- **[Lifetimes](/concepts/lifetimes)** and **[Groups](/concepts/groups)** — the two rules that shape most real wiring.
+- **[Scope roots](/concepts/scope-roots)** — when part of what a unit needs does not exist until a request opens.
+- **[Cross-package composition](/monorepo/composition)** — monorepo app mode.
 
 ---

@@ -4,6 +4,10 @@
  * temp-then-rename for safe concurrent runs.
  */
 import fs from "node:fs/promises";
+import {
+  writeGenerationRecord,
+  type IocGenerationRecord,
+} from "../diagnostics/generationState.js";
 import path from "node:path";
 import ts from "typescript";
 import {
@@ -18,6 +22,7 @@ import type {
   EmittedTypeReference,
   FactorySourceLocation,
 } from "./analyzeDemandSupply/types.js";
+import { verifyImportBindingName } from "./emit/index.js";
 import type { DiscoveredFactory } from "./types.js";
 import type { ResolvedContractRegistration } from "./resolveRegistrationPlan.js";
 import type {
@@ -580,6 +585,15 @@ const addTypeImport = (
     bucket = { named: new Set(), defaults: new Set() };
     grouped.set(relImport, bucket);
   }
+  // Every import line the registry-types file carries is added here, whatever built the spec —
+  // including the plan-driven contract imports below, which never pass through the emitter's own
+  // seam. So this is where the invariant catches a name that is not a name.
+  verifyImportBindingName(
+    { typeName, relImport, useDefaultImport },
+    sourceFactory !== undefined
+      ? `the contract import for ${sourceFactory.exportName} in ${sourceFactory.modulePath}`
+      : undefined,
+  );
   if (useDefaultImport) {
     bucket.defaults.add(typeName);
   } else {
@@ -1159,8 +1173,27 @@ export type GeneratedFileWrite = {
   readonly contents: string;
 };
 
+export type WriteGeneratedFilesOptions = {
+  /**
+   * The generation record to write once every rename has landed.
+   *
+   * Part of THIS step, not a step after it: the renames are the moment these files become the
+   * newest truth, and that is the same moment their inputs are worth fingerprinting. Recording
+   * separately would open a window in which the record on disk describes sources these artifacts
+   * were not built from — which is the exact confusion the record exists to end.
+   *
+   * Writing is best effort — a record that cannot be written must not fail a generation that has
+   * already succeeded; it costs a banner, not correctness.
+   */
+  readonly recordOnSuccess?: {
+    readonly path: string;
+    readonly record: IocGenerationRecord;
+  };
+};
+
 export const writeGeneratedFilesAtomically = async (
   files: readonly GeneratedFileWrite[],
+  options?: WriteGeneratedFilesOptions,
 ): Promise<void> => {
   const pending: { readonly path: string; readonly tempPath: string }[] = [];
 
@@ -1172,6 +1205,12 @@ export const writeGeneratedFilesAtomically = async (
     }
     for (const { path: targetPath, tempPath } of pending) {
       await fs.rename(tempPath, targetPath);
+    }
+    if (options?.recordOnSuccess !== undefined) {
+      await writeGenerationRecord(
+        options.recordOnSuccess.path,
+        options.recordOnSuccess.record,
+      );
     }
   } catch (error) {
     for (const { tempPath } of pending) {

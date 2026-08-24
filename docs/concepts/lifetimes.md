@@ -136,7 +136,7 @@ The classic case: a `singleton` that depends on a `scoped` repository holding a 
 `ioc generate` catches this statically. It walks every dependency edge over the resolved graph and flags any edge where the dependency is shorter-lived than the consumer:
 
 - **`singleton → scoped`** is an **error** — generation fails. This includes a scoped dependency reached through a group (a group with a scoped member) or a scope-provided key (per-request, so effectively scoped). It is almost never intentional.
-- **`singleton → transient`** and **`scoped → transient`** are **warnings** (`[ioc]`-prefixed). A singleton legitimately holding a transient factory it constructs from per use is a real pattern, so these surface for review without blocking.
+- **`singleton → transient`** and **`scoped → transient`** are **warnings** (`[ioc]`-prefixed). A singleton legitimately holding a transient factory it constructs from per use is a real pattern, so these surface for review without blocking. Note that the default runtime is stricter than this ranking and will throw on them — see [The runtime is strict](#the-runtime-is-strict).
 
 The check resolves each demanded key precisely — a specific registration key, a contract's default slot, a group's members, or a scope-provided key — so it names the exact dependency rather than guessing across a contract's implementations. Findings aggregate: every warning prints, and if there are errors, generation throws once with the full list rather than failing on the first one.
 
@@ -173,6 +173,36 @@ registrations: {
 ```
 
 Prefer the `string[]` form. `true` silences every inversion for that consumer — including ones you introduce later and didn't mean to. Listing the keys you're knowingly inverting keeps the rest of the check live. The field is config-only and never appears in the generated manifest.
+
+## The runtime is strict
+
+`registerIocFromManifest` turns on Awilix **strict mode** by default. Strict is Awilix's own runtime correctness net: it refuses to register a singleton on a scoped container, resolves singletons against the root container so one cannot capture a scope, and — the check that matters here — **throws at first resolve when a longer-lived unit is handed a shorter-lived dependency**, instead of quietly freezing the first instance.
+
+Opt out per container:
+
+```ts
+registerIocFromManifest(container, composedManifests, overrides, { strict: false });
+```
+
+Three things are worth stating plainly, because this is one place where the static model and the runtime do not line up.
+
+**A statically WARNED inversion throws at runtime.** The severity split above is ours: `singleton → transient` and `scoped → transient` are warnings here because holding a transient factory and constructing from it per call is a real pattern. Awilix strict does not make that distinction — it errors on every inversion it can see. So an edge that generation merely *warned* about will fail at first resolve under the default runtime. The warning says so where it fires:
+
+```
+[ioc] [lifetime-inversion] 'grantSync' (singleton) depends on 'token' (transient) — a longer-lived
+consumer holding a shorter-lived dependency keeps the first instance it was given. Under the default
+runtime this edge throws at first resolve: `registerIocFromManifest` enables Awilix strict mode
+unless you pass `{ strict: false }`, and `allowLifetimeInversion` suppresses this report only — it
+is not a runtime exemption.
+```
+
+**`allowLifetimeInversion` is not a runtime exemption.** It suppresses the *static report* and nothing else. There is no flag in `ioc.config` that reaches into the container. If you suppress an inversion you own what it does at runtime, and you have exactly two honest options: fix the edge, or pass `{ strict: false }` and accept the old tolerance for the whole container. Suppressing and leaving strict on gets you a silent config and a crash.
+
+**Strict backstops DIRECT edges only — group edges are static-only by construction.** Awilix ranks a dependency against whatever is on its resolution stack at the moment it resolves. A group member is not resolved there: group member slots are lazy, and the read usually happens at call time, long after the enclosing `resolve()` returned (see [Members resolve when you read them](/concepts/groups#members-resolve-when-you-read-them)). There is no stack for Awilix to rank the member against, so a `consumer → group → member` inversion is invisible to strict. The generation-time check walks that hop explicitly and is the **only** guard on it. Nothing about turning strict on changes that, and nothing about turning it off weakens it.
+
+A member's *own* direct edges are still checked normally — reading a member starts its own resolution, so a member that itself holds something shorter-lived throws exactly as a direct resolve of it would.
+
+Contract default slots (`aliasTo`), group roots, and scope-root openers are all registered transient for reasons that have nothing to do with how long their values live, and are marked leak-safe so strict does not read that detail as a leak. Injecting an opener or a group into a singleton works.
 
 ## The captive dependency
 

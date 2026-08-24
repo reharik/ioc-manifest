@@ -37,6 +37,7 @@ export const IOC_DISCOVERY_SKIP_REASON_PARTITION = {
   missing_return_type_annotation: "near_miss",
   contract_annotation_inline_object: "near_miss",
   contract_annotation_anonymous_union: "near_miss",
+  contract_annotation_default_export: "near_miss",
   class_multiple_implements: "near_miss",
   class_configured_contract_not_implemented: "near_miss",
   class_inherited_contract_not_declared: "near_miss",
@@ -88,6 +89,8 @@ export const IOC_DISCOVERY_SKIP_REASON_GLOSS = {
     "the return annotation is an inline object literal; a contract must be a named interface or type alias",
   contract_annotation_anonymous_union:
     "the return annotation is an anonymous union; name it with a type alias so the contract has an identity",
+  contract_annotation_default_export:
+    "the annotated type is reachable only as its module's default export (or through `export =`), so it has no name to be a contract under; wrap it in a local `export interface Local extends Foreign {}` and annotate with that",
   class_multiple_implements:
     "the class lists more than one `implements` contract, so the contract site is ambiguous; declare exactly one",
   class_configured_contract_not_implemented:

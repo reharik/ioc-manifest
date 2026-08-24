@@ -25,3 +25,22 @@ export const sliceLabel = (slice: {
   readonly sourceId: string;
 }): string =>
   isLocalSlice(slice) ? localPackageProse(slice.packageLabel) : slice.packageLabel;
+
+/**
+ * The machine tokens for a set of slice INDEXES, deduplicated and in the order given.
+ *
+ * Several checks already carry `sliceIndex` on their row types — it is what orders their output and
+ * what resolves a `registrations.*.source` override — so attribution costs a lookup rather than a
+ * new field threaded through each of them. Unknown indexes are dropped rather than defaulted: a
+ * finding attributed to the wrong package is worse than one attributed to none.
+ */
+export const sourceIdsForSliceIndexes = (
+  slices: readonly { readonly sourceId: string }[],
+  sliceIndexes: readonly number[],
+): readonly string[] => [
+  ...new Set(
+    sliceIndexes
+      .map((index) => slices[index]?.sourceId)
+      .filter((id): id is string => id !== undefined),
+  ),
+];

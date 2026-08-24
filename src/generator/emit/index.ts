@@ -16,6 +16,7 @@ export {
 } from "./emitTypeReference.js";
 export {
   EmitImportClosureError,
+  verifyImportBindingName,
   verifyImportClosure,
   type VerifyImportClosureContext,
 } from "./verifyImportClosure.js";

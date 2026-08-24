@@ -276,10 +276,14 @@ describe("contract slots and Named<T> across a package boundary", () => {
         () => analyze("strictAuthMiddleware: Named<AuditSink>;"),
         (error: Error) => {
           assert.match(error.message, /\[named-contract-mismatch\]/);
-          assert.match(error.message, /demands `Named<AuditSink>`/);
+          assert.match(error.message, /Demands `Named<AuditSink>`/);
+          // The mechanism is now labeled fields: what was demanded, what the unit declares, where
+          // it is registered.
+          assert.match(error.message, /^ +demanded: +"AuditSink"$/m);
+          assert.match(error.message, /^ +declares: +"AuthMiddleware"$/m);
           assert.match(
             error.message,
-            /\(in composed package "@test\/lib-auth"\) declares contract "AuthMiddleware"/,
+            /^ +registered: +in composed package "@test\/lib-auth"$/m,
           );
           return true;
         },
@@ -289,7 +293,7 @@ describe("contract slots and Named<T> across a package boundary", () => {
     it("should reject the marker on a composed contract slot key", async () => {
       await assert.rejects(
         () => analyze("auditSink: Named<AuditSink>;"),
-        /\[named-on-contract-key\][\s\S]*is the contract key of "AuditSink"/,
+        /\[named-on-contract-key\][\s\S]*^ +contract: +"AuditSink"$/m,
       );
     });
   });

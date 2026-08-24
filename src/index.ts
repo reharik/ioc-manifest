@@ -44,7 +44,10 @@ export type { ScopeRoot } from "./scopeRoots/scopeRoot.js";
 export type { Named } from "./named/named.js";
 
 // Runtime registration entry point and its override types.
-export { registerIocFromManifest } from "./runtime/bootstrap.js";
+export {
+  registerIocFromManifest,
+  type IocRuntimeOptions,
+} from "./runtime/bootstrap.js";
 export type {
   ComposedContractOverride,
   ComposedRegistrationOverrides,

@@ -23,6 +23,7 @@ import ts from "typescript";
 import type { IocConfig, IocLifetime } from "../config/iocConfig.js";
 import type { IocGroupsManifest } from "../core/manifest.js";
 import { LOCAL_PACKAGE_ATTRIBUTION } from "../diagnostics/localPackageLabel.js";
+import { withOffenderCount } from "../diagnostics/offenderCount.js";
 import {
   docsPointerLine,
   docsPointerSuffix,
@@ -44,6 +45,7 @@ import { contractSlotsForPlans } from "./contractSlotKeys.js";
 import type { DiscoveredFactory, DiscoveredScopeRoot } from "./types.js";
 import {
   inversionSeverity,
+  STRICT_RUNTIME_CONSEQUENCE,
   isLifetimeInversionSuppressed,
 } from "./validateLifetimeInversionsAtCodegen.js";
 
@@ -327,9 +329,7 @@ export const buildScopeRootSupplyIndex = (
   }
 
   const groupMemberKeysByGroupKey = new Map<string, readonly string[]>();
-  for (const [groupKey, manifest] of Object.entries(
-    ctx.groupsManifest ?? {},
-  )) {
+  for (const [groupKey, manifest] of Object.entries(ctx.groupsManifest ?? {})) {
     groupMemberKeysByGroupKey.set(
       groupKey,
       groupMemberRegistrationKeys(manifest),
@@ -865,6 +865,7 @@ const formatScopeRootInversion = (
   depLifetime: IocLifetime,
   viaPath: readonly string[],
   lbvDeclared: boolean,
+  severity: "error" | "warn",
 ): string => {
   const consumerLabel =
     consumer.registrationKey ?? `${variant.variantName} (scope root)`;
@@ -878,7 +879,10 @@ const formatScopeRootInversion = (
       ? " A singleton freezes its scoped dependency at first construction, reusing it across every scope opened from this root."
       : " A longer-lived consumer should not depend on a shorter-lived dependency.";
   const trail = ` via ${[...viaPath, depKey].join(" → ")}. Register '${consumerLabel}' as scoped (or shorter), or mark it intentional with registrations['<Contract>'].<impl>.allowLifetimeInversion.`;
-  return `[ioc] ${head}${detail}${trail}${docsPointerSuffix("lifetime_inversion")}`;
+  /* Warned-only, for the same reason the global pass appends it: an error stops generation, so its
+     reader never reaches a runtime; a warning's reader does, and under strict it crashes there. */
+  const runtime = severity === "warn" ? STRICT_RUNTIME_CONSEQUENCE : "";
+  return `[ioc] ${head}${detail}${trail}${runtime}${docsPointerSuffix("lifetime_inversion")}`;
 };
 
 /**
@@ -1002,7 +1006,10 @@ export const verifyScopeRootVariant = (
     }
 
     const existing = demandsByKey.get(edge.key);
-    if (existing === undefined || (existing.satisfiedBy === "declared-lbv" && !assignable)) {
+    if (
+      existing === undefined ||
+      (existing.satisfiedBy === "declared-lbv" && !assignable)
+    ) {
       demandsByKey.set(edge.key, {
         key: edge.key,
         viaPath: edge.viaPath,
@@ -1087,6 +1094,7 @@ export const verifyScopeRootVariant = (
         "scoped",
         edge.viaPath,
         true,
+        severity,
       ),
     });
   }
@@ -1113,6 +1121,7 @@ export const verifyScopeRootVariant = (
         edge.depLifetime,
         edge.viaPath,
         false,
+        severity,
       ),
     });
   }
@@ -1210,11 +1219,14 @@ export const verifyScopeRootsAtCodegen = (
     result.errors.length > 0 &&
     runOptions?.tolerateInvalidAnnotations !== true
   ) {
-    throw new Error(
-      [
-        `[ioc] ${result.errors.length} scope-root verification failure(s). A scope root's declared late-bound-value set must satisfy every demand its resolution subtree makes that no manifest registration supplies:`,
-        ...result.errors,
-      ].join("\n"),
+    throw withOffenderCount(
+      new Error(
+        [
+          `[ioc] ${result.errors.length} scope-root verification failure(s). A scope root's declared late-bound-value set must satisfy every demand its resolution subtree makes that no manifest registration supplies:`,
+          ...result.errors,
+        ].join("\n"),
+      ),
+      result.errors.length,
     );
   }
 

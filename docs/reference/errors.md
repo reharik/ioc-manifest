@@ -43,6 +43,8 @@ A contract that elects no default has no contract key at all, and the `named-mar
   - [named-marker-required] Class "ArchiveStorage" at ArchiveStorage.ts:18 property "localStorage" is the registration key of implementation "localStorage" (contract "Storage", in this package), demanded without saying so. For the elected default, demand the contract key `storage: Storage`; for this specific implementation, write `localStorage: Named<Storage>`.
 ```
 
+`ioc validate` gives the same guidance from the artifact side. An app whose committed `IocExternals` predates a library's regrouping demands a key nothing supplies any more — which for a grouped member is the rule working, not drift, since a grouped contract claims no individual cradle key. The `[externals]` issue for such a key names the group and tells you to consume it, never to register a shadow factory in this app, and adds the hint to re-run `ioc generate` here. All three spellings a stale file can carry are recognized: the member's registration key, its contract key, and the group base's would-be slot key.
+
 Membership is read from composed manifests too, not only from this package's `ioc.config.ts`. A group declared in a library states its roots in the manifest it publishes, so a demand in the composing app for one of that library's members lands on `grouped-member-demand` — naming the library's group — rather than on `named-marker-required`, whose advice the group law forbids.
 
 An offender line repeats a pointer only when its own code points somewhere the preamble does not — `grouped-member-demand` links to [the group law](/concepts/groups#grouped-means-group-only), because the problem there is the family and not the spelling.
@@ -77,7 +79,7 @@ Each issue renders as the category tag, the plain-language summary, the mechanis
   → docs: https://reharik.github.io/ioc-manifest/monorepo/composition#externals
 ```
 
-`ioc validate --json` carries the same record — `category`, `severity`, `summary`, `details`, `suggestedFix` and `docUrl` — with no colour and no layout.
+`ioc validate --json` carries the same record — `category`, `severity`, `summary`, `details`, `suggestedFix` and `docUrl` — with no colour and no layout, under the document's `issues` key ([see the 4.0 envelope change](/reference/cli#breaking-in-4-0-ioc-validate-json-emits-an-object)).
 
 `[registry-integrity]` is the one that gates the others: before comparing types, the suite checks that the generated registry-types files it reads types out of actually compile. A name that does not resolve there becomes an error type, and comparisons against an error type pass regardless of what they are asked — so a broken file is reported as an error, and the comparisons that read from it are skipped and listed as skipped rather than reported satisfied. The usual cause is generated output that predates a source change; re-run `ioc generate` (or regenerate the composed package named in the issue). Errors that survive regeneration mean the file was emitted broken — that is an ioc-manifest bug worth reporting.
 
@@ -93,6 +95,40 @@ Resolution chain:
 ```
 
 Missing dependencies, cyclic references, lifetime violations, and factory exceptions are all caught and reported with the full resolution path.
+
+A cycle that runs through a **group** names the hop and the read that closed it. Group member slots resolve lazily, so resolving a group can no longer be the thing that builds a member — what is left is a unit reading a member property while it is itself still under construction:
+
+```
+[ioc] Cannot resolve group "writeServices".
+
+Resolution chain:
+  writeServices (group)
+    -> AddComment (addComment) [addComment.ts]
+      -> writeServices (group)
+        -> AddComment (addComment) [addComment.ts] ✖ cyclic dependency detected
+
+A member of group "writeServices" was read during construction.
+  Reading writeServices.addComment builds that member right there, and building it led
+  back to the unit that was still being constructed.
+
+Read group members at CALL time — inside the function or method you return — rather than at the
+top level of the factory body. Holding the group itself costs nothing: the group value is inert
+until a member property is read, so demanding or destructuring it constructs no members.
+```
+
+See [Members resolve when you read them](/concepts/groups#members-resolve-when-you-read-them).
+
+A **lifetime leak** caught by Awilix strict mode — on by default since `registerIocFromManifest` enables it — arrives through the same machinery, as a `lifetime` failure with the manifest-aware chain:
+
+```
+[ioc] Cannot build Holder using implementation holder.
+
+Resolution chain:
+  Holder (holder) [holder.ts]
+    -> Ticket (ticket) [ticket.ts] ✖ dependency lifetime is shorter than an ancestor (strict mode)
+```
+
+If generation only *warned* about this edge, that is expected and documented: our severity model ranks `singleton → transient` as a warning and strict does not. See [The runtime is strict](/concepts/lifetimes#the-runtime-is-strict) for the reconciliation and the `{ strict: false }` opt-out.
 
 A missing **scope-provided** value surfaces here too: resolving a service whose scope value wasn't registered produces a `no registered implementation` leaf for that key. If you see this for a key declared in `scopeProvided`, the fix is to register it onto the child scope before resolving — not to add a factory.
 

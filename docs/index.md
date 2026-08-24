@@ -7,8 +7,8 @@ hero:
   tagline: Write factory functions or classes, run the generator, get a fully typed container — no manual registrations. First-class monorepo composition.
   actions:
     - theme: brand
-      text: Get started
-      link: /guide/introduction
+      text: How it fits together
+      link: /guide/how-it-fits-together
     - theme: alt
       text: Quick start
       link: /guide/quick-start

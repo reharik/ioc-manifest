@@ -52,6 +52,27 @@ export type ValidationIssue = {
    * honest outcome, and better than a link to a page that does not exist.
    */
   readonly docUrl?: string;
+  /**
+   * The `sourceId`s of every slice this finding resolves through — the package that demanded the
+   * key, the packages that supply it, the manifests that disagree. `"local"` for the running one.
+   *
+   * Machine tokens, not the prose labels the summary prints: this is read by the freshness pass to
+   * decide which findings to caveat when a package's artifacts may predate its sources, and
+   * matching on rendered prose would tie that decision to how a sentence happens to be worded.
+   *
+   * Optional because a finding can genuinely involve no manifest — an `app-config` complaint about
+   * this package's own config is about the config, not about anyone's artifacts.
+   */
+  readonly packages?: readonly string[];
+  /**
+   * Set by the freshness pass when one of {@link packages} may predate its sources.
+   *
+   * Carried on the issue rather than computed at render time so the text output and `--json` cannot
+   * disagree about which findings are suspect — the same reason `docUrl` is attached here.
+   */
+  readonly possiblyStale?: true;
+  /** The prose caveat rendered under a {@link possiblyStale} finding. Set with it, never alone. */
+  readonly stalenessNote?: string;
 };
 
 export type ParsedImplementationMeta = {

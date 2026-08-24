@@ -95,6 +95,14 @@ export type DiscoveryAnalysisResult = {
    * occasion to emit a row for them.
    */
   readonly excludedFiles: readonly string[];
+  /**
+   * The generated directory this run resolved.
+   *
+   * Discovery mode never reads it — that is the point of the mode — but a caller reporting the
+   * result has to be able to check the staleness marker beside it, so a reader reconciling a
+   * failing generation against these findings is told the artifacts next door are stale.
+   */
+  readonly generatedDir: string;
 };
 
 export type DiscoveryManifestResolution = {
@@ -324,6 +332,7 @@ const runDiscoveryFromResolution = async (
       groupPlans: groupAnalysis.plans,
       lifetimeMarkerMatches: markerMatchesByFactoryKey,
       excludedFiles,
+      generatedDir,
     };
   } catch (error) {
     logDiscoveryProgramErrorDiagnosticsForFailure(

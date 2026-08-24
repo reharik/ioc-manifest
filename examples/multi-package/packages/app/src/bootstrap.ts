@@ -39,6 +39,18 @@ const main = (): void => {
     .sort((a, b) => a.localeCompare(b));
   console.log(`Loggers in group: ${loggerIds.join(", ")}`);
 
+  // The record group, and the pattern that makes group members lazy worth having: `addComment` is a
+  // member of `writeServices` and its sibling `toggleReaction` has no cradle key, so naming the
+  // group is the ONLY road to it. Resolving `writeServices` builds neither member; `addComment`
+  // holds the inert group object and reads `toggleReaction` inside `add`, at call time.
+  const writeServices = container.resolve("writeServices");
+  console.log(`Sibling through the group: ${writeServices.addComment.add("hi")}`);
+  console.log(
+    `Same instance the cradle would hand out: ${
+      writeServices.toggleReaction === container.resolve("writeServices").toggleReaction
+    }`,
+  );
+
   const scopeA = container.createScope();
   const scopeB = container.createScope();
   const scopedA1 = scopeA.resolve("requestTracingLogger");

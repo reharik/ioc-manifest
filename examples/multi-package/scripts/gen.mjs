@@ -1,4 +1,11 @@
-import { existsSync, globSync, readdirSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  globSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -115,6 +122,46 @@ for (const name of packages) {
     if (statSync(path.join(generatedDir, file)).size === 0) {
       fail(`${name}: generation wrote an empty ${GENERATED_DIRNAME}/${file}.`);
     }
+  }
+
+  /**
+   * The generation RECORD, beside the generated dir.
+   *
+   * A successful run writes one now — it used to remove the failure marker instead, which said only
+   * "the last run did not fail" and was silent about the case the field kept hitting: a run that
+   * succeeded, followed by an edit nobody regenerated for. The fingerprint in this file is what
+   * lets `ioc validate` say a package's artifacts may predate its sources.
+   *
+   * `expect-gen-broken.mjs` pins the failure half of the same file; this is the success half.
+   */
+  const recordPath = path.join(cwd, "src", ".ioc-generation-state.json");
+  if (!existsSync(recordPath)) {
+    fail(
+      `${name}: generation succeeded but left no .ioc-generation-state.json — nothing downstream can tell whether these artifacts still match their sources.`,
+    );
+  }
+
+  let record;
+  try {
+    record = JSON.parse(readFileSync(recordPath, "utf8"));
+  } catch (error) {
+    fail(`${name}: the generation record is not readable JSON: ${String(error)}`);
+  }
+
+  if (record.outcome !== "success") {
+    fail(
+      `${name}: generation succeeded but the record says ${JSON.stringify(record.outcome)}.`,
+    );
+  }
+  if (!/^sha256:[0-9a-f]{64}$/.test(record.inputsHash ?? "")) {
+    fail(
+      `${name}: the success record carries no usable inputsHash (${JSON.stringify(record.inputsHash)}) — the freshness check would have nothing to compare against.`,
+    );
+  }
+
+  // Never in the set a consumer diffs to prove generation is deterministic.
+  if (after.some((f) => f.startsWith(".ioc-generation-state"))) {
+    fail(`${name}: the generation record landed INSIDE ${GENERATED_DIRNAME}.`);
   }
 
   console.log(`[example] ${name}: wrote ${after.join(", ")}`);

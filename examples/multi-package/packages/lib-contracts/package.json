@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     "./types/LoggingService": "./src/types/LoggingService.ts",
-    "./types/IScoped": "./src/types/IScoped.ts"
+    "./types/IScoped": "./src/types/IScoped.ts",
+    "./types/WriteService": "./src/types/WriteService.ts"
   }
 }

@@ -24,6 +24,11 @@
  * so plain output is byte-stable and the tests assert real text. It never reaches `--json`.
  */
 import { resolveAnsi, type Ansi } from "../diagnostics/ansi.js";
+import type { IocGenerationStateMarker } from "../diagnostics/generationState.js";
+import {
+  toFreshnessJson,
+  type PackageFreshness,
+} from "../diagnostics/freshness.js";
 import { docsUrlForCode } from "../diagnostics/errorDocs.js";
 import type { ValidationIssue } from "./types.js";
 
@@ -80,6 +85,12 @@ const categoryTag = (issue: ValidationIssue, c: Ansi): string => {
 const formatIssueText = (issue: ValidationIssue, c: Ansi): string => {
   const lines: string[] = [
     `${categoryTag(issue, c)} ${issue.summary}`,
+    // Immediately under the claim, ahead of the mechanism. A caveat printed at the bottom of a
+    // block is read after the reader has already decided what the finding means; this one has to
+    // land while they are still deciding.
+    ...(issue.stalenessNote !== undefined
+      ? [`  ${c.yellow}${issue.stalenessNote}${c.reset}`]
+      : []),
     ...issue.details.map((d) => `  ${c.dim}${d}${c.reset}`),
   ];
   if (issue.suggestedFix !== undefined) {
@@ -123,12 +134,84 @@ export const formatValidationReportText = (
   return `${body}\n\n${summary}`;
 };
 
+export type FormatValidationJsonOptions = {
+  /** The staleness marker, when the last generation attempt in this package failed. */
+  readonly staleness?: IocGenerationStateMarker;
+  /**
+   * One entry per package judged for freshness, in slice order (local first).
+   *
+   * BESIDE `staleness`, not folded into it: they answer different questions and a consumer gating
+   * on one must not be silently handed the other. `staleness` is "the last attempt in THIS package
+   * refused to write"; `freshness` is "these packages' artifacts may predate their sources".
+   */
+  readonly freshness?: readonly PackageFreshness[];
+};
+
+/**
+ * The public projection of one issue.
+ *
+ * Explicit rather than "serialize whatever the object has": the issue type now carries fields that
+ * are machinery — `packages` is attribution the freshness pass matches on, `stalenessNote` is the
+ * rendered prose the text output prints — and neither is a promise this document should be making.
+ * What ships is the documented field set plus `possiblyStale`, which is the machine-readable half
+ * of the caveat.
+ */
+const toIssueJson = (issue: ValidationIssue): Record<string, unknown> => ({
+  category: issue.category,
+  severity: issue.severity,
+  summary: issue.summary,
+  details: issue.details,
+  ...(issue.suggestedFix !== undefined
+    ? { suggestedFix: issue.suggestedFix }
+    : {}),
+  ...(issue.docUrl !== undefined ? { docUrl: issue.docUrl } : {}),
+  ...(issue.possiblyStale === true ? { possiblyStale: true } : {}),
+});
+
 /**
  * Stable JSON schema for `--json` (public CLI API).
  *
  * Carries `docUrl` alongside the fields it always had — added, never renamed — and carries no
  * colour: escapes are a terminal concern and would corrupt a machine-read field.
+ *
+ * ### The document is an OBJECT (4.0 break)
+ *
+ * Through 3.x this was the bare issue array. It is now `{ issues }`, with an optional `staleness`
+ * beside it when the package's last generation attempt failed.
+ *
+ * The alternative was to keep the array and wrap it only when a marker is present. That is a
+ * smaller diff and a worse contract: a document whose ROOT TYPE depends on workspace state forces
+ * every consumer to branch on `Array.isArray` before it can read anything, and the branch that
+ * carries the extra field is the rare one — so it is the branch nobody tests and everybody's
+ * pipeline discovers in production, on the day something is already wrong. A stable root that
+ * consumers adapt to once, in a major, is the cheaper cost.
+ *
+ * Per-issue field names are untouched: `category`, `severity`, `summary`, `details`,
+ * `suggestedFix`, `docUrl` — plus `possiblyStale: true` on a finding whose packages may have
+ * artifacts that predate their sources. Only the envelope moved, and it moved once.
+ *
+ * The envelope now carries `freshness` beside `staleness`: an array, one entry per package judged,
+ * `{ name, outcome, generatedAt, currentMatches }`. Added beside, never renamed — a consumer
+ * reading `staleness` and `issues` sees exactly what it saw before.
  */
 export const formatValidationReportJson = (
   report: ValidationReport,
-): string => JSON.stringify(report.issues.map(withDocUrl), null, 2);
+  options?: FormatValidationJsonOptions,
+): string =>
+  JSON.stringify(
+    {
+      // Omitted rather than nulled when generation last succeeded, matching how `inspect --json`
+      // and `explain --json` carry the same field — one absence rule across all three verbs.
+      ...(options?.staleness !== undefined
+        ? { staleness: options.staleness }
+        : {}),
+      // Omitted when nothing was judged, on the same absence rule as `staleness`. An empty array
+      // would read as "every package was checked and all are current", which is a claim.
+      ...(options?.freshness !== undefined && options.freshness.length > 0
+        ? { freshness: toFreshnessJson(options.freshness) }
+        : {}),
+      issues: report.issues.map((issue) => toIssueJson(withDocUrl(issue))),
+    },
+    null,
+    2,
+  );

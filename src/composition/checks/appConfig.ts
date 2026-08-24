@@ -25,6 +25,16 @@ export const checkAppConfigSanity = (
 ): ValidationIssue[] => {
   const issues: ValidationIssue[] = [];
   const composedSet = new Set(ctx.composedPackageNames);
+  /**
+   * Two of the three complaints below are "the config names something no manifest declares", and
+   * the KNOWN set is a union read out of every slice. So they rest on every package's artifacts:
+   * a name that looks unknown may simply be one a stale manifest has not caught up to declaring.
+   *
+   * The third — a `source` naming a package that is not in `composedManifests` — is config against
+   * config, reads no manifest, and is attributed to nothing. That absence is the point of the
+   * field being optional.
+   */
+  const everySlice = ctx.slices.map((slice) => slice.sourceId);
   const allContracts = new Set([
     ...ctx.localContractNames,
     ...ctx.composedContractNames,
@@ -50,6 +60,7 @@ export const checkAppConfigSanity = (
         summary: `registrations references unknown contract ${JSON.stringify(contract)}`,
         details,
         suggestedFix: `Fix the contract name in ioc.config.ts registrations, or add a factory for ${JSON.stringify(contract)}.`,
+        packages: everySlice,
       });
     }
 
@@ -105,6 +116,7 @@ export const checkAppConfigSanity = (
           ],
           suggestedFix:
             "Remove the alias entry or declare the group in this app or a composed package.",
+          packages: everySlice,
         });
       }
     }

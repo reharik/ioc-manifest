@@ -40,6 +40,7 @@
  * say something false.
  */
 import type { IocConfig } from "../config/iocConfig.js";
+import { withOffenderCount } from "../diagnostics/offenderCount.js";
 import {
   loadCompositionContext,
   type PendingLocalArtifacts,
@@ -49,6 +50,16 @@ import {
   formatValidationIssuesText,
 } from "../composition/compositionReport.js";
 import { runCompositionChecks } from "../composition/runCompositionChecks.js";
+import {
+  applyFreshnessTaint,
+  assessFreshness,
+} from "../composition/freshnessPass.js";
+import {
+  formatFreshnessAdvisory,
+  formatFreshnessBanner,
+  isStale,
+  isUnknown,
+} from "../diagnostics/freshness.js";
 import type { ValidationIssue } from "../composition/types.js";
 import type { IocTsconfigContext } from "./iocProgramContext.js";
 
@@ -95,6 +106,18 @@ const formatFailure = (
  *
  * Warnings are printed here rather than returned for the caller to print, so the wording is the
  * same whichever verb surfaced them.
+ *
+ * ### Freshness, composed packages only
+ *
+ * The composed manifests this run reads are somebody else's committed output, and the ordering
+ * mistake the field kept making — edit the library, regenerate the app, forget to regenerate the
+ * library — lands right here: the suite judges the app against a description of the library as it
+ * was. So each composed package is checked and bannered.
+ *
+ * It never aborts. The finding may be perfectly real, and a generation that refused to run because
+ * a dependency *might* be behind would be unusable in exactly the monorepo it is meant for. The
+ * LOCAL package is not checked at all: this run is reading its sources right now and is about to
+ * rewrite its artifacts from them.
  */
 export const runCompositionSuiteAtCodegen = async (
   input: CompositionSuiteAtCodegenInput,
@@ -117,12 +140,32 @@ export const runCompositionSuiteAtCodegen = async (
     );
   }
 
-  const issues = runCompositionChecks(input.config, loaded.context);
+  const freshness = await assessFreshness({
+    projectRoot: input.projectRoot,
+    configPath: input.configPath,
+    config: input.config,
+    slices: loaded.context.slices,
+    includeLocal: false,
+  });
+  for (const entry of freshness.filter(isStale)) {
+    console.error(formatFreshnessBanner(entry));
+  }
+  for (const entry of freshness.filter(isUnknown)) {
+    console.error(formatFreshnessAdvisory(entry));
+  }
+
+  const issues = applyFreshnessTaint(
+    runCompositionChecks(input.config, loaded.context),
+    freshness,
+  );
   const report = buildValidationReport(issues);
 
   if (report.errorCount > 0) {
-    throw new Error(
-      formatFailure(report.issues, report.errorCount, report.warningCount),
+    throw withOffenderCount(
+      new Error(
+        formatFailure(report.issues, report.errorCount, report.warningCount),
+      ),
+      report.errorCount,
     );
   }
 

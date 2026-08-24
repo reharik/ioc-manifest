@@ -1,3 +1,8 @@
 node_modules/
 **/src/generated/**
 !**/src/generated/.gitkeep
+
+# Staleness marker: a failing `ioc generate` records that the artifacts on disk are the last
+# SUCCESSFUL write. Local, timestamped tooling state — harmless if committed (CI reading one is
+# working as intended: the tree genuinely has a failing generation), but there is nothing to share.
+**/.ioc-generation-state.json

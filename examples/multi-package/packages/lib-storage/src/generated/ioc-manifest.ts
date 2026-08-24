@@ -8,10 +8,12 @@ import type {
 } from "ioc-manifest";
 
 import * as ioc_ArchiveStorage from "../factories/ArchiveStorage.js";
+import * as ioc_buildAddComment from "../factories/buildAddComment.js";
 import * as ioc_buildAuditEventLogger from "../factories/buildAuditEventLogger.js";
 import * as ioc_buildLocalStorage from "../factories/buildLocalStorage.js";
 import * as ioc_buildS3Storage from "../factories/buildS3Storage.js";
 import * as ioc_buildStorageEventLogger from "../factories/buildStorageEventLogger.js";
+import * as ioc_buildToggleReaction from "../factories/buildToggleReaction.js";
 
 type IocManifestGroupRoots = {
   readonly loggers: {
@@ -29,6 +31,21 @@ type IocManifestGroupRoots = {
       },
     ];
   };
+  readonly writeServices: {
+    readonly kind: "object";
+    readonly baseType: "WriteService";
+    readonly baseTypeId: "@example/lib-contracts/src/types/WriteService.ts:WriteService";
+    readonly members: {
+      readonly addComment: {
+        readonly contractName: "AddComment";
+        readonly registrationKey: "addComment";
+      };
+      readonly toggleReaction: {
+        readonly contractName: "ToggleReaction";
+        readonly registrationKey: "toggleReaction";
+      };
+    };
+  };
 };
 
 export const iocManifest = {
@@ -36,13 +53,29 @@ export const iocManifest = {
 
   moduleImports: [
     ioc_ArchiveStorage,
+    ioc_buildAddComment,
     ioc_buildAuditEventLogger,
     ioc_buildLocalStorage,
     ioc_buildS3Storage,
     ioc_buildStorageEventLogger,
+    ioc_buildToggleReaction,
   ] as const satisfies readonly IocModuleNamespace[],
 
   contracts: {
+    AddComment: {
+      addComment: {
+        exportName: "buildAddComment",
+        registrationKey: "addComment",
+        modulePath: "buildAddComment.ts",
+        relImport: "../factories/buildAddComment.js",
+        contractName: "AddComment",
+        implementationName: "addComment",
+        lifetime: "singleton",
+        moduleIndex: 1,
+        discoveredBy: "naming",
+        dependencyKeys: ["writeServices"],
+      },
+    },
     LoggingService: {
       auditEventLogger: {
         exportName: "buildAuditEventLogger",
@@ -52,7 +85,7 @@ export const iocManifest = {
         contractName: "LoggingService",
         implementationName: "auditEventLogger",
         lifetime: "scoped",
-        moduleIndex: 1,
+        moduleIndex: 2,
         discoveredBy: "naming",
       },
       storageEventLogger: {
@@ -63,7 +96,7 @@ export const iocManifest = {
         contractName: "LoggingService",
         implementationName: "storageEventLogger",
         lifetime: "scoped",
-        moduleIndex: 4,
+        moduleIndex: 5,
         discoveredBy: "naming",
       },
     },
@@ -90,7 +123,7 @@ export const iocManifest = {
         contractName: "Storage",
         implementationName: "localStorage",
         lifetime: "singleton",
-        moduleIndex: 2,
+        moduleIndex: 3,
         default: true,
         discoveredBy: "naming",
         configOverridesApplied: ["default"],
@@ -103,7 +136,20 @@ export const iocManifest = {
         contractName: "Storage",
         implementationName: "s3Storage",
         lifetime: "singleton",
-        moduleIndex: 3,
+        moduleIndex: 4,
+        discoveredBy: "naming",
+      },
+    },
+    ToggleReaction: {
+      toggleReaction: {
+        exportName: "buildToggleReaction",
+        registrationKey: "toggleReaction",
+        modulePath: "buildToggleReaction.ts",
+        relImport: "../factories/buildToggleReaction.js",
+        contractName: "ToggleReaction",
+        implementationName: "toggleReaction",
+        lifetime: "singleton",
+        moduleIndex: 6,
         discoveredBy: "naming",
       },
     },
@@ -124,6 +170,23 @@ export const iocManifest = {
         registrationKey: "storageEventLogger",
       },
     ],
+  },
+
+  // writeServices
+  writeServices: {
+    kind: "object",
+    baseType: "WriteService",
+    baseTypeId: "@example/lib-contracts/src/types/WriteService.ts:WriteService",
+    members: {
+      addComment: {
+        contractName: "AddComment",
+        registrationKey: "addComment",
+      },
+      toggleReaction: {
+        contractName: "ToggleReaction",
+        registrationKey: "toggleReaction",
+      },
+    },
   },
 } as const satisfies IocGeneratedContainerManifest<IocManifestGroupRoots>;
 

@@ -1,5 +1,8 @@
 import { AwilixResolutionError } from "awilix";
-import type { IocResolutionFrame } from "./iocResolutionStack.js";
+import {
+  IOC_GROUP_FRAME_IMPLEMENTATION_NAME,
+  type IocResolutionFrame,
+} from "./iocResolutionStack.js";
 import type { RegistrationKeyIndex } from "./registrationKeyIndex.js";
 
 export type ResolutionFrame = {
@@ -15,6 +18,31 @@ export type IocResolutionFailureType =
   | "threw"
   | "cyclic"
   | "lifetime";
+
+/**
+ * The group hop a failure surfaced through: which group root, and which member slot was read.
+ *
+ * Recorded only when a cyclic failure comes out of a group's member accessor. Group member
+ * properties resolve lazily (see `bootstrap.ts`), so the only way a group can still participate in
+ * a cycle is for a member property to be READ while the reader is itself still being constructed —
+ * which is a real cycle, not one manufactured by eager building. Carrying the hop lets the single
+ * formatting site say so.
+ */
+export type IocResolutionGroupHop = {
+  groupKey: string;
+  /** Object-group property name, or `[i]` for a collection slot. */
+  memberLabel: string;
+};
+
+/** `writeServices.toggleReaction` for an object group, `loggers[0]` for a collection. */
+const describeGroupMemberRead = (hop: IocResolutionGroupHop): string =>
+  hop.memberLabel.startsWith("[")
+    ? `${hop.groupKey}${hop.memberLabel}`
+    : `${hop.groupKey}.${hop.memberLabel}`;
+
+const isGroupFrame = (frame: ResolutionFrame): boolean =>
+  frame.implementationName === IOC_GROUP_FRAME_IMPLEMENTATION_NAME &&
+  frame.registrationKey === frame.contractName;
 
 const registrationKeyOf = (frame: ResolutionFrame): string =>
   frame.registrationKey ?? frame.contractName;
@@ -116,6 +144,12 @@ const describeFrameLine = (
 ): string => {
   const key = frame.registrationKey;
 
+  /* Ahead of the key lookups: a group root claims a cradle key that is neither a registration nor a
+     slot, so without this the hop renders as the bare key and reads like a missing unit. */
+  if (isGroupFrame(frame)) {
+    return `${frame.contractName} ${IOC_GROUP_FRAME_IMPLEMENTATION_NAME}`;
+  }
+
   if (key !== undefined) {
     const meta = keyIndex.metaByRegistrationKey.get(key);
     if (meta !== undefined) {
@@ -152,6 +186,10 @@ const formatHeadline = (
   const first = frames[0];
   if (first === undefined) {
     return "Container resolution failed.";
+  }
+
+  if (isGroupFrame(first)) {
+    return `Cannot resolve group ${JSON.stringify(first.contractName)}.`;
   }
 
   const key = first.registrationKey;
@@ -272,6 +310,25 @@ const formatResolutionChainBlock = (
 };
 
 /**
+ * The one thing a cycle through a group hop can mean, plus the fix.
+ *
+ * Not new cycle detection — the cycle is Awilix's, reported by Awilix. This only names the shape it
+ * almost always has, because after member properties went lazy the eager-construction cycle stopped
+ * existing and construction-time member reads are what is left.
+ */
+const formatGroupHopNote = (hop: IocResolutionGroupHop): string =>
+  [
+    "",
+    `A member of group ${JSON.stringify(hop.groupKey)} was read during construction.`,
+    `  Reading ${describeGroupMemberRead(hop)} builds that member right there, and building it led`,
+    "  back to the unit that was still being constructed.",
+    "",
+    "Read group members at CALL time — inside the function or method you return — rather than at the",
+    "top level of the factory body. Holding the group itself costs nothing: the group value is inert",
+    "until a member property is read, so demanding or destructuring it constructs no members.",
+  ].join("\n");
+
+/**
  * Builds the final user-facing message from structured data (single formatting site).
  */
 export const formatIocResolutionErrorMessage = (
@@ -280,7 +337,9 @@ export const formatIocResolutionErrorMessage = (
 ): string => {
   const headline = formatHeadline(err.frames, keyIndex);
   const chain = formatResolutionChainBlock(err, keyIndex);
-  return `[ioc] ${headline}\n\n${chain}`.trimEnd();
+  const note =
+    err.groupHop !== undefined ? formatGroupHopNote(err.groupHop) : "";
+  return `[ioc] ${headline}\n\n${chain}${note}`.trimEnd();
 };
 
 export class IocResolutionError extends Error {
@@ -291,6 +350,8 @@ export class IocResolutionError extends Error {
   throwDetail?: string;
   /** Awilix diagnostic when failureType is cyclic or lifetime. */
   awilixDetail?: string;
+  /** Set when a cyclic failure surfaced through a group's member accessor (innermost hop wins). */
+  groupHop?: IocResolutionGroupHop;
 
   constructor(init: {
     frames: ResolutionFrame[];
@@ -411,16 +472,32 @@ export const propagateIocResolutionFailure = (params: {
   cause: unknown;
   keyIndex: RegistrationKeyIndex;
   stackSnapshot: readonly IocResolutionFrame[];
+  /** Passed only by a group member accessor; recorded only for a cyclic failure. */
+  groupHop?: IocResolutionGroupHop;
 }): never => {
-  const { cause, keyIndex, stackSnapshot } = params;
+  const { cause, keyIndex, stackSnapshot, groupHop } = params;
+
+  /* Innermost hop wins: the error travels back out through every enclosing accessor, and the one
+     that first caught it is the read that actually closed the loop. */
+  const recordGroupHop = (err: IocResolutionError): void => {
+    if (
+      groupHop !== undefined &&
+      err.groupHop === undefined &&
+      err.failureType === "cyclic"
+    ) {
+      err.groupHop = groupHop;
+    }
+  };
 
   if (isIocResolutionError(cause)) {
     mergeAncestorStackIntoResolutionError(cause, stackSnapshot);
+    recordGroupHop(cause);
     applyIocResolutionErrorMessage(cause, keyIndex);
     throw cause;
   }
 
   const err = createIocResolutionError(cause, keyIndex, stackSnapshot);
+  recordGroupHop(err);
   applyIocResolutionErrorMessage(err, keyIndex);
   throw err;
 };

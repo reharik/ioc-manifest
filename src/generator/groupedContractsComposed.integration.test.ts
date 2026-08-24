@@ -452,8 +452,9 @@ describe("the four doors against a composed grouped member", () => {
 
         assert.match(message, /\[grouped-member-demand\]/);
         assert.ok(message.includes(JSON.stringify(door.key)));
-        // The group named is the LIBRARY's, read off its manifest.
-        assert.match(message, /group "writeServices"/);
+        // The group named is the LIBRARY's, read off its manifest — now a labeled field.
+        assert.match(message, /^ +group: +"writeServices"$/m);
+        assert.match(message, /^ +site: +\S+\.ts:\d+ {2}\(Factory "buildAuthService"\)$/m);
         // Beat 1: consume through the group — and a record group can name the property.
         assert.match(
           message,
@@ -517,7 +518,7 @@ describe("the four doors against a composed grouped member", () => {
       const message = await errorFor("fileChangeLog: ChangeLogSink;");
 
       assert.match(message, /\[grouped-member-demand\]/);
-      assert.match(message, /group "changeLogSinks"/);
+      assert.match(message, /^ +group: +"changeLogSinks"$/m);
       assert.match(
         message,
         /a collection group's members are individually anonymous by declaration/,

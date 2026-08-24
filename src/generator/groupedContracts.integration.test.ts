@@ -418,8 +418,9 @@ describe("Named<T> and bare demands against grouped members", () => {
           assert.match(error.message, /\[grouped-member-demand\]/);
           assert.match(
             error.message,
-            /names the contract key "notificationStrategy" of "NotificationStrategy"/,
+            /Names the contract key "notificationStrategy", which belongs to a GROUPED contract/,
           );
+          assert.match(error.message, /^ +contract: +"NotificationStrategy"$/m);
           return true;
         },
       );
@@ -494,9 +495,13 @@ describe("group lifetime is declared on the base", () => {
           ),
         (error: Error) => {
           assert.match(error.message, /\[group-lifetime-on-member\]/);
+          // Labeled fields carry the mechanism; the law is a guidance beat on its own line.
+          assert.match(error.message, /^ +contract: +"MarkedStrategy"$/m);
+          assert.match(error.message, /^ +marker: +"IScopedUnit" \(scoped\)$/m);
+          assert.match(error.message, /^ +base: +"NotificationStrategy"$/m);
           assert.match(
             error.message,
-            /lifetime is a property of the group; declare the marker on the base "NotificationStrategy" \(member "MarkedStrategy" may not carry its own\)/,
+            /^ +Lifetime is a property of the group: declare the marker on the base "NotificationStrategy" — a member \("MarkedStrategy"\) may not carry its own\.$/m,
           );
           return true;
         },
@@ -516,7 +521,11 @@ describe("group lifetime is declared on the base", () => {
           assert.match(error.message, /\[group-lifetime-config-override\]/);
           assert.match(
             error.message,
-            /declare the marker on the base "AuditChannel" \(member "FileAuditChannel" may not carry its own\)/,
+            /^ +config: +registrations\["FileAuditChannel"\]\["fileAuditChannel"\]\.lifetime = "singleton"$/m,
+          );
+          assert.match(
+            error.message,
+            /^ +Lifetime is a property of the group: declare the marker on the base "AuditChannel" — a member \("FileAuditChannel"\) may not carry its own\.$/m,
           );
           return true;
         },

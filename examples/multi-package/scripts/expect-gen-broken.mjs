@@ -8,7 +8,7 @@
  * used to generate happily and leave the error to be discovered later — by `ioc validate`, which
  * the primary workflow never runs, or by `tsc` against the emitted assertions.
  */
-import { readdirSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,8 @@ const repoRoot = path.join(exampleRoot, "..", "..");
 const iocCli = path.join(repoRoot, "dist", "cli", "ioc.js");
 const pkgDir = path.join(exampleRoot, "packages", "app-externals-broken");
 const generatedDir = path.join(pkgDir, "src", "generated");
+/** Beside the generated dir, never inside it — see `diagnostics/generationState.ts`. */
+const markerPath = path.join(pkgDir, "src", ".ioc-generation-state.json");
 
 const fail = (message, output = "") => {
   console.error(`[example] ${message}`);
@@ -27,6 +29,9 @@ const fail = (message, output = "") => {
   }
   process.exit(1);
 };
+
+// Start from a clean slate so the marker this run leaves is unambiguously this run's.
+rmSync(markerPath, { force: true });
 
 const result = spawnSync(process.execPath, [iocCli, "generate"], {
   cwd: pkgDir,
@@ -70,6 +75,39 @@ if (written.length > 0) {
   );
 }
 
+// The staleness marker: a failing generation records that the artifacts on disk are the last
+// SUCCESSFUL write, so `ioc validate`, `ioc inspect` and `ioc explain` can say so before reporting.
+if (!existsSync(markerPath)) {
+  fail(
+    "generation refused but left no .ioc-generation-state.json — the artifact-reading verbs would describe stale output with no cue",
+  );
+}
+
+let marker;
+try {
+  marker = JSON.parse(readFileSync(markerPath, "utf8"));
+} catch (error) {
+  fail(`the staleness marker is not readable JSON: ${String(error)}`);
+}
+
+if (marker.outcome !== "failed" || typeof marker.at !== "string") {
+  fail(
+    `the staleness marker does not record a failure: ${JSON.stringify(marker)}`,
+  );
+}
+
+if (!/Nothing was written/.test(output)) {
+  fail(
+    "generation refused but did not say the artifacts on disk were left alone:",
+    output,
+  );
+}
+
+// The marker must never land in the set a consumer diffs to prove generation is deterministic.
+if (existsSync(generatedDir) && readdirSync(generatedDir).some((f) => f.startsWith(".ioc-generation-state"))) {
+  fail("the staleness marker landed INSIDE the generated dir — generated-diff would never be zero");
+}
+
 console.log(
-  "[example] app-externals-broken: generation refused with the aggregated composition report, nothing written (expected)",
+  "[example] app-externals-broken: generation refused with the aggregated composition report, nothing written, staleness marker recorded (expected)",
 );

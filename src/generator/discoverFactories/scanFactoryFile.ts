@@ -257,6 +257,8 @@ const skipReasonForContractResolution = (
       return IocDiscoverySkipReason.CONTRACT_ANNOTATION_INLINE_OBJECT;
     case "anonymous_union":
       return IocDiscoverySkipReason.CONTRACT_ANNOTATION_ANONYMOUS_UNION;
+    case "default_export_contract":
+      return IocDiscoverySkipReason.CONTRACT_ANNOTATION_DEFAULT_EXPORT;
     case "unsupported":
       return IocDiscoverySkipReason.CONTRACT_NOT_RESOLVED;
     case "unresolved":
@@ -613,7 +615,13 @@ const acceptFactoryUnit = (args: {
       skip(
         exportName,
         reason,
-        resolution.kind === "unresolved" ? resolution.writtenName : undefined,
+        // The WRITTEN name, never the resolved one. For a default-export site the resolved name is
+        // the literal `default`, and a report row reading `→ default` names nothing a reader could
+        // act on; the local binding they wrote is what points back at their own file.
+        resolution.kind === "unresolved" ||
+          resolution.kind === "default_export_contract"
+          ? resolution.writtenName
+          : undefined,
       );
     }
     return undefined;
@@ -720,7 +728,13 @@ const acceptClassUnit = (args: {
       skip(
         exportName,
         reason,
-        resolution.kind === "unresolved" ? resolution.writtenName : undefined,
+        // The WRITTEN name, never the resolved one. For a default-export site the resolved name is
+        // the literal `default`, and a report row reading `→ default` names nothing a reader could
+        // act on; the local binding they wrote is what points back at their own file.
+        resolution.kind === "unresolved" ||
+          resolution.kind === "default_export_contract"
+          ? resolution.writtenName
+          : undefined,
       );
     }
     return undefined;

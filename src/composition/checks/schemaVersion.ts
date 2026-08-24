@@ -20,6 +20,7 @@ export const checkSchemaVersions = (ctx: CompositionContext): ValidationIssue[] 
       ],
       suggestedFix:
         "Regenerate manifests with the same ioc-manifest version as this app, then re-run `ioc validate`.",
+      packages: [slice.sourceId],
     });
   }
 

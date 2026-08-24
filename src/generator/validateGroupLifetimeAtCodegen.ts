@@ -43,6 +43,12 @@ import {
   type GroupedContractIndex,
 } from "../groups/groupedContracts.js";
 import type { GroupDiscoveryBuildContext } from "../groups/resolveGroupPlan.js";
+import { withOffenderCount } from "../diagnostics/offenderCount.js";
+import {
+  formatAggregatedOffenders,
+  type Offender,
+  type OffenderField,
+} from "../diagnostics/offenderLayout.js";
 import { resolveLifetimeMarkerTypes } from "./resolveLifetimeMarkers.js";
 import type { DiscoveredFactory } from "./types.js";
 
@@ -56,11 +62,12 @@ export type GroupLifetimeFindingCode =
 export type GroupLifetimeFinding = {
   code: GroupLifetimeFindingCode;
   contractName: string;
-  message: string;
+  /** The offender in the shared labeled-field layout — see `diagnostics/offenderLayout.ts`. */
+  offender: Omit<Offender, "docsUrl">;
 };
 
 const declareOnBase = (contractName: string, baseType: string): string =>
-  `lifetime is a property of the group; declare the marker on the base ${JSON.stringify(baseType)} (member ${JSON.stringify(contractName)} may not carry its own)`;
+  `Lifetime is a property of the group: declare the marker on the base ${JSON.stringify(baseType)} — a member (${JSON.stringify(contractName)}) may not carry its own.`;
 
 /** Family pointer for the aggregated preamble; both codes are the same rule seen from two sides. */
 const GROUP_LIFETIME_FAMILY_CODE = "group-lifetime";
@@ -69,11 +76,11 @@ export const formatGroupLifetimeErrors = (
   findings: readonly GroupLifetimeFinding[],
 ): string => {
   const docsLine = docsPointerLine(GROUP_LIFETIME_FAMILY_CODE);
-  return [
+  return formatAggregatedOffenders(
     `[ioc] ${findings.length} grouped member${findings.length === 1 ? "" : "s"} declare${findings.length === 1 ? "s" : ""} a lifetime. A group is a family whose members are handed out interchangeably, so the family ranks one lifetime and the base is where it is declared:`,
-    ...(docsLine !== undefined ? [docsLine] : []),
-    ...findings.map((finding) => finding.message),
-  ].join("\n");
+    docsLine,
+    findings.map((finding) => finding.offender),
+  );
 };
 
 export type ValidateGroupLifetimeContext = {
@@ -135,7 +142,23 @@ export const collectGroupLifetimeFindings = (
       findings.push({
         code: "group-lifetime-config-override",
         contractName,
-        message: `  - [group-lifetime-config-override] registrations[${JSON.stringify(contractName)}][${JSON.stringify(implementationName)}].lifetime is set to ${JSON.stringify(override.lifetime)}, but ${JSON.stringify(contractName)} is a member of group ${JSON.stringify(membership.groupName)}: ${declareOnBase(contractName, membership.baseType)}. Set the lifetime for the whole family by putting a lifetimeMarkers interface on ${JSON.stringify(membership.baseType)}.`,
+        offender: {
+          code: "group-lifetime-config-override",
+          claim: `Sets a lifetime in config for a GROUPED member.`,
+          fields: [
+            {
+              label: "config",
+              value: `registrations[${JSON.stringify(contractName)}][${JSON.stringify(implementationName)}].lifetime = ${JSON.stringify(override.lifetime)}`,
+            },
+            { label: "contract", value: JSON.stringify(contractName) },
+            { label: "group", value: JSON.stringify(membership.groupName) },
+            { label: "base", value: JSON.stringify(membership.baseType) },
+          ],
+          guidance: [
+            declareOnBase(contractName, membership.baseType),
+            `Set the lifetime for the whole family by putting a lifetimeMarkers interface on ${JSON.stringify(membership.baseType)}.`,
+          ],
+        },
       });
     }
   }
@@ -192,7 +215,24 @@ export const collectGroupLifetimeFindings = (
       findings.push({
         code: "group-lifetime-on-member",
         contractName,
-        message: `  - [group-lifetime-on-member] Contract ${JSON.stringify(contractName)}${memberLocation(ctx, contractName)} declares lifetime marker ${JSON.stringify(marker.name)} (${marker.lifetime}), but it is a member of group ${JSON.stringify(membership.groupName)}: ${declareOnBase(contractName, membership.baseType)}. Move \`extends ${marker.name}\` from ${JSON.stringify(contractName)} to ${JSON.stringify(membership.baseType)}, or take ${JSON.stringify(contractName)} out of the group.`,
+        offender: {
+          code: "group-lifetime-on-member",
+          claim: `Contract ${JSON.stringify(contractName)} declares a lifetime marker the group's base does not carry.`,
+          fields: [
+            { label: "contract", value: JSON.stringify(contractName) },
+            {
+              label: "marker",
+              value: `${JSON.stringify(marker.name)} (${marker.lifetime})`,
+            },
+            { label: "group", value: JSON.stringify(membership.groupName) },
+            { label: "base", value: JSON.stringify(membership.baseType) },
+            ...memberSiteFields(ctx, contractName),
+          ],
+          guidance: [
+            declareOnBase(contractName, membership.baseType),
+            `Move \`extends ${marker.name}\` from ${JSON.stringify(contractName)} to ${JSON.stringify(membership.baseType)}, or take ${JSON.stringify(contractName)} out of the group.`,
+          ],
+        },
       });
     }
   }
@@ -200,19 +240,25 @@ export const collectGroupLifetimeFindings = (
   return findings;
 };
 
-/** " in services/Foo.ts" for the first implementation of the contract, or "" when unknown. */
-const memberLocation = (
+/**
+ * The `site:` field for a member contract, or no field at all when discovery found no
+ * implementation of it.
+ *
+ * A contract with no implementation in this package is legitimate — the offender is the marker on
+ * the contract, not any factory — so the field is omitted rather than filled with a placeholder.
+ */
+const memberSiteFields = (
   ctx: ValidateGroupLifetimeContext,
   contractName: string,
-): string => {
+): OffenderField[] => {
   const factory = ctx.factories.find((f) => f.contractName === contractName);
   if (factory === undefined) {
-    return "";
+    return [];
   }
   const rel = path
     .relative(ctx.projectRoot, path.join(ctx.projectRoot, factory.modulePath))
     .replace(/\\/g, "/");
-  return ` (implemented in ${rel})`;
+  return [{ label: "site", value: `${rel}  (implements ${JSON.stringify(contractName)})` }];
 };
 
 /**
@@ -224,7 +270,10 @@ export const validateGroupLifetimeAtCodegen = (
 ): void => {
   const findings = collectGroupLifetimeFindings(ctx);
   if (findings.length > 0) {
-    throw new Error(formatGroupLifetimeErrors(findings));
+    throw withOffenderCount(
+      new Error(formatGroupLifetimeErrors(findings)),
+      findings.length,
+    );
   }
 };
 

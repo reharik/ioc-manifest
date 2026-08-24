@@ -1,6 +1,7 @@
 import { selectDefaultImplementationName } from "../../core/defaultImplementationSelection.js";
 import { contractNameToDefaultRegistrationKey } from "../../generator/naming.js";
 import type { CompositionContext, ValidationIssue } from "../types.js";
+import { sourceIdsForSliceIndexes } from "../sliceLabel.js";
 import {
   composedContractNamesSorted,
   groupedContractNamesAcrossSlices,
@@ -46,6 +47,10 @@ export const checkDefaultAmbiguity = (
         ),
         suggestedFix:
           `Declare registrations.${JSON.stringify(contractName)}.<implementation>.default: true in your app's ioc.config.ts for exactly one implementation.`,
+        packages: sourceIdsForSliceIndexes(
+          ctx.slices,
+          manifestDefaults.map((d) => d.sliceIndex),
+        ),
       });
       continue;
     }
@@ -78,6 +83,10 @@ export const checkDefaultAmbiguity = (
           ),
         ],
         suggestedFix: `Declare registrations.${JSON.stringify(contractName)}.<implementation>.default: true in your app's ioc.config.ts for exactly one implementation.`,
+        packages: sourceIdsForSliceIndexes(
+          ctx.slices,
+          rows.map((r) => r.sliceIndex),
+        ),
       });
     }
   }
