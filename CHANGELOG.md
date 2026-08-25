@@ -5,7 +5,51 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [4.0.1] - Unreleased
+## [4.0.2]
+
+### Internal
+
+- **The test suite got a fast lane, the two slowest files stopped re-generating the same fixture,
+  and prettier moved off the CLI.** No check changed what it verifies and nothing was deleted; the
+  suite went from a **128.3s** mean (130.3 / 126.9 / 127.8) to **98.4s** (102.3 / 99.2 / 93.7) —
+  the slowest run after is 24.6s below the fastest run before, so the ~30s is not the spread. Test
+  count went 1,197 → 1,210.
+
+  `npm run test:fast` is new: the 50 files that build no TypeScript program, spawn no subprocess and
+  run no codegen, which is **568 of the 1,210 tests in 6.4s**. Iterate on it; run `npm test` before
+  reporting anything.
+
+  The seam is the `*.integration` suffix, and it is enforced rather than remembered:
+  `src/test-support/testLaneSeam.test.ts` fails on a fast-lane file that can reach a program build,
+  a subprocess, or the codegen entry through its value imports, and on an `.integration` file that
+  can reach none of them. 35 files were renamed to make the suffix true in both directions — 34 that
+  were building TypeScript programs in the lane that promised it did not, and one that was excluded
+  from it to read a single file. The rule and the clock agree: under it every fast-lane file runs in
+  ≤1.1s and every file it excludes runs in ≥1.0s.
+
+  `generationFreshness` (41.1s → 12.1s), `generationStaleness` (39.0s → 11.0s) and `iocHelp`
+  (12.9s → 5.6s) each rebuilt the same generated workspace once per case and spawned the CLI once
+  per assertion. They now generate each starting state once, filesystem-copy it for the cases that
+  write to it, and spawn a real process only for the claims that are about a process — exit codes,
+  stdout/stderr as separate descriptors, `NO_COLOR` through a real environment. Assertion counts
+  went 52 → 52, 51 → 55 and 30 → 36: the claims about exit codes and stream separation that the old
+  spawns set up but never actually made are now made.
+
+  Formatting generated files moved from `node prettier.cjs --write <file>` per emitted file to
+  prettier's Node API. **Generation pays this too.** Formatting two artifacts costs 336ms of
+  subprocess on the old path; on the new one it is 317ms in a process generating for the first time
+  and 35ms in one that has generated before — so a watch or an in-process monorepo loop saves ~300ms
+  per package and a single cold `ioc generate` saves ~20ms. End to end, `npm run example:full`
+  (five generations, each its own process) went 31.1s → 30.2s.
+
+  Output is byte-identical, pinned by a test that formats the same artifact through the real CLI and
+  through the new path and compares them: the API path reproduces the CLI's `.editorconfig` support
+  and its `.gitignore` / `.prettierignore` skipping, neither of which `prettier.format()` does by
+  default — the second of which matters, because a generated directory is very often gitignored and
+  the CLI has been skipping it while still paying for the spawn. Prettier remains an optional peer
+  dependency, and a project without it still generates unformatted files exactly as before.
+
+## [4.0.1]
 
 ### Fixed
 
@@ -21,16 +65,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The hooks are meant to be independent — each registration cache-busts `esm/index.mjs` so it gets
   its own state, and each hook ignores resolutions outside its own namespace. **In `tsx` 4.22.0
   through 4.22.4 that isolation is broken**: `initialize` / `resolve` / `load` are re-exported from a
-  helper module that is *not* cache-busted, and all of them close over a single module-level state
+  helper module that is _not_ cache-busted, and all of them close over a single module-level state
   object which `initialize` overwrites via `Object.assign(state, createData(options))`. Every new
-  registration therefore re-points the namespace that all *prior* hooks compare against, so all N
+  registration therefore re-points the namespace that all _prior_ hooks compare against, so all N
   hooks match, and each re-applies `tsx`'s full extension fan-out (9–14 candidates) before
   delegating. Cost goes as roughly 14^(N−1).
 
   Reproduced here on `tsx` 4.22.0 — one import, N hooks registered up front:
 
-  | live hooks | 1 | 2 | 3 | 4 | 5 | 6 |
-  | --- | --- | --- | --- | --- | --- | --- |
+  | live hooks | 1      | 2      | 3      | 4      | 5      | 6       |
+  | ---------- | ------ | ------ | ------ | ------ | ------ | ------- |
   | one import | 0.016s | 0.017s | 0.032s | 0.202s | 2.209s | 30.388s |
 
   `unregister()` is not a workaround: it only flips `active` on that same shared object, and the next
@@ -41,10 +85,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pathological branch is unreachable on every `tsx` version. End to end over a six-package fixture on
   `tsx` 4.22.0:
 
-  | | app | media-core | infrastructure | notifications | billing | search | total |
-  | --- | --- | --- | --- | --- | --- | --- | --- |
-  | before | 132ms | 22ms | 32ms | 206ms | 2295ms | 30893ms | **33.58s** |
-  | after | 119ms | 7ms | 6ms | 5ms | 7ms | 5ms | **0.15s** |
+  |        | app   | media-core | infrastructure | notifications | billing | search  | total      |
+  | ------ | ----- | ---------- | -------------- | ------------- | ------- | ------- | ---------- |
+  | before | 132ms | 22ms       | 32ms           | 206ms         | 2295ms  | 30893ms | **33.58s** |
+  | after  | 119ms | 7ms        | 6ms            | 5ms           | 7ms     | 5ms     | **0.15s**  |
 
   On an unaffected `tsx` (4.21.0) the same fixture goes 0.18s → 0.15s: no regression, and the curve is
   flat either way.
@@ -83,12 +127,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - CLI reference: a **Reporting a slow run** section — `IOC_DEBUG=1` for the full phase breakdown,
   `IOC_SLOW_PHASE_MS` to tune the self-identifying threshold, and the point that when a phase
-  surprises you, that output *is* the bug report.
+  surprises you, that output _is_ the bug report.
 
-## [4.0.0] - Unreleased
+## [4.0.0]
 
 The first release written for someone **adopting** the tool rather than upgrading it, so this entry
-says what the tool *is*, and the per-version history below says how it got here. Most of this work
+says what the tool _is_, and the per-version history below says how it got here. Most of this work
 was recorded during development under the `[3.0.0] - Unreleased` heading immediately following;
 3.0.0 never shipped, and everything under it ships here. Those entries are kept as written.
 
@@ -108,13 +152,13 @@ what is registered.
 **The demand model is the centrepiece.** A deps property is exactly one of five things, and which
 one is written down:
 
-| written | means |
-| --- | --- |
-| contract key — `mediaStorage: MediaStorage` | the contract's **elected default**, whichever implementation that is |
-| `Named<T>` implementation key — `s3MediaStorage: Named<MediaStorage>` | **that specific implementation**; does not follow the election |
-| group root key — `mediaStorages: MediaStorages` | the whole group |
-| scope-root opener key — `openRequestScope: OpenRequestScope` | the opener for that boundary |
-| anything else | an **external**: the composing app supplies it |
+| written                                                               | means                                                                |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| contract key — `mediaStorage: MediaStorage`                           | the contract's **elected default**, whichever implementation that is |
+| `Named<T>` implementation key — `s3MediaStorage: Named<MediaStorage>` | **that specific implementation**; does not follow the election       |
+| group root key — `mediaStorages: MediaStorages`                       | the whole group                                                      |
+| scope-root opener key — `openRequestScope: OpenRequestScope`          | the opener for that boundary                                         |
+| anything else                                                         | an **external**: the composing app supplies it                       |
 
 The first two both name the contract type. Before `Named<T>` they were spelled identically and
 differed only by facts invisible at the site; a bare implementation-key demand is now a hard error
@@ -134,13 +178,13 @@ declared; a member's own marker or per-implementation `lifetime` override is ref
 
 **Contract slots.** Every ungrouped contract that elects a default claims one cradle key beyond its
 implementations' own — the camel-cased contract name, or a configured `$contract.accessKey` — typed
-as the *contract*, because it means "whichever implementation is elected". It lives in the emitted
+as the _contract_, because it means "whichever implementation is elected". It lives in the emitted
 cradle, in the supply set the demand/supply pass and `ioc validate` read, and in the scope-root
 subtree walk, all four deriving it through one function. No election, no key. A registration may
 occupy the slot key only if it is the electee.
 
 **Scope roots.** A factory returning `ScopeRoot<TContract, TLateBound>` declares a request- or
-work-scoped boundary: the late-bound set is *declared* and never inferred, and the second argument
+work-scoped boundary: the late-bound set is _declared_ and never inferred, and the second argument
 may be omitted to declare the empty set. Generation emits one typed **opener** per variant into the
 cradle — a plain function taking exactly those values, which opens a child scope, registers them on
 it, resolves the unit there, and returns it with an async disposer. No `AwilixContainer` appears in
@@ -217,7 +261,7 @@ Real work on this branch that the section below does not record.
 
 - **The freshness check reads the discovery scan set, and only that.** A field run spent 223 of its
   226 seconds here. Two defects met in a workspace layout: a glob `ignore` is anchored at its scan
-  root and filters *results*, so `node_modules` was never pruned from the *walk* below the top
+  root and filters _results_, so `node_modules` was never pruned from the _walk_ below the top
   level; and `fast-glob` follows symbolic links, so once inside a `node_modules` whose entries link
   back to sibling packages the walk had no end. The scan now refuses `node_modules` and `.git`
   structurally — whatever `excludes` says, since setting it replaces the defaults — and does not
@@ -268,7 +312,7 @@ Real work on this branch that the section below does not record.
 - **Group members resolve lazily, so a member can reach its sibling.** Group values were built
   eagerly — resolving a group constructed every member of it — which meant the one road grouped ⇒
   group-only leaves open was impassable: a member naming the group named something that was
-  mid-construction *because of that member*, and Awilix reported a cycle for a graph that has none.
+  mid-construction _because of that member_, and Awilix reported a cycle for a graph that has none.
   Member slots are now memoized getters over the cradle captured at group construction. Resolving a
   group resolves no members; a member resolves the first time it is read and stays that instance for
   that group value; per-scope identity is unchanged, and a member read out of a group is the same
@@ -293,7 +337,7 @@ Real work on this branch that the section below does not record.
   says so where it fires, and states the other half: `allowLifetimeInversion` suppresses the static
   report ONLY and is not a runtime exemption; if you suppress, fix the edge or turn strict off and
   own the tolerance. Two boundaries: strict backstops DIRECT edges only — a `consumer → group →
-  member` edge is invisible to it, because lazy member slots resolve outside any enclosing
+member` edge is invisible to it, because lazy member slots resolve outside any enclosing
   `resolve()`, so the generation-time check through the group hop is the sole guard there; and
   contract default slots, group roots and scope-root openers are marked leak-safe, since their
   transient registration is a detail of how they are wired rather than a claim about how long their
@@ -303,7 +347,7 @@ Real work on this branch that the section below does not record.
   codebase](https://reharik.github.io/ioc-manifest/guide/adopting) is the field guide for pointing
   this at code that already exists.
 
-## [3.0.0] - Unreleased
+## [3.0.0]
 
 The breaking release. Two design commitments that generated most of the library's post-1.0 bug
 history are retired: contracts inferred from return-type symbols, and generated types consumed
@@ -363,7 +407,7 @@ In order. Each item names the error you get if you skip it.
    worklist. Demands written against a contract key, a group key or an opener key are untouched.
 
    > `[ioc] 3 deps properties do not name one of the five things a dependency can be. A deps property names either a contract key (the contract's elected default), an implementation registration key marked \`Named<TContract>\`, a group root key, a scope-root opener key, or an external:`
-   > `  - [named-marker-required] Class "ArchiveStorage" at ArchiveStorage.ts:18 property "localStorage" is the registration key of implementation "localStorage" (contract "Storage", in this package), demanded without saying so. For the elected default, demand the contract key \`storage: Storage\`; for this specific implementation, write \`localStorage: Named<Storage>\`.`
+` - [named-marker-required] Class "ArchiveStorage" at ArchiveStorage.ts:18 property "localStorage" is the registration key of implementation "localStorage" (contract "Storage", in this package), demanded without saying so. For the elected default, demand the contract key \`storage: Storage\`; for this specific implementation, write \`localStorage: Named<Storage>\`.`
 
 9. **Decide, per contract, whether it is a family or a singular.** Grouped contracts lose their
    contract key and their member keys, so a contract that is both grouped and consumed individually
@@ -437,7 +481,9 @@ import type { MediaStorage } from "./contracts.js";
 
 type S3MediaStorageDeps = { logger: Logger };
 
-export const buildS3MediaStorage = ({ logger }: S3MediaStorageDeps): MediaStorage => ({
+export const buildS3MediaStorage = ({
+  logger,
+}: S3MediaStorageDeps): MediaStorage => ({
   label: "s3",
   put: async (key) => logger.log(`stored ${key}`),
 });
@@ -531,7 +577,8 @@ import type { ScopeRoot } from "ioc-manifest";
 
 export const buildAuthRouter = (
   deps: AuthRouterDeps,
-): ScopeRoot<IRouter, { viewerId: ViewerId; uow: UnitOfWork }> => makeRouter(deps);
+): ScopeRoot<IRouter, { viewerId: ViewerId; uow: UnitOfWork }> =>
+  makeRouter(deps);
 ```
 
 Omitting the second type argument (`ScopeRoot<IRouter>`) declares a boundary with no late-bound
@@ -589,9 +636,9 @@ one's type would stop being right the moment the election moved.
 ```ts
 // generated/ioc-registry.types.ts
 export interface IocGeneratedCradle {
-  authMiddleware: AuthMiddleware;        // the slot: follows the election
+  authMiddleware: AuthMiddleware; // the slot: follows the election
   optionalAuthMiddleware: AuthMiddleware; // the elected implementation
-  strictAuthMiddleware: AuthMiddleware;   // the other one
+  strictAuthMiddleware: AuthMiddleware; // the other one
 }
 ```
 
@@ -655,7 +702,7 @@ is unchanged and belongs on the consuming registration.
 **BREAKING: a registration occupying its contract's slot key must be the electee.** A factory named
 after its contract registers under the contract's slot key (`buildMediaStorage` → `mediaStorage`,
 for `MediaStorage`), and Awilix holds one registration per name — so that registration owned the
-key outright. When a *different* implementation was elected, the key handed out the occupant while
+key outright. When a _different_ implementation was elected, the key handed out the occupant while
 the election named someone else, silently, and the contract key stopped following the election.
 That is now a hard error, offender-bucketed, at `ioc generate` and as `[slot-occupancy]` in
 `ioc validate`.
@@ -699,7 +746,7 @@ reported by the verb you actually run. Read the aggregated report, fix what it n
 > `No files were written. These are real composition errors — ioc validate has always reported them…`
 
 **Library mode is unchanged.** No composition check runs there, and none is skipped: every check is
-a relation *between* manifests, and a library has no composed set to relate to.
+a relation _between_ manifests, and a library has no composed set to relate to.
 
 **BREAKING: a bare implementation-key demand is now an error.** A deps property whose name is an
 implementation registration key — and which is not also a contract slot key, a group root key or an
@@ -710,7 +757,7 @@ opener key — must carry `Named<T>`.
 type Deps = { strictAuthMiddleware: AuthMiddleware };
 
 // After: say which.
-type Deps = { authMiddleware: AuthMiddleware };          // the elected default
+type Deps = { authMiddleware: AuthMiddleware }; // the elected default
 type Deps = { strictAuthMiddleware: Named<AuthMiddleware> }; // that implementation
 ```
 
@@ -733,9 +780,9 @@ collection group's members are individually anonymous by declaration.
 
 ```ts
 // All four spellings are the same mistake, and all four get the same guidance.
-type Deps = { emailChannel: Named<EmailChannel> };        // the member's own contract
+type Deps = { emailChannel: Named<EmailChannel> }; // the member's own contract
 type Deps = { emailChannel: Named<NotificationChannel> }; // the family interface
-type Deps = { emailChannel: EmailChannel };               // bare
+type Deps = { emailChannel: EmailChannel }; // bare
 type Deps = { notificationChannel: NotificationChannel }; // the contract key it does not have
 
 // The one way in:
@@ -849,8 +896,8 @@ acronym run as one word; lowercase the first word, capitalize later words with t
 
 ```ts
 // Factory export name, past the `build` prefix:
-buildAPIClient;   // v2 → aPIClient     v3 → apiClient
-buildHTTPSProxy;  // v2 → hTTPSProxy    v3 → httpsProxy
+buildAPIClient; // v2 → aPIClient     v3 → apiClient
+buildHTTPSProxy; // v2 → hTTPSProxy    v3 → httpsProxy
 buildAlbumService; // v2 → albumService  v3 → albumService  (unchanged)
 ```
 
@@ -940,7 +987,7 @@ are legal elsewhere but not here — `{ cradle: IocGeneratedCradle }`,
 `type Deps = IocGeneratedCradle & { … }`. `ReadonlyArray<Channels>` and
 `Pick<IocGeneratedCradle, …>` are the only two of these that used to produce output; both
 produced it by reading the previous generated file. (A group alias is already the collection type —
-`Channels` *is* `ReadonlyArray<Channel>` — so `ReadonlyArray<Channels>` was never right.)
+`Channels` _is_ `ReadonlyArray<Channel>` — so `ReadonlyArray<Channels>` was never right.)
 
 Naming a generated type is unaffected — the documented composition-root pattern
 (`createContainer<IocGeneratedCradle>()`) is still legal, because the name is only ever
@@ -988,7 +1035,7 @@ is now either resolved against the in-memory manifest or rejected with a pointed
 enumeration is explicit in the source (`generatedReferenceForms.ts`), and the detection logic
 and the tests both key off it. The audit behind this found fifteen forms that reached
 TypeScript's own type resolution instead — a silent-wrong-output bug rather than a crash,
-because on a warm run the checker reads the *previous* generated file and bakes stale types
+because on a warm run the checker reads the _previous_ generated file and bakes stale types
 into the new one, while on a cold run the same reference resolves to `any`.
 
 Two of the fifteen are now **resolved**, because they are reasonable ways to consume the
@@ -999,7 +1046,7 @@ import type * as Ioc from "./generated/ioc-registry.types.js";
 
 type UploadDeps = {
   storage: Ioc.IocGeneratedCradle["storage"]; // resolved (was: stale type / cold-start abort)
-  channels: Ioc.Channels;                     // resolved (was: cold-start abort)
+  channels: Ioc.Channels; // resolved (was: cold-start abort)
 };
 ```
 
@@ -1008,7 +1055,10 @@ the intermediate module, not just within one file:
 
 ```ts
 // deps-aliases.ts — this module, not the factory, imports the generated file
-import type { Channels, IocGeneratedCradle } from "./generated/ioc-registry.types.js";
+import type {
+  Channels,
+  IocGeneratedCradle,
+} from "./generated/ioc-registry.types.js";
 export type SharedChannels = Channels;
 export type SharedStorage = IocGeneratedCradle["storage"];
 

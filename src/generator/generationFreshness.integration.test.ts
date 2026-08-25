@@ -21,6 +21,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  cpSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -37,6 +38,7 @@ import { tryLoadIocConfig } from "../config/loadIocConfig.js";
 import { runValidate, type RunValidateResult } from "../validate/runValidate.js";
 import { readGenerationRecord } from "../diagnostics/generationState.js";
 import { formatValidationReportJson } from "../composition/compositionReport.js";
+import { runIocCliInProcess } from "../test-support/runIocCliInProcess.js";
 import { generateManifest } from "./generateManifest.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -137,6 +139,8 @@ export default defineIocConfig({
 `;
 
 type Fixture = {
+  /** The directory both packages live under — what {@link copyOf} duplicates. */
+  readonly workspaceRoot: string;
   readonly appRoot: string;
   readonly appConfigPath: string;
   readonly libRoot: string;
@@ -145,6 +149,35 @@ type Fixture = {
   readonly libGeneratedDir: string;
   readonly appGeneratedDir: string;
   readonly setLibraryGrouped: (grouped: boolean) => void;
+};
+
+/**
+ * Every path in the workspace, derived from its root alone.
+ *
+ * Split out from {@link buildFixture} so a COPY of a generated workspace can be described without
+ * regenerating it — see {@link copyOf}.
+ */
+const fixtureAt = (workspaceRoot: string): Fixture => {
+  const appRoot = path.join(workspaceRoot, "apps", "api");
+  const libRoot = path.join(workspaceRoot, "packages", "media-core");
+  const libConfigPath = path.join(libRoot, "src", "ioc.config.ts");
+  return {
+    workspaceRoot,
+    appRoot,
+    appConfigPath: path.join(appRoot, "src", "ioc.config.ts"),
+    libRoot,
+    libConfigPath,
+    appFactoryPath: path.join(
+      appRoot,
+      "src",
+      "factories",
+      "buildUploadService.ts",
+    ),
+    libGeneratedDir: path.join(libRoot, "src", "generated"),
+    appGeneratedDir: path.join(appRoot, "src", "generated"),
+    setLibraryGrouped: (grouped: boolean) =>
+      writeFileSync(libConfigPath, libIocConfig(grouped), "utf8"),
+  };
 };
 
 const write = (filePath: string, contents: string): void => {
@@ -207,7 +240,14 @@ const buildFixture = (): Fixture => {
 
   const linkDir = path.join(appRoot, "node_modules", LIB.split("/")[0]!);
   mkdirSync(linkDir, { recursive: true });
-  symlinkSync(libRoot, path.join(linkDir, LIB.split("/")[1]!), "dir");
+  // RELATIVE, the way a workspace tool writes one — and the reason `copyOf` can duplicate a
+  // generated workspace at all: an absolute link would keep pointing at the original library from
+  // inside the copy, so two "independent" fixtures would share one package.
+  symlinkSync(
+    path.relative(linkDir, libRoot),
+    path.join(linkDir, LIB.split("/")[1]!),
+    "dir",
+  );
 
   write(path.join(appRoot, "src", "contracts.ts"), APP_CONTRACTS);
   const appFactoryPath = path.join(
@@ -220,17 +260,29 @@ const buildFixture = (): Fixture => {
   const appConfigPath = path.join(appRoot, "src", "ioc.config.ts");
   write(appConfigPath, appIocConfig);
 
-  return {
-    appRoot,
-    appConfigPath,
-    libRoot,
-    libConfigPath,
-    appFactoryPath,
-    libGeneratedDir: path.join(libRoot, "src", "generated"),
-    appGeneratedDir: path.join(appRoot, "src", "generated"),
-    setLibraryGrouped: (grouped: boolean) =>
-      writeFileSync(libConfigPath, libIocConfig(grouped), "utf8"),
-  };
+  return fixtureAt(workspaceRoot);
+};
+
+/**
+ * A byte-for-byte duplicate of an already-generated workspace.
+ *
+ * Generating one of these costs two real TypeScript programs, and most of the cases below want the
+ * SAME generated starting point and then edit one file in it. Copying the finished workspace buys
+ * that starting point once instead of once per case, and — unlike sharing the workspace itself —
+ * leaves every case free to write, since it owns its copy outright.
+ *
+ * `verbatimSymlinks` keeps the `node_modules` link a link rather than resolving it into a second
+ * copy of the library; it is relative, so it lands correctly inside the copy.
+ */
+const copyOf = (fixture: Fixture): Fixture => {
+  const target = realpathSync(
+    mkdtempSync(path.join(tmpdir(), "ioc-fresh-copy-")),
+  );
+  cpSync(fixture.workspaceRoot, target, {
+    recursive: true,
+    verbatimSymlinks: true,
+  });
+  return fixtureAt(target);
 };
 
 const genLibrary = (f: Fixture): Promise<void> =>
@@ -256,22 +308,30 @@ const validate = async (f: Fixture): Promise<RunValidateResult> => {
   });
 };
 
-const runCli = (
+/** The flags every invocation below needs to point the CLI at a temp workspace. */
+const cliArgsFor = (f: Fixture, args: readonly string[]): readonly string[] => [
+  ...args,
+  "--config",
+  f.appConfigPath,
+  "--project",
+  f.appRoot,
+];
+
+/**
+ * The CLI in a real process.
+ *
+ * Kept for the four claims that are about the process and not about the report: that stdout and
+ * stderr are separate descriptors a shell could redirect apart, that `NO_COLOR` reaching a real
+ * environment produces escape-free output, that `--json`'s stdout carries the document and nothing
+ * else, and that a freshness warning does not move the exit code.
+ */
+const spawnCli = (
   f: Fixture,
   args: readonly string[],
 ): { stdout: string; stderr: string; status: number | null } => {
   const result = spawnSync(
     process.execPath,
-    [
-      "--import",
-      "tsx",
-      CLI_ENTRY,
-      ...args,
-      "--config",
-      f.appConfigPath,
-      "--project",
-      f.appRoot,
-    ],
+    ["--import", "tsx", CLI_ENTRY, ...cliArgsFor(f, args)],
     {
       // The repo root, not the fixture: `--import tsx` resolves the loader from the working
       // directory, and a temp fixture has no node_modules of its own.
@@ -286,6 +346,19 @@ const runCli = (
     status: result.status,
   };
 };
+
+/**
+ * The same CLI in this process, with both streams captured.
+ *
+ * Used wherever the claim is about what the banner SAYS and where it sits relative to the findings
+ * it qualifies — properties of the text on a stream, which survive the trip through `console.error`
+ * exactly. Each of these used to cost a `tsx` boot plus a cold re-analysis of the workspace.
+ */
+const runCli = (
+  f: Fixture,
+  args: readonly string[],
+): Promise<{ stdout: string; stderr: string; code: number }> =>
+  runIocCliInProcess(cliArgsFor(f, args));
 
 const reportIssues = (result: RunValidateResult) => {
   assert.equal(result.kind, "report");
@@ -318,10 +391,43 @@ const workspaceWithFixedButUnregeneratedLibrary = async (): Promise<Fixture> => 
   return fixture;
 };
 
+/** Green: both packages generated, nothing edited since. */
+const greenWorkspace = async (): Promise<Fixture> => {
+  const fixture = buildFixture();
+  await genLibrary(fixture);
+  await genApp(fixture);
+  return fixture;
+};
+
+/**
+ * The two starting points every case below begins from, each generated once.
+ *
+ * Reaching either one costs two or three real generations, and this file used to walk that sequence
+ * fourteen times to reach two distinct states. A case that only READS its workspace takes the
+ * shared one; a case that writes to it takes `copyOf(...)`, which is a filesystem copy of the same
+ * finished state and costs no generation at all. Nothing here mutates a shared workspace, so no
+ * case can depend on another having run first.
+ */
+let sharedStaleLibrary: Promise<Fixture> | undefined;
+const theWorkspaceWithAStaleLibrary = (): Promise<Fixture> =>
+  (sharedStaleLibrary ??= workspaceWithFixedButUnregeneratedLibrary());
+
+let sharedGreen: Promise<Fixture> | undefined;
+const theGreenWorkspace = (): Promise<Fixture> =>
+  (sharedGreen ??= greenWorkspace());
+
+/** A private, writable copy of the shared green workspace. */
+const aGreenWorkspace = async (): Promise<Fixture> =>
+  copyOf(await theGreenWorkspace());
+
+/** A private, writable copy of the shared stale-library workspace. */
+const aWorkspaceWithAStaleLibrary = async (): Promise<Fixture> =>
+  copyOf(await theWorkspaceWithAStaleLibrary());
+
 describe("the field scenario: a library fixed in source but not regenerated", () => {
   describe("When the app validates against the library's previous artifacts", () => {
     it("should still report the old world's error — the finding itself is unchanged", async () => {
-      const fixture = await workspaceWithFixedButUnregeneratedLibrary();
+      const fixture = await theWorkspaceWithAStaleLibrary();
       const issues = reportIssues(await validate(fixture));
 
       // The report is not suppressed and not rewritten. Validate's job is to describe the committed
@@ -333,7 +439,7 @@ describe("the field scenario: a library fixed in source but not regenerated", ()
     });
 
     it("should mark the library as possibly behind its sources", async () => {
-      const fixture = await workspaceWithFixedButUnregeneratedLibrary();
+      const fixture = await theWorkspaceWithAStaleLibrary();
       const result = await validate(fixture);
 
       const lib = freshnessFor(result, LIB);
@@ -345,7 +451,7 @@ describe("the field scenario: a library fixed in source but not regenerated", ()
     });
 
     it("should carry the caveat on the tainted finding itself, not only in the banner", async () => {
-      const fixture = await workspaceWithFixedButUnregeneratedLibrary();
+      const fixture = await theWorkspaceWithAStaleLibrary();
       const issues = reportIssues(await validate(fixture));
       const grouped = issues.find((issue) =>
         issue.summary.includes("has no individual cradle key"),
@@ -362,9 +468,8 @@ describe("the field scenario: a library fixed in source but not regenerated", ()
 
   describe("When the SAME error is reported with the library current", () => {
     it("should carry no banner and no caveat — a warning on a correct finding is worse than none", async () => {
-      const fixture = buildFixture();
-      await genLibrary(fixture);
-      await genApp(fixture);
+      // Its own copy: this case regroups the library and regenerates it.
+      const fixture = await aGreenWorkspace();
       fixture.setLibraryGrouped(true);
       await genLibrary(fixture);
 
@@ -383,7 +488,8 @@ describe("the field scenario: a library fixed in source but not regenerated", ()
 
   describe("When both packages are regenerated in dependency order", () => {
     it("should come back clean, with nothing flagged", async () => {
-      const fixture = await workspaceWithFixedButUnregeneratedLibrary();
+      // Its own copy: this case regenerates both packages.
+      const fixture = await aWorkspaceWithAStaleLibrary();
 
       await genLibrary(fixture);
       await genApp(fixture);
@@ -412,8 +518,10 @@ describe("the field scenario: a library fixed in source but not regenerated", ()
 describe("the banner, where a developer actually meets it", () => {
   describe("When `ioc validate` runs over a workspace with a behind-the-sources dependency", () => {
     it("should print the banner on stderr, above the report, in the words of the ruling", async () => {
-      const fixture = await workspaceWithFixedButUnregeneratedLibrary();
-      const { stderr } = runCli(fixture, ["validate"]);
+      // The claim is about the WORDS and their order within one stream, which the captured run
+      // reproduces exactly; the process-level claims about that stream are the two cases below.
+      const fixture = await theWorkspaceWithAStaleLibrary();
+      const { stderr } = await runCli(fixture, ["validate"]);
 
       assert.match(
         stderr,
@@ -428,8 +536,9 @@ describe("the banner, where a developer actually meets it", () => {
     });
 
     it("should keep the report on its own channel and the caveat inside it", async () => {
-      const fixture = await workspaceWithFixedButUnregeneratedLibrary();
-      const { stdout, stderr } = runCli(fixture, ["validate"]);
+      // A real process: "its own channel" is a claim about two file descriptors.
+      const fixture = await theWorkspaceWithAStaleLibrary();
+      const { stdout, stderr } = spawnCli(fixture, ["validate"]);
 
       // Errors put the report on stderr too, but the caveat rides with the finding either way.
       assert.match(stderr, /note: @media\/core may be stale; this finding may describe the old world/);
@@ -437,17 +546,17 @@ describe("the banner, where a developer actually meets it", () => {
     });
 
     it("should carry no ANSI escapes under NO_COLOR", async () => {
-      const fixture = await workspaceWithFixedButUnregeneratedLibrary();
-      const { stderr } = runCli(fixture, ["validate"]);
+      // A real process: colour is decided from the environment and from whether the stream is a
+      // TTY, and both of those are the process's, not the function's.
+      const fixture = await theWorkspaceWithAStaleLibrary();
+      const { stderr } = spawnCli(fixture, ["validate"]);
 
       // eslint-disable-next-line no-control-regex
       assert.doesNotMatch(stderr, /\[/);
     });
 
     it("should not change the exit code — warn loud, never abort", async () => {
-      const fixture = buildFixture();
-      await genLibrary(fixture);
-      await genApp(fixture);
+      const fixture = await aGreenWorkspace();
       // Green workspace, then an edit inside the library's SCAN SET that regenerates nothing:
       // freshness alone must not fail a run that has no composition errors in it.
       writeFileSync(
@@ -456,7 +565,8 @@ describe("the banner, where a developer actually meets it", () => {
         "utf8",
       );
 
-      const { status, stderr } = runCli(fixture, ["validate"]);
+      // A real process: the claim is about the code a CI step reads, so a real one produces it.
+      const { status, stderr } = spawnCli(fixture, ["validate"]);
 
       assert.match(stderr, /may predate its sources/);
       assert.equal(status, 0);
@@ -465,14 +575,15 @@ describe("the banner, where a developer actually meets it", () => {
 
   describe("When BOTH the app and a dependency are behind their sources", () => {
     it("should tell the developer to regenerate the dependency first", async () => {
-      const fixture = await workspaceWithFixedButUnregeneratedLibrary();
+      // Its own copy: this case edits the app's sources too.
+      const fixture = await aWorkspaceWithAStaleLibrary();
       writeFileSync(
         fixture.appFactoryPath,
         `${APP_FACTORY}\n// an edit the app has not regenerated for\n`,
         "utf8",
       );
 
-      const { stderr } = runCli(fixture, ["validate"]);
+      const { stderr } = await runCli(fixture, ["validate"]);
 
       assert.match(stderr, /⚠ @media\/core's generated artifacts may predate/);
       assert.match(stderr, /⚠ this app's generated artifacts may predate/);
@@ -489,15 +600,13 @@ describe("the banner, where a developer actually meets it", () => {
 describe("a package with no generation record", () => {
   describe("When the artifacts predate records entirely", () => {
     it("should get one quiet advisory line, not the banner", async () => {
-      const fixture = buildFixture();
-      await genLibrary(fixture);
-      await genApp(fixture);
+      const fixture = await aGreenWorkspace();
 
       // The pre-#20 world: artifacts on disk, no record beside them.
       rmSync(path.join(fixture.libRoot, "src", ".ioc-generation-state.json"));
       assert.equal(readGenerationRecord(fixture.libGeneratedDir), undefined);
 
-      const { stderr } = runCli(fixture, ["validate"]);
+      const { stderr } = await runCli(fixture, ["validate"]);
 
       assert.match(
         stderr,
@@ -508,9 +617,7 @@ describe("a package with no generation record", () => {
     });
 
     it("should report it as unknown in --json rather than as a mismatch", async () => {
-      const fixture = buildFixture();
-      await genLibrary(fixture);
-      await genApp(fixture);
+      const fixture = await aGreenWorkspace();
       rmSync(path.join(fixture.libRoot, "src", ".ioc-generation-state.json"));
 
       const result = await validate(fixture);
@@ -525,7 +632,7 @@ describe("a package with no generation record", () => {
 describe("--json", () => {
   describe("When freshness is published as data", () => {
     it("should carry a `freshness` array beside `issues`, and possiblyStale on the tainted ones", async () => {
-      const fixture = await workspaceWithFixedButUnregeneratedLibrary();
+      const fixture = await theWorkspaceWithAStaleLibrary();
       const result = await validate(fixture);
       assert.equal(result.kind, "report");
       if (result.kind !== "report") {
@@ -560,7 +667,7 @@ describe("--json", () => {
     });
 
     it("should carry no rendered prose or internal attribution on an issue", async () => {
-      const fixture = await workspaceWithFixedButUnregeneratedLibrary();
+      const fixture = await theWorkspaceWithAStaleLibrary();
       const result = await validate(fixture);
       assert.equal(result.kind, "report");
       if (result.kind !== "report") {
@@ -582,16 +689,16 @@ describe("--json", () => {
     it("should reach stdout as one parseable document, uncontaminated by the banner", async () => {
       // A GREEN workspace with a behind-the-sources library: the report goes to stdout, and the
       // banner must not be in it. `--json` is a payload, and a caveat inside a payload corrupts it.
-      const fixture = buildFixture();
-      await genLibrary(fixture);
-      await genApp(fixture);
+      const fixture = await aGreenWorkspace();
       writeFileSync(
         path.join(fixture.libRoot, "src", "factories", "buildS3MediaSink.ts"),
         `${LIB_FACTORY}\n// edited, not regenerated\n`,
         "utf8",
       );
 
-      const { stdout, stderr } = runCli(fixture, ["validate", "--json"]);
+      // A real process: "reaches stdout as ONE document" is a claim about everything that could
+      // have been written to the descriptor, which only a real pipe can settle.
+      const { stdout, stderr } = spawnCli(fixture, ["validate", "--json"]);
 
       const parsed = JSON.parse(stdout) as {
         freshness: { name: string; currentMatches?: boolean }[];
@@ -612,16 +719,14 @@ describe("--json", () => {
 describe("inspect and explain", () => {
   describe("When this package's own artifacts may predate its own sources", () => {
     it("should banner it above the manifest-mode report, on stderr", async () => {
-      const fixture = buildFixture();
-      await genLibrary(fixture);
-      await genApp(fixture);
+      const fixture = await aGreenWorkspace();
       writeFileSync(
         fixture.appFactoryPath,
         `${APP_FACTORY}\n// edited, not regenerated\n`,
         "utf8",
       );
 
-      const { stdout, stderr } = runCli(fixture, ["inspect"]);
+      const { stdout, stderr } = await runCli(fixture, ["inspect"]);
 
       assert.match(
         stderr,
@@ -632,11 +737,9 @@ describe("inspect and explain", () => {
     });
 
     it("should say nothing when the artifacts and the sources agree", async () => {
-      const fixture = buildFixture();
-      await genLibrary(fixture);
-      await genApp(fixture);
+      const fixture = await theGreenWorkspace();
 
-      const { stderr } = runCli(fixture, ["inspect"]);
+      const { stderr } = await runCli(fixture, ["inspect"]);
 
       assert.equal(stderr.includes("may predate its sources"), false);
       assert.equal(stderr.includes("no generation record"), false);
@@ -647,8 +750,7 @@ describe("inspect and explain", () => {
 describe("the record on disk", () => {
   describe("When a library generates successfully", () => {
     it("should sit beside the generated directory, never inside the diffed set", async () => {
-      const fixture = buildFixture();
-      await genLibrary(fixture);
+      const fixture = await theGreenWorkspace();
 
       const recordPath = path.join(
         fixture.libRoot,

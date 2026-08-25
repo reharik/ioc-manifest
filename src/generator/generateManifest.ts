@@ -7,7 +7,6 @@
  * (`runCompositionSuiteAtCodegen.ts`) — the same checks `ioc validate` runs, over the same program,
  * against the artifacts this run is about to write and before any of them is written.
  */
-import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -17,6 +16,7 @@ import {
   resolveProjectRootFromIocConfigPath,
 } from "../config/loadIocConfig.js";
 import { discoverFactories } from "./discoverFactories/discoverFactories.js";
+import { formatGeneratedFileWithPrettier } from "./formatGeneratedFile.js";
 import {
   createIocProgramForDiscovery,
   getDiscoveryTargetFiles,
@@ -150,44 +150,6 @@ const packageName =
   typeof packageJson.name === "string" && packageJson.name.length > 0
     ? packageJson.name
     : "ioc-manifest";
-
-const resolvePrettierCliPath = (): string | undefined => {
-  try {
-    return path.join(
-      path.dirname(require.resolve("prettier/package.json")),
-      "bin",
-      "prettier.cjs",
-    );
-  } catch {
-    return undefined;
-  }
-};
-
-/**
- * Format via the consumer's `prettier` dependency when available.
- * If prettier is not installed, generation still succeeds — files are just unformatted.
- */
-const formatGeneratedFileWithPrettier = (
-  filePath: string,
-  projectRoot: string,
-): void => {
-  const prettierCliPath = resolvePrettierCliPath();
-  if (prettierCliPath === undefined) {
-    return;
-  }
-
-  try {
-    execFileSync(process.execPath, [prettierCliPath, "--write", filePath], {
-      cwd: projectRoot,
-      stdio: "inherit",
-      env: process.env,
-    });
-  } catch (error) {
-    console.warn(
-      `Failed to format generated files: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-};
 
 type GenerateManifestOverrides = Partial<Omit<ManifestOptions, "paths">> & {
   paths?: Partial<ManifestRuntimePaths>;
@@ -774,10 +736,12 @@ const runGeneration = async (
       await removeComposedManifestIfPresent(generatedDir);
     }
 
-    formatGeneratedFileWithPrettier(manifestOutPath, projectRoot);
-    formatGeneratedFileWithPrettier(artifactSources.typesPath, projectRoot);
+    // Sequential, not `Promise.all`: prettier's own formatting is CPU-bound and the artifacts are
+    // two or three files, so concurrency would buy nothing and would interleave any warning.
+    await formatGeneratedFileWithPrettier(manifestOutPath, projectRoot);
+    await formatGeneratedFileWithPrettier(artifactSources.typesPath, projectRoot);
     if (composedOutPath !== undefined) {
-      formatGeneratedFileWithPrettier(composedOutPath, projectRoot);
+      await formatGeneratedFileWithPrettier(composedOutPath, projectRoot);
     }
 
     const relManifest = path.relative(projectRoot, manifestOutPath);

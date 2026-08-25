@@ -34,7 +34,7 @@
  *      `validateGeneratedReferencesAtCodegen.ts` for file-level rejection, or
  *      `analyzeDemandSupply/resolveIocGeneratedCradleIndexedAccess.ts` for resolution;
  *   3. add a fixture named `<id>.ts` under
- *      `test-fixtures/generated-reference-forms/` — `generatedReferenceForms.test.ts` iterates
+ *      `test-fixtures/generated-reference-forms/` — `generatedReferenceForms.integration.test.ts` iterates
  *      this list and fails when a form has no fixture, so the enumeration and the test surface
  *      cannot drift apart.
  *

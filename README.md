@@ -59,6 +59,32 @@ Full documentation lives at **[reharik.github.io/ioc-manifest](https://reharik.g
 - **[Quick start](https://reharik.github.io/ioc-manifest/guide/quick-start)** — units → config → generate → bootstrap, in a few minutes.
 - **[Adopting on an existing codebase](https://reharik.github.io/ioc-manifest/guide/adopting)** — why the first run is red, and how to read it.
 
+## Working on ioc-manifest
+
+The test suite runs in two lanes.
+
+```bash
+npm run test:fast   # ~6s, 568 tests — everything that builds no TypeScript program
+npm test            # the whole suite; what CI runs
+```
+
+**Iterate on `test:fast`; run the full suite before you report anything.** `test:fast` is the
+non-`*.integration.test.ts` glob, and what earns a file the `.integration` suffix is mechanism, not
+taste: a test that builds a TypeScript program, spawns a subprocess, or runs codegen belongs in the
+slow lane, because every one of those costs seconds. `src/test-support/testLaneSeam.test.ts`
+enforces that in both directions — it fails on a fast-lane file that can reach any of the three, and
+on an `.integration` file that can reach none of them — so the suffix cannot quietly stop being
+true. When it fails, the fix is a rename, and the message says which way.
+
+The rest of the checks:
+
+```bash
+npm run typecheck   # tsc --noEmit
+npm run build       # dist/
+npm run gen:manifest && git diff --exit-code src/generated   # generated-diff must be zero
+npm run example:full                                          # the multi-package example, end to end
+```
+
 ## Contributing to the docs
 
 The docs are a [VitePress](https://vitepress.dev/) site under `docs/`.
