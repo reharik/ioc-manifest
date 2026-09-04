@@ -7,10 +7,12 @@
  */
 import assert from "node:assert/strict";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,6 +21,7 @@ import { describe, it } from "node:test";
 import {
   GENERATION_FAILURE_ARTIFACTS_NOTE,
   IOC_GENERATION_STATE_FILENAME,
+  ensureGenerationStateIgnored,
   formatStalenessBanner,
   generationStatePathFor,
   hashGenerationInputs,
@@ -358,6 +361,191 @@ describe("the generation-side mirror line", () => {
           IOC_GENERATION_STATE_FILENAME,
         ),
       );
+    });
+  });
+});
+
+describe("ensureGenerationStateIgnored", () => {
+  /** A marker path inside a fresh temp dir — the directory whose `.gitignore` is at stake. */
+  const withMarkerDir = (): { dir: string; markerPath: string } => {
+    const dir = tempRoot();
+    return { dir, markerPath: path.join(dir, IOC_GENERATION_STATE_FILENAME) };
+  };
+
+  const gitignoreIn = (dir: string): string => path.join(dir, ".gitignore");
+
+  describe("When no .gitignore exists beside the marker", () => {
+    it("should create one carrying the entry and the reason", async () => {
+      const { dir, markerPath } = withMarkerDir();
+
+      assert.equal(await ensureGenerationStateIgnored(markerPath), "created");
+
+      const written = readFileSync(gitignoreIn(dir), "utf8");
+      assert.match(written, /^\.ioc-generation-state\.json$/mu);
+      // The reason travels with the entry: a bare line in a file the developer did not create is
+      // the kind of thing that gets deleted by whoever finds it next.
+      assert.match(written, /ioc generate/u);
+      assert.equal(written.endsWith("\n"), true);
+    });
+
+    it("should write it BESIDE the marker, never in a parent", async () => {
+      const { dir, markerPath } = withMarkerDir();
+
+      await ensureGenerationStateIgnored(markerPath);
+
+      assert.equal(existsSync(gitignoreIn(dir)), true);
+      assert.equal(existsSync(path.join(dir, "..", ".gitignore")), false);
+    });
+  });
+
+  describe("When a .gitignore exists WITHOUT the entry", () => {
+    it("should append one line and leave every existing byte untouched", async () => {
+      const { dir, markerPath } = withMarkerDir();
+      const before = "node_modules/\ndist/\n\n# build output\n*.tgz\n";
+      writeFileSync(gitignoreIn(dir), before, "utf8");
+
+      assert.equal(await ensureGenerationStateIgnored(markerPath), "appended");
+
+      assert.equal(
+        readFileSync(gitignoreIn(dir), "utf8"),
+        `${before}${IOC_GENERATION_STATE_FILENAME}\n`,
+        "the prefix must be byte-identical — no reformatting, no reordering",
+      );
+    });
+
+    it("should terminate an unterminated last line rather than joining onto it", async () => {
+      const { dir, markerPath } = withMarkerDir();
+      writeFileSync(gitignoreIn(dir), "dist/", "utf8");
+
+      assert.equal(await ensureGenerationStateIgnored(markerPath), "appended");
+
+      // Without the separator this would read as `dist/.ioc-generation-state.json` — one pattern
+      // that ignores neither the marker nor `dist/`.
+      assert.equal(
+        readFileSync(gitignoreIn(dir), "utf8"),
+        `dist/\n${IOC_GENERATION_STATE_FILENAME}\n`,
+      );
+    });
+
+    it("should append nothing on a second run", async () => {
+      const { dir, markerPath } = withMarkerDir();
+      writeFileSync(gitignoreIn(dir), "dist/\n", "utf8");
+
+      await ensureGenerationStateIgnored(markerPath);
+      const afterFirst = readFileSync(gitignoreIn(dir), "utf8");
+
+      assert.equal(await ensureGenerationStateIgnored(markerPath), "already-ignored");
+      assert.equal(readFileSync(gitignoreIn(dir), "utf8"), afterFirst);
+    });
+
+    it("should be idempotent from a created file too", async () => {
+      const { dir, markerPath } = withMarkerDir();
+
+      assert.equal(await ensureGenerationStateIgnored(markerPath), "created");
+      const afterFirst = readFileSync(gitignoreIn(dir), "utf8");
+
+      assert.equal(await ensureGenerationStateIgnored(markerPath), "already-ignored");
+      assert.equal(readFileSync(gitignoreIn(dir), "utf8"), afterFirst);
+    });
+  });
+
+  describe("When the entry is already present in a form git would honour", () => {
+    const alreadyIgnoring = [
+      [".ioc-generation-state.json", "the bare name"],
+      ["/.ioc-generation-state.json", "anchored to this directory"],
+      ["**/.ioc-generation-state.json", "the form the docs recommend"],
+      ["/**/.ioc-generation-state.json", "anchored, any depth"],
+      [".ioc-generation-state.json   ", "trailing spaces, which git strips"],
+      [".ioc-generation-state.json\r", "a CRLF checkout"],
+    ] as const;
+
+    for (const [line, why] of alreadyIgnoring) {
+      it(`should do nothing when the file has ${why}`, async () => {
+        const { dir, markerPath } = withMarkerDir();
+        const before = `dist/\n${line}\nnode_modules/\n`;
+        writeFileSync(gitignoreIn(dir), before, "utf8");
+
+        assert.equal(await ensureGenerationStateIgnored(markerPath), "already-ignored");
+        assert.equal(readFileSync(gitignoreIn(dir), "utf8"), before);
+      });
+    }
+
+    it("should not read a commented-out entry as ignoring anything", async () => {
+      const { dir, markerPath } = withMarkerDir();
+      writeFileSync(gitignoreIn(dir), `# ${IOC_GENERATION_STATE_FILENAME}\n`, "utf8");
+
+      assert.equal(await ensureGenerationStateIgnored(markerPath), "appended");
+    });
+
+    it("should not read a directory-only pattern as ignoring the file", async () => {
+      const { dir, markerPath } = withMarkerDir();
+      writeFileSync(gitignoreIn(dir), `${IOC_GENERATION_STATE_FILENAME}/\n`, "utf8");
+
+      // A trailing slash matches directories only, so the marker is NOT ignored by it.
+      assert.equal(await ensureGenerationStateIgnored(markerPath), "appended");
+    });
+  });
+
+  describe("When the consumer has explicitly un-ignored the marker", () => {
+    it("should decline rather than overturn the negation", async () => {
+      const { dir, markerPath } = withMarkerDir();
+      const before = `${IOC_GENERATION_STATE_FILENAME}\n!${IOC_GENERATION_STATE_FILENAME}\n`;
+      writeFileSync(gitignoreIn(dir), before, "utf8");
+
+      // Last match wins in gitignore: the negation is the consumer's decision that they want the
+      // marker tracked, and appending underneath it would silently reverse that.
+      assert.equal(await ensureGenerationStateIgnored(markerPath), "declined");
+      assert.equal(readFileSync(gitignoreIn(dir), "utf8"), before);
+    });
+
+    it("should honour a re-ignore BELOW the negation, the same rule the other way", async () => {
+      const { dir, markerPath } = withMarkerDir();
+      const before = `!${IOC_GENERATION_STATE_FILENAME}\n${IOC_GENERATION_STATE_FILENAME}\n`;
+      writeFileSync(gitignoreIn(dir), before, "utf8");
+
+      assert.equal(await ensureGenerationStateIgnored(markerPath), "already-ignored");
+      assert.equal(readFileSync(gitignoreIn(dir), "utf8"), before);
+    });
+  });
+
+  describe("When the write cannot happen", () => {
+    it("should report failure rather than throw, on an unwritable file", async () => {
+      const { dir, markerPath } = withMarkerDir();
+      writeFileSync(gitignoreIn(dir), "dist/\n", "utf8");
+      chmodSync(gitignoreIn(dir), 0o444);
+
+      try {
+        // Root ignores mode bits, so the assertion that matters is the one that holds either way:
+        // whatever happened, it RESOLVED rather than throwing. A generation that has already
+        // written its artifacts must never be turned into a failure by this.
+        const outcome = await ensureGenerationStateIgnored(markerPath);
+        assert.equal(
+          ["failed", "appended"].includes(outcome),
+          true,
+          `expected a resolved outcome, got ${outcome}`,
+        );
+        assert.equal(readFileSync(gitignoreIn(dir), "utf8").startsWith("dist/"), true);
+      } finally {
+        chmodSync(gitignoreIn(dir), 0o644);
+      }
+    });
+
+    it("should report failure rather than throw when the directory does not exist", async () => {
+      const missing = path.join(tempRoot(), "no-such-dir", IOC_GENERATION_STATE_FILENAME);
+
+      assert.equal(await ensureGenerationStateIgnored(missing), "failed");
+    });
+
+    it("should decline a symlinked .gitignore rather than write through it", async () => {
+      const { dir, markerPath } = withMarkerDir();
+      const outside = path.join(tempRoot(), "central.gitignore");
+      const before = "dist/\n";
+      writeFileSync(outside, before, "utf8");
+      symlinkSync(outside, gitignoreIn(dir));
+
+      // Following it would reach outside the package — the one thing this is scoped never to do.
+      assert.equal(await ensureGenerationStateIgnored(markerPath), "declined");
+      assert.equal(readFileSync(outside, "utf8"), before);
     });
   });
 });

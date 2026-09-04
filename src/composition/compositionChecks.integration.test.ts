@@ -687,6 +687,189 @@ describe("validate checks", () => {
         assert.match(issues[0]!.summary, /Storge/);
       });
     });
+
+    /**
+     * The fields an app's `registrations` block may aim at a unit another package owns.
+     *
+     * `default` and `source` are statements about composition; the rest are read while planning
+     * LOCAL registrations, and on a composed-supplied implementation they used to parse, pass every
+     * check, and then be dropped by `buildComposedRegistrationOverridesFromConfig` in silence.
+     */
+    const composedSupplyCtx = () =>
+      compositionContextFixture([
+        parsedSlice({
+          packageLabel: "local",
+          contracts: {
+            Widget: { localWidget: { registrationKey: "localWidget" } },
+          },
+        }),
+        parsedSlice({
+          packageLabel: "@lib/storage",
+          sourceId: "@lib/storage",
+          contracts: {
+            Storage: {
+              s3: { registrationKey: "s3Storage", lifetime: "scoped" },
+              disk: { registrationKey: "diskStorage", lifetime: "singleton" },
+            },
+          },
+        }),
+      ]);
+
+    const appConfig = (registrations: unknown): IocConfig =>
+      ({
+        composedManifests: ["@lib/storage"],
+        registrations,
+      }) as IocConfig;
+
+    describe("When lifetime is set on a composed-supplied implementation", () => {
+      it("should refuse, naming the owning package and the root-vs-scope alternative", () => {
+        const issues = checkAppConfigSanity(
+          appConfig({ Storage: { s3: { lifetime: "singleton" } } }),
+          composedSupplyCtx(),
+        );
+
+        assert.equal(issues.length, 1);
+        const issue = issues[0]!;
+        assert.equal(issue.category, "app-config");
+        assert.equal(issue.severity, "error");
+        assert.match(issue.summary, /\.lifetime cannot be set here/);
+        assert.match(issue.summary, /@lib\/storage/);
+
+        const prose = [...issue.details, issue.suggestedFix ?? ""].join("\n");
+        // The declared lifetime is quoted from the owner's manifest, not guessed.
+        assert.match(prose, /declares Storage\.s3 as scoped/);
+        assert.match(prose, /root container/);
+        assert.match(prose, /inside a scope/);
+        assert.match(prose, /change to @lib\/storage, not to this config/);
+        assert.deepEqual(issue.packages, ["local", "@lib/storage"]);
+      });
+    });
+
+    describe("When name is set on a composed-supplied implementation", () => {
+      it("should refuse, naming the owner and its registration key", () => {
+        const issues = checkAppConfigSanity(
+          appConfig({ Storage: { s3: { name: "storage" } } }),
+          composedSupplyCtx(),
+        );
+
+        assert.equal(issues.length, 1);
+        assert.match(issues[0]!.summary, /\.name cannot be set here/);
+        assert.match(
+          issues[0]!.details.join("\n"),
+          /@lib\/storage owns Storage\.s3 and registers it as "s3Storage"/,
+        );
+      });
+    });
+
+    describe("When $contract.accessKey is set on a wholly composed contract", () => {
+      it("should refuse and name the owning package", () => {
+        const issues = checkAppConfigSanity(
+          appConfig({ Storage: { $contract: { accessKey: "storage" } } }),
+          composedSupplyCtx(),
+        );
+
+        assert.equal(issues.length, 1);
+        assert.match(issues[0]!.summary, /accessKey cannot be set here/);
+        assert.match(issues[0]!.summary, /@lib\/storage/);
+      });
+    });
+
+    describe("When default or source is set on a composed-supplied implementation", () => {
+      it("should report nothing — those are statements about composition itself", () => {
+        assert.deepEqual(
+          checkAppConfigSanity(
+            appConfig({
+              Storage: {
+                s3: { default: true, source: "@lib/storage" },
+                disk: { allowLifetimeInversion: ["clock"] },
+              },
+            }),
+            composedSupplyCtx(),
+          ),
+          [],
+        );
+      });
+    });
+
+    describe("When a local implementation carries the same fields", () => {
+      it("should report nothing", () => {
+        assert.deepEqual(
+          checkAppConfigSanity(
+            appConfig({
+              Widget: {
+                localWidget: {
+                  lifetime: "scoped",
+                  name: "widget",
+                  default: true,
+                  allowLifetimeInversion: true,
+                },
+                $contract: { accessKey: "widget" },
+              },
+            }),
+            composedSupplyCtx(),
+          ),
+          [],
+        );
+      });
+    });
+
+    describe("When a local implementation shadows a composed one of the same name", () => {
+      it("should treat the entry as local, because the override merges onto the local factory", () => {
+        const ctx = compositionContextFixture([
+          parsedSlice({
+            packageLabel: "local",
+            contracts: { Storage: { s3: { registrationKey: "s3" } } },
+          }),
+          parsedSlice({
+            packageLabel: "@lib/storage",
+            sourceId: "@lib/storage",
+            contracts: { Storage: { s3: { registrationKey: "s3Storage" } } },
+          }),
+        ]);
+
+        assert.deepEqual(
+          checkAppConfigSanity(
+            appConfig({ Storage: { s3: { lifetime: "singleton" } } }),
+            ctx,
+          ),
+          [],
+        );
+      });
+    });
+
+    describe("When an implementation name matches nothing under a known contract", () => {
+      it("should report it with a suggestion and what was actually discovered", () => {
+        const issues = checkAppConfigSanity(
+          appConfig({ Storage: { s3x: { default: true } } }),
+          composedSupplyCtx(),
+        );
+
+        assert.equal(issues.length, 1);
+        assert.match(
+          issues[0]!.summary,
+          /references unknown implementation "s3x"/,
+        );
+        const details = issues[0]!.details.join("\n");
+        assert.match(details, /Local implementations of Storage: \(none\)/);
+        assert.match(
+          details,
+          /Composed implementations of Storage: disk \(@lib\/storage\), s3 \(@lib\/storage\)/,
+        );
+        assert.match(details, /Did you mean: "s3"\?/);
+      });
+    });
+
+    describe("When the contract itself is unknown", () => {
+      it("should report the contract once and not a second time per implementation", () => {
+        const issues = checkAppConfigSanity(
+          appConfig({ Storge: { s3: { lifetime: "singleton" } } }),
+          composedSupplyCtx(),
+        );
+
+        assert.equal(issues.length, 1);
+        assert.match(issues[0]!.summary, /unknown contract "Storge"/);
+      });
+    });
   });
 
   describe("runCompositionChecks", () => {

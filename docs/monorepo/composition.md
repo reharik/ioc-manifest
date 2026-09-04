@@ -197,4 +197,17 @@ The library treats the listed identifiers as equivalent. This is an escape hatch
 `baseTypeId` values change in every generated manifest that declares a group. Regenerate every package, and update any existing `groupBaseTypeAliases` entries to the new form — the composition error prints the values to copy.
 :::
 
+## Lifetimes across the boundary
+
+An app's generation reads each composed manifest as **supply**, and the [lifetime-inversion check](/concepts/lifetimes#lifetime-inversion-checks) ranks edges into a composed package on the same terms as local ones. The lifetime written in a composed manifest is not a guess about what another package might do; it is the lifetime `registerIocFromManifest` will register, in the same container, under the same key.
+
+This matters most for groups, because a group edge is checked at generation and nowhere else — member slots are lazy, so Awilix strict mode has no resolution stack to rank a member against no matter how it is configured. A composed group root merges with the local one and the **union** is ranked, so a locally empty root whose members all arrive by composition is checked, and so is the mixed root. A member whose lifetime no manifest this run read can state is printed as `UNRANKED, not cleared` rather than passed over in silence.
+
+Two operational consequences:
+
+- **Regenerate libraries before the app.** The check can only rank what the app's run could see. Generating the app against a stale composed manifest ranks the local members and no others, and nothing anywhere ranks the rest.
+- **Expect findings on the first app-mode run after upgrading to 4.1.** Cross-boundary edges were previously classified as externals and skipped. See [Upgrading to 4.1](/concepts/lifetimes#lifetime-inversion-checks).
+
+An app's confidence in a walk through a composed package is also bounded by what that package's manifest vouches for — see [`dependencyKeysComplete`](/guide/what-gets-generated#manifest-feature-tokens).
+
 ---

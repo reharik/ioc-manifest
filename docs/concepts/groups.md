@@ -43,6 +43,10 @@ export interface LoggingService extends IScoped {
 
 Every member ranks it, and `ioc inspect --discovery` reports the provenance as `scoped (group-base-marker)` so an unexpected lifetime is traceable to the declaration you did not write locally. Lifetime-inversion checks see it through the group hop: a singleton consuming a scoped group is reported the same as one consuming a scoped member.
 
+That hop is checked at generation and nowhere else. Group member slots are [lazy](#members-resolve-when-you-read-them), so the read usually happens at call time with no enclosing resolution on the stack — Awilix has nothing to rank the member against, and the group root's leak-safe registration is a statement about the root (which holds nothing) rather than a verdict on the members behind it. Turning Awilix strict mode on does not add a second net here, and turning it off does not remove this one.
+
+Members arriving from a [composed package](/monorepo/composition#groups-across-manifests) are ranked too: a composed root merges with the local one and the union is what gets ranked, with each member's lifetime falling back to the composed unit that registers it. A member the run cannot resolve a lifetime for is reported as `UNRANKED, not cleared` rather than quietly skipped — see [Across a composed boundary](/concepts/lifetimes#across-a-composed-boundary).
+
 A member declaring its own lifetime — a marker on its own contract that the base lacks, or a per-implementation `lifetime` in `ioc.config` — is a hard error. It is not outranked by precedence; it is a claim of authority over a property of the family the member does not own.
 
 ## Collection groups: the strategy pattern

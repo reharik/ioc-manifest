@@ -122,9 +122,10 @@ export type ModuleFactoryManifestMetadata = {
    *
    * Omitted when empty, and omitted entirely for a unit whose deps parameter is not a top-level
    * object binding pattern — the same "prefer omission" rule {@link dependencyContractNames}
-   * follows. Absence is therefore ambiguous on its own; {@link IOC_MANIFEST_FEATURES_EXPORT_NAME}
-   * is what tells a reader "this manifest emits keys and this unit has none" apart from "this
-   * manifest predates the field".
+   * follows. Absence is therefore ambiguous on its own, in TWO directions, and only the
+   * `"dependencyKeysComplete"` token of {@link IOC_MANIFEST_FEATURES_EXPORT_NAME} resolves both:
+   * without it, absence means "demands nothing" OR "predates the field" OR "the deps parameter
+   * could not be read". With it, absence means "demands nothing" and nothing else.
    */
   dependencyKeys?: readonly string[];
   /**
@@ -148,10 +149,40 @@ export type IocContractManifest = Record<
  * whether a cross-package subtree walk can see anything at all — that difference is the difference
  * between a real verdict and a blind one, so it is declared positively.
  *
- * `"dependencyKeys"`: every unit in `contracts` that has demandable cradle keys carries them.
- * `"lifetimeSource"`: every unit in `contracts` whose lifetime has a recorded mechanism carries it.
+ * `"dependencyKeys"`: this manifest's generator knows the `dependencyKeys` field and emits it where
+ * it has keys to emit. A CAPABILITY claim, and deliberately nothing more: `dependencyKeys` is
+ * derived syntactically from the factory's first parameter, so a unit written `(deps: Deps)` —
+ * idiomatic, and not a mistake — carries no keys while demanding plenty, and is indistinguishable
+ * from a unit that demands nothing. Every manifest this generator has ever written declares it.
+ *
+ * `"dependencyKeysComplete"`: every unit in `contracts` had its demand set actually DETERMINED at
+ * generation, so on this manifest absence of `dependencyKeys` means "demands nothing" and nothing
+ * else. A COVERAGE claim, computed per manifest — one factory whose parameter could not be read
+ * withholds it. This is the only token that licenses a consumer to walk a subtree through this
+ * package and call the result complete; see `verifyScopeRoots`' composed blind-spot advisory.
+ *
+ * The two are separate tokens rather than one because the weaker claim was shipped first, under
+ * the stronger claim's wording, and a manifest already on disk cannot be asked to take it back.
+ * Splitting them lets a consumer distrust the old claim without having to distrust the field.
+ *
+ * `"lifetimeSource"`: this manifest's generator knows the `lifetimeSource` field and emits it for
+ * every unit whose plan carried provenance. A CAPABILITY claim, worded like `"dependencyKeys"` and
+ * emitted unconditionally like it — but, unlike it, total in practice, which is why it has no
+ * coverage sibling. Provenance resolution cannot come up empty on a unit the way key extraction
+ * can: `resolvePlanLifetime` ends at `"default"`, a real answer meaning "nothing declared one",
+ * rather than at a gap. So on every manifest this generator writes, absence of `lifetimeSource`
+ * means the file predates the field and nothing else.
+ *
+ * A second token would therefore carry no information, and this vocabulary is published — a token
+ * added is a token every future reader must go on honoring. If a plan ever DOES reach the writer
+ * without provenance, the cost is bounded and visible: `explain` still says "provenance not
+ * recorded in the manifest", it just loses the sharper "regenerate <package>" remedy that this
+ * token's absence would have licensed. That is a duller sentence, not a false one.
  */
-export type IocManifestFeature = "dependencyKeys" | "lifetimeSource";
+export type IocManifestFeature =
+  | "dependencyKeys"
+  | "dependencyKeysComplete"
+  | "lifetimeSource";
 
 /**
  * The name of the sibling export a generated manifest declares its features under.
@@ -167,11 +198,43 @@ export type IocManifestFeature = "dependencyKeys" | "lifetimeSource";
  */
 export const IOC_MANIFEST_FEATURES_EXPORT_NAME = "IOC_MANIFEST_FEATURES";
 
-/** The features the CURRENT generator writes. Emitted verbatim into every generated manifest. */
+/**
+ * Every feature token this generator knows how to write.
+ *
+ * NOT the list any given manifest declares. A coverage token like `"dependencyKeysComplete"` is
+ * true of a manifest or it is not, so the emitted list is computed per manifest by
+ * {@link iocManifestFeaturesFor}. This constant emitted verbatim is exactly the overclaim that
+ * token exists to correct — it is kept only as the canonical vocabulary.
+ */
 export const IOC_MANIFEST_FEATURES: readonly IocManifestFeature[] = [
   "dependencyKeys",
+  "dependencyKeysComplete",
   "lifetimeSource",
 ];
+
+/** What a generation run learned about its own coverage, per feature that has any. */
+export type IocManifestFeatureCoverage = {
+  /**
+   * True when every unit reaching `contracts` had its cradle-key demand set determined — including
+   * the units that turned out to demand nothing. False when even one deps parameter could not be
+   * read.
+   */
+  readonly dependencyKeysComplete: boolean;
+};
+
+/**
+ * The feature list one generated manifest may honestly declare.
+ *
+ * Capability tokens are unconditional; coverage tokens are earned. Ordered as
+ * {@link IOC_MANIFEST_FEATURES} lists them so generated output stays byte-stable.
+ */
+export const iocManifestFeaturesFor = (
+  coverage: IocManifestFeatureCoverage,
+): readonly IocManifestFeature[] =>
+  IOC_MANIFEST_FEATURES.filter(
+    (feature) =>
+      feature !== "dependencyKeysComplete" || coverage.dependencyKeysComplete,
+  );
 
 /**
  * One scope-root variant's emitted opener (scope-roots stage 3).

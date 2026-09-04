@@ -171,13 +171,35 @@ The banner goes to stderr, so piping a report into a file or another tool still 
 
 The marker records the outcome, a timestamp, how many offenders the failing attempt reported, and a fingerprint of the resolved inputs. The fingerprint is presence-and-mismatch data for the banner and nothing more — it cannot say *what* changed and does not try.
 
-**Recommended `.gitignore` entry**, since it is local, timestamped tooling state:
+**Do not commit the marker.** A successful generation adds it to the `.gitignore` beside it for you, creating that file if there is none, and says so:
+
+```
+Added .ioc-generation-state.json to src/.gitignore — local generation state, and its timestamp changes every run.
+```
+
+That happens once. A run that finds the entry already present — in any of `.ioc-generation-state.json`, `/.ioc-generation-state.json`, or `**/.ioc-generation-state.json` — writes nothing and says nothing, and an existing `.gitignore` is only ever appended to, never reformatted. An explicit `!.ioc-generation-state.json`, or a `.gitignore` that is a symlink, is left alone. Set `manageGitignore: false` in `ioc.config.ts` if your ignores are managed centrally — a workspace-root entry covers every package, and generation cannot see it from inside one:
 
 ```gitignore
 **/.ioc-generation-state.json
 ```
 
-It is harmless if committed. CI running `ioc validate` against a committed marker and printing the banner is working as intended: that tree genuinely has a failing generation.
+#### Why the timestamp matters for CI
+
+The marker records **when** generation ran, so its bytes change on every successful run even when the generated output is identical. An unscoped dirty-tree check therefore fails on every build:
+
+```bash
+git diff --exit-code            # ✗ always fails: the marker's timestamp moved
+```
+
+Scope the check to the generated directory, which is the thing you actually want to prove is deterministic:
+
+```bash
+git diff --exit-code -- 'src/generated'   # ✓ the marker sits beside it, not in it
+```
+
+This is why the marker lives *beside* the generated directory rather than inside it. If you have already committed one, `git rm --cached` it once and let the ignore entry take over.
+
+Committing it is otherwise harmless. CI running `ioc validate` against a committed marker and printing the banner is working as intended: that tree genuinely has a failing generation.
 
 With `--json` the marker is a `staleness` field carrying the same record, never a banner in the payload. `inspect` and `explain` gain the field alongside what they already emit.
 
@@ -373,6 +395,26 @@ note: @packages/media-core may be stale; this finding may describe the old world
 If the composed picture cannot be read at all — an unresolvable composed package — `explain` says so on stderr and answers over this package alone. It is a view: a half-answer beats a refused question.
 
 `--json` extends, never renames. The composed answer adds `supplier`, `packages` (the `sourceId`s the answer rests on), `possiblyStale` / `stalenessNote`, per-dependency and per-dependent `packageLabel`, and the `grouped-member` / `external` resolution kinds, alongside every field it has always emitted.
+
+## `ioc generate`: dependency-key coverage
+
+Every generation reports the accepted units whose deps parameter it could not read, in the package that owns them:
+
+```
+[ioc] 1 accepted unit(s) demand dependencies this generation could not read, so this package's
+manifest cannot claim "dependencyKeysComplete":
+  - media/mediaServeController.ts:10 registration unit "buildMediaServeController"
+      [non-destructured-parameter]
+      written: (deps: MediaServeControllerDeps)
+      why: the first parameter is a plain identifier (`(deps: Deps)`), so the keys it will read
+           off `deps` at runtime are not written anywhere this analysis can see.
+      fix: destructure the first parameter — `({ a, b }: Deps)` — naming the cradle keys the
+           body uses.
+```
+
+These units register and resolve normally; what they do not do is record *what* they demand, and three things are built on that record — the [lifetime-inversion check](/concepts/lifetimes#lifetime-inversion-checks) skips a unit with no recorded demand, a [scope-root subtree walk](/concepts/scope-roots#verification) stops at one, and the manifest withholds [`dependencyKeysComplete`](/guide/what-gets-generated#manifest-feature-tokens) for the whole package, which downgrades the analysis of every app composing it.
+
+`dependencyKeyCoverage` in `ioc.config.ts` sets the level: `"warn"` (default), `"error"` to fail generation once a package is clean, `"off"` to silence it. `"off"` silences the message only — the coverage token follows the code, not the setting. See [`dependencyKeyCoverage`](/config/reference#dependencykeycoverage).
 
 ## `ioc generate` in app mode: the composition suite
 

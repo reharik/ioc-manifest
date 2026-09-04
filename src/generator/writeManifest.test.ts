@@ -509,7 +509,7 @@ describe("writeManifest", () => {
       // of the manifest object is read back as a GROUP ROOT, by this runtime and by older ones.
       assert.match(
         manifestSource,
-        /export const IOC_MANIFEST_FEATURES = \["dependencyKeys", "lifetimeSource"\] as const;/,
+        /export const IOC_MANIFEST_FEATURES = \["dependencyKeys", "dependencyKeysComplete", "lifetimeSource"\] as const;/,
       );
       assert.ok(
         !/^\s*IOC_MANIFEST_FEATURES:/m.test(manifestSource),
@@ -568,7 +568,7 @@ describe("writeManifest", () => {
       assert.match(manifestSource, /lifetimeSource: "lifetime-marker",/);
       assert.match(
         manifestSource,
-        /export const IOC_MANIFEST_FEATURES = \["dependencyKeys", "lifetimeSource"\] as const;/,
+        /export const IOC_MANIFEST_FEATURES = \["dependencyKeys", "dependencyKeysComplete", "lifetimeSource"\] as const;/,
       );
     });
 
@@ -618,8 +618,143 @@ describe("writeManifest", () => {
       assert.ok(!/^\s*lifetimeSource:/m.test(manifestSource));
       assert.match(
         manifestSource,
+        /export const IOC_MANIFEST_FEATURES = \["dependencyKeys", "dependencyKeysComplete", "lifetimeSource"\] as const;/,
+      );
+    });
+  });
+
+  describe("When a unit's deps parameter could not be read", () => {
+    it("should emit the keys it has but withhold the completeness claim", async () => {
+      // The overclaim. `dependencyKeys` is derived syntactically from the first parameter, so a
+      // factory written `(deps: Deps)` records nothing while demanding plenty — and the manifest
+      // used to declare full coverage anyway, because the feature list was a constant. A composing
+      // app read that claim, suppressed its blind-spot advisory, and returned a confident verdict
+      // over a subtree it could not see.
+      const tempRoot = await fs.mkdtemp(
+        path.join(os.tmpdir(), "ioc-write-manifest-"),
+      );
+      const generatedDir = path.join(tempRoot, "src", "generated");
+      await fs.mkdir(generatedDir, { recursive: true });
+      const manifestOutPath = path.join(generatedDir, "ioc-manifest.ts");
+
+      const acceptedFactories: DiscoveredFactory[] = [
+        mkFactory({
+          contractName: "Reader",
+          implementationName: "reader",
+          exportName: "buildReader",
+          registrationKey: "reader",
+          modulePath: "fixtures/reader.ts",
+          relImport: "../fixtures/reader.js",
+          dependencyKeys: ["clock"],
+        }),
+        // `buildController(deps: Deps)`: discovery read the parameter and could not name a key.
+        mkFactory({
+          contractName: "Controller",
+          implementationName: "controller",
+          exportName: "buildController",
+          registrationKey: "controller",
+          modulePath: "fixtures/controller.ts",
+          relImport: "../fixtures/controller.js",
+          dependencyKeysUnknown: true,
+        }),
+      ];
+      const plans: ResolvedContractRegistration[] = [
+        mkPlan({
+          contractName: "Reader",
+          contractTypeRelImport: "../fixtures/contracts.js",
+          contractKey: "reader",
+          defaultImplementationName: "reader",
+          implementations: [
+            {
+              implementationName: "reader",
+              exportName: "buildReader",
+              modulePath: "fixtures/reader.ts",
+              relImport: "../fixtures/reader.js",
+              registrationKey: "reader",
+              lifetime: "scoped",
+              dependencyKeys: ["clock"],
+            },
+          ],
+        }),
+        mkPlan({
+          contractName: "Controller",
+          contractTypeRelImport: "../fixtures/contracts.js",
+          contractKey: "controller",
+          defaultImplementationName: "controller",
+          implementations: [
+            {
+              implementationName: "controller",
+              exportName: "buildController",
+              modulePath: "fixtures/controller.ts",
+              relImport: "../fixtures/controller.js",
+              registrationKey: "controller",
+              lifetime: "scoped",
+            },
+          ],
+        }),
+      ];
+
+      await writeWithDemandSupply(
+        acceptedFactories,
+        plans,
+        undefined,
+        manifestOutPath,
+      );
+      const manifestSource = await fs.readFile(manifestOutPath, "utf8");
+
+      // What it CAN see is still written — the claim narrows, the data does not.
+      assert.match(manifestSource, /dependencyKeys: \["clock"\],/);
+      // The capability token stands (this file does emit the field); the coverage token does not.
+      assert.match(
+        manifestSource,
         /export const IOC_MANIFEST_FEATURES = \["dependencyKeys", "lifetimeSource"\] as const;/,
       );
+      assert.ok(
+        !/dependencyKeysComplete/.test(manifestSource),
+        "one unreadable deps parameter must withhold the completeness claim",
+      );
+    });
+
+    it("should withhold the claim for a planned unit discovery never saw", async () => {
+      // Pessimistic where it cannot join: a unit reaching `contracts` with no discovery row is a
+      // unit whose demand set nothing vouched for.
+      const tempRoot = await fs.mkdtemp(
+        path.join(os.tmpdir(), "ioc-write-manifest-"),
+      );
+      const generatedDir = path.join(tempRoot, "src", "generated");
+      await fs.mkdir(generatedDir, { recursive: true });
+      const manifestOutPath = path.join(generatedDir, "ioc-manifest.ts");
+
+      const plans: ResolvedContractRegistration[] = [
+        mkPlan({
+          contractName: "Svc",
+          contractTypeRelImport: "../fixtures/contracts.js",
+          contractKey: "svc",
+          defaultImplementationName: "svc",
+          implementations: [
+            {
+              implementationName: "svc",
+              exportName: "buildX",
+              modulePath: "fixtures/impl.ts",
+              relImport: "../fixtures/impl.js",
+              registrationKey: "svc",
+              lifetime: "singleton",
+            },
+          ],
+        }),
+      ];
+
+      await writeWithDemandSupply(
+        [mkFactory({ contractName: "Svc", implementationName: "svc" })].map(
+          (f) => ({ ...f, exportName: "buildSomethingElse" }),
+        ),
+        plans,
+        undefined,
+        manifestOutPath,
+      );
+      const manifestSource = await fs.readFile(manifestOutPath, "utf8");
+
+      assert.ok(!/dependencyKeysComplete/.test(manifestSource));
     });
   });
 

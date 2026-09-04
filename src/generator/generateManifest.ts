@@ -91,6 +91,8 @@ import {
 } from "./composedGroupMembership.js";
 import {
   GENERATION_FAILURE_ARTIFACTS_NOTE,
+  IOC_GENERATION_STATE_FILENAME,
+  ensureGenerationStateIgnored,
   generationStatePathFor,
   hashGenerationInputs,
   writeGenerationRecord,
@@ -103,6 +105,7 @@ import {
 } from "../diagnostics/phaseTiming.js";
 import { warnUnusableFactoryExports } from "./warnUnusableFactoryExports.js";
 import { warnDivergentClassFileNames } from "./warnDivergentClassFileNames.js";
+import { reportUnknownDependencyKeys } from "./reportUnknownDependencyKeys.js";
 
 /**
  * Group membership in the terms the demand rule reads it, with the group's cradle key and — for a
@@ -300,21 +303,29 @@ const runGeneration = async (
       }),
     );
 
-    const { contractMap, acceptedFactories, discoveryFiles, scopeRoots } =
-      timePhase("discovery: factories", () =>
-        discoverFactories(
-          files,
-          program,
-          projectRoot,
-          factoryExportPrefix,
-          { projectRoot, scanDirs, generatedDir },
-          config,
-          { collectFileRecords: true },
-        ),
-      );
+    const {
+      contractMap,
+      acceptedFactories,
+      discoveryFiles,
+      scopeRoots,
+      unknownDependencyKeyUnits,
+    } = timePhase("discovery: factories", () =>
+      discoverFactories(
+        files,
+        program,
+        projectRoot,
+        factoryExportPrefix,
+        { projectRoot, scanDirs, generatedDir },
+        config,
+        { collectFileRecords: true },
+      ),
+    );
 
     warnUnusableFactoryExports(discoveryFiles);
     warnDivergentClassFileNames(acceptedFactories, config);
+    // Before any artifact is written, so a `dependencyKeyCoverage: "error"` package fails the run
+    // rather than emitting a manifest that quietly withholds its coverage claim.
+    reportUnknownDependencyKeys(unknownDependencyKeyUnits, config);
 
     const composedContractNames =
       config !== undefined && isAppMode(config)
@@ -521,6 +532,10 @@ const runGeneration = async (
 
     validateScopeProvidedAtCodegen(config?.scopeProvided ?? [], demandSupply);
 
+    // Composed supply reaches the lifetime check for the same reason it reaches the scope-root walk:
+    // a consumer → group → member edge is ranked at generation and NOWHERE else (group member slots
+    // resolve lazily, so strict mode never sees them), and without this argument every such edge
+    // whose member lives in a library was classified external and skipped in silence.
     timePhase("check: lifetime inversions", () =>
       validateLifetimeInversionsAtCodegen(
         acceptedFactories,
@@ -528,6 +543,7 @@ const runGeneration = async (
         groupResult?.manifest,
         demandSupply,
         config,
+        composedSupply,
       ),
     );
 
@@ -739,7 +755,10 @@ const runGeneration = async (
     // Sequential, not `Promise.all`: prettier's own formatting is CPU-bound and the artifacts are
     // two or three files, so concurrency would buy nothing and would interleave any warning.
     await formatGeneratedFileWithPrettier(manifestOutPath, projectRoot);
-    await formatGeneratedFileWithPrettier(artifactSources.typesPath, projectRoot);
+    await formatGeneratedFileWithPrettier(
+      artifactSources.typesPath,
+      projectRoot,
+    );
     if (composedOutPath !== undefined) {
       await formatGeneratedFileWithPrettier(composedOutPath, projectRoot);
     }
@@ -748,6 +767,28 @@ const runGeneration = async (
     console.log(
       `Generated ${relManifest} — ${acceptedFactories.length} module factory(ies), ${contractMap.size} contract(s).`,
     );
+
+    // After the artifacts have landed, and never in a way that can unland them: the helper swallows
+    // every filesystem error, and a `.gitignore` that could not be written costs a CI footgun, not
+    // this run. Announced when it changed something — a file appearing in `git status` that the
+    // developer did not create is exactly the kind of thing a tool must not do silently.
+    if (config?.manageGitignore ?? true) {
+      const markerPath = generationStatePathFor(generatedDir);
+      const ignored = await ensureGenerationStateIgnored(markerPath);
+      const relGitignore = path.relative(
+        projectRoot,
+        path.join(path.dirname(markerPath), ".gitignore"),
+      );
+      if (ignored === "created") {
+        console.log(
+          `Created ${relGitignore} ignoring ${IOC_GENERATION_STATE_FILENAME} — local generation state, and its timestamp changes every run.`,
+        );
+      } else if (ignored === "appended") {
+        console.log(
+          `Added ${IOC_GENERATION_STATE_FILENAME} to ${relGitignore} — local generation state, and its timestamp changes every run.`,
+        );
+      }
+    }
 
     if (config !== undefined && isLibraryMode(config)) {
       console.log(

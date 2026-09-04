@@ -21,6 +21,7 @@ export type {
   IocGroupsManifest,
   IocImplementationLifetime,
   IocManifestFeature,
+  IocManifestFeatureCoverage,
   IocModuleNamespace,
   IocRegisterableManifest,
   IocUnitKind,
@@ -31,6 +32,7 @@ export {
   IOC_GENERATED_CONTAINER_MANIFEST_FIXED_KEYS,
   IOC_MANIFEST_FEATURES,
   IOC_MANIFEST_FEATURES_EXPORT_NAME,
+  iocManifestFeaturesFor,
   iocUnitKindOf,
 } from "./manifest.js";
 

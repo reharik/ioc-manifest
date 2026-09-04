@@ -20,6 +20,12 @@ const manifestSource = (options?: {
   dependencyKeys?: boolean;
   lifetimeSource?: boolean;
   features?: boolean;
+  /**
+   * `false` declares `"dependencyKeys"` without `"dependencyKeysComplete"` — a manifest that emits
+   * the field and cannot vouch that it emitted it everywhere, which is what every manifest written
+   * before the coverage token could honestly have said.
+   */
+  dependencyKeysComplete?: boolean;
   accessKey?: boolean;
 }): string => `export const iocManifest = {
   manifestSchemaVersion: 3,
@@ -83,7 +89,7 @@ const manifestSource = (options?: {
 } as const;
 
 export const IOC_SCOPE_PROVIDED_KEYS = [] as const;
-${options?.features === false ? "" : `\nexport const IOC_MANIFEST_FEATURES = ["dependencyKeys", "lifetimeSource"] as const;\n`}`;
+${options?.features === false ? "" : `\nexport const IOC_MANIFEST_FEATURES = [${options?.dependencyKeysComplete === false ? '"dependencyKeys", "lifetimeSource"' : '"dependencyKeys", "dependencyKeysComplete", "lifetimeSource"'}] as const;\n`}`;
 
 const parse = (options?: Parameters<typeof manifestSource>[0]) =>
   parseComposedManifestSupplySource(
@@ -269,6 +275,39 @@ describe("loadComposedManifestSupply", () => {
       ]);
 
       assert.deepEqual(supply.packagesWithoutDependencyData, ["@test/lib-old"]);
+    });
+
+    it("should name a package that emits dependency keys but does not vouch for all of them", async () => {
+      // The overclaim this token exists to correct. The old `"dependencyKeys"` flag was written
+      // into every manifest unconditionally, including manifests whose units it had no keys for —
+      // so a composing app read "full coverage" off a file that carried partial coverage, and
+      // suppressed the one advisory that would have said so.
+      const root = makeRoot();
+      installPackage(root, "@test/lib-new", manifestSource());
+      installPackage(
+        root,
+        "@test/lib-partial",
+        manifestSource({ dependencyKeysComplete: false }),
+      );
+
+      const supply = await loadComposedManifestSupply(root, [
+        "@test/lib-new",
+        "@test/lib-partial",
+      ]);
+
+      assert.deepEqual(supply.packagesWithoutDependencyData, [
+        "@test/lib-partial",
+      ]);
+      // Partial is not unreadable: the keys it DID carry are still loaded and still walkable.
+      assert.deepEqual(
+        supply.units
+          .filter((u) => u.packageName === "@test/lib-partial")
+          .find((u) => u.registrationKey === "restClient")?.dependencyKeys,
+        ["baseUrl", "logger"],
+      );
+      assert.deepEqual(supply.unreadablePackages, []);
+      // A separate blind spot with a separate consequence: provenance is unaffected.
+      assert.deepEqual(supply.packagesWithoutLifetimeProvenance, []);
     });
 
     it("should name packages missing provenance apart from those missing dependency data", async () => {

@@ -52,7 +52,7 @@ const LEGACY = "@test/lib-legacy";
 
 /**
  * The library manifest, as this generator writes it: per-unit `dependencyKeys`, plus the sibling
- * export declaring that they are carried in full.
+ * export declaring that every unit's demand set was determined.
  *
  * `mediaAuditLog` is deliberately NOT a member of the `readServices` group and is reachable from
  * nothing the app's scope roots resolve. It demands `viewerId` all the same, from outside every
@@ -61,6 +61,13 @@ const LEGACY = "@test/lib-legacy";
 const modernLibraryManifest = (options?: {
   withDependencyKeys?: boolean;
   withFeatures?: boolean;
+  /**
+   * `false` declares `"dependencyKeys"` without `"dependencyKeysComplete"`: the library emits the
+   * field and cannot vouch that it emitted it for every unit — one of its factories takes a plain
+   * `(deps: Deps)` parameter, so its demands were never readable. Every manifest written before the
+   * coverage token existed is this manifest, whatever it declared.
+   */
+  withCompleteDependencyKeys?: boolean;
 }): string => {
   const keys = options?.withDependencyKeys !== false;
   const dep = (list: string[]): string =>
@@ -142,7 +149,11 @@ export const IOC_SCOPE_PROVIDED_KEYS = [] as const;
 ${
   options?.withFeatures !== false
     ? `
-export const IOC_MANIFEST_FEATURES = ["dependencyKeys"] as const;
+export const IOC_MANIFEST_FEATURES = [${
+        options?.withCompleteDependencyKeys === false
+          ? `"dependencyKeys"`
+          : `"dependencyKeys", "dependencyKeysComplete"`
+      }] as const;
 `
     : ""
 }`;
@@ -699,7 +710,7 @@ describe("scope-root subtree demands across a composed package boundary", () => 
       );
       assert.ok(advisory, "expected a blind-spot advisory");
       assert.equal(advisory.severity, "warn");
-      assert.match(advisory.message, /carries no dependency data/);
+      assert.match(advisory.message, /carries no dependency data it vouches for in full/);
       assert.match(advisory.message, /INCOMPLETE/);
       assert.match(advisory.message, /"@test\/lib-legacy"/);
 
@@ -769,8 +780,51 @@ describe("scope-root subtree demands across a composed package boundary", () => 
       assert.match(text, /✔ satisfied/);
       assert.match(
         text,
-        /subtree reaches composed @test\/lib-legacy — no dependency data in their manifests, lbv verification incomplete for that subtree/,
+        /subtree reaches composed @test\/lib-legacy — no dependency data they vouch for in full, lbv verification incomplete for that subtree/,
       );
+    });
+
+    it("should advise when a package emits keys but cannot vouch for all of them", async () => {
+      // The defect this suite previously could not see. A library whose factories are mostly
+      // destructured but whose `mediaCatalog` takes a plain `(deps: Deps)` parameter emits SOME
+      // dependency keys — and, under the old unconditional feature list, also emitted the flag
+      // asserting it emitted them all. The composing app believed the flag, suppressed this
+      // advisory, and returned a ✔ over a subtree it could not fully walk.
+      const { result } = await analyze(
+        buildFixture({
+          packages: [
+            {
+              name: LIB,
+              source: modernLibraryManifest({
+                withCompleteDependencyKeys: false,
+              }),
+            },
+          ],
+        }),
+      );
+      const requestScope = variant(result, "requestScope");
+
+      assert.deepEqual(requestScope.blindComposedPackages, [LIB]);
+      const advisory = requestScope.findings.find(
+        (f) => f.code === "lbv_composed_blind_spot",
+      );
+      assert.ok(advisory, "expected a blind-spot advisory");
+      assert.equal(advisory.severity, "warn");
+      assert.match(advisory.message, /INCOMPLETE/);
+      // The reader is told which of the two causes to go and look for.
+      assert.match(advisory.message, /dependencyKeysComplete/);
+      assert.match(advisory.message, /\(deps: Deps\)/);
+
+      // Still advisory, and still a real walk: the keys the manifest DID carry are followed, so
+      // the demand for `viewerId` is found. The advisory qualifies the verdict; it does not
+      // replace it.
+      assert.equal(requestScope.satisfied, true);
+      assert.equal(result.errors.length, 0);
+      assert.equal(
+        requestScope.scopeDemands.some((d) => d.key === "viewerId"),
+        true,
+      );
+      assert.deepEqual(requestScope.unusedDeclaredKeys, []);
     });
 
     it("should raise no advisory for a field-less package the subtree never reaches", async () => {

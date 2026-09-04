@@ -247,3 +247,70 @@ describe("inferFactoryDependencies dependencyKeys", () => {
     });
   });
 });
+
+/**
+ * Absence of keys has two causes, and until they were told apart the manifest declared full key
+ * coverage over units it had never read the parameters of. Every shape that yields no keys is
+ * pinned here on WHICH of the two it is.
+ */
+describe("inferFactoryDependencies dependencyKeysUnknown", () => {
+  const inferFor = (
+    exportName: string,
+  ): ReturnType<typeof inferFactoryDependencies> => {
+    const { program, checker } = makeProgram();
+    const decl = getFactoryDecl(
+      program,
+      path.join(fixtureDir, "factories.ts"),
+      exportName,
+    );
+    return inferFactoryDependencies(checker, decl, KNOWN_CONTRACTS);
+  };
+
+  describe("When the factory declares no parameters", () => {
+    it("should report an empty demand set as determined, not unknown", () => {
+      const inferred = inferFor("buildNoDeps");
+      assert.strictEqual(inferred.dependencyKeys, undefined);
+      assert.strictEqual(inferred.dependencyKeysUnknown, undefined);
+    });
+  });
+
+  describe("When the binding pattern destructures nothing", () => {
+    it("should report an empty demand set as determined, not unknown", () => {
+      const inferred = inferFor("buildEmptyBinding");
+      assert.strictEqual(inferred.dependencyKeys, undefined);
+      assert.strictEqual(inferred.dependencyKeysUnknown, undefined);
+    });
+  });
+
+  describe("When the first parameter is a single identifier typed as the full cradle", () => {
+    it("should report the demand set as unknown", () => {
+      // `(deps: Deps)` — idiomatic, not a mistake, and the shape that made the old feature flag a
+      // lie: it demands whatever it reads off `deps` and records none of it.
+      const inferred = inferFor("buildWithFullCradleParam");
+      assert.strictEqual(inferred.dependencyKeys, undefined);
+      assert.strictEqual(inferred.dependencyKeysUnknown, true);
+    });
+  });
+
+  describe("When the binding uses a rest element, a nested pattern or a computed key", () => {
+    it("should report the demand set as unknown for each", () => {
+      for (const exportName of [
+        "buildWithRest",
+        "buildNestedBinding",
+        "buildComputedBinding",
+      ]) {
+        const inferred = inferFor(exportName);
+        assert.strictEqual(
+          inferred.dependencyKeys,
+          undefined,
+          `${exportName} should record no keys`,
+        );
+        assert.strictEqual(
+          inferred.dependencyKeysUnknown,
+          true,
+          `${exportName} should record that it could not determine them`,
+        );
+      }
+    });
+  });
+});

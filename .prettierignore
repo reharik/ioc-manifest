@@ -1,0 +1,25 @@
+# Prettier does not own this repo's hand-written source or prose.
+#
+# Stated as an ignore rather than as a `.prettierrc`, because a style file here would be a claim
+# that is not true. The source is hand-formatted, and NO printWidth makes `prettier --write` a
+# no-op over it: at prettier's own default of 80 columns, 190 of the 522 files under `src/` already
+# differ, and every wider setting is worse (90 → 251, 95 → 278, 100 → 297, 110 → 321), because
+# prettier decides far more than line width. A `.prettierrc` would advertise that a stray `--write`
+# is safe in this tree while it rewrote a third of it — the exact diff bomb it looked like it was
+# preventing. An ignore makes the same run genuinely a no-op, and says something true while doing it.
+#
+# What prettier DOES own is emitted artifacts, and the negation below is load-bearing.
+# `generator/formatGeneratedFile.ts` reproduces the CLI's ignore behaviour through `getFileInfo`,
+# reading THIS file and `.gitignore` from the project root, so an entry that swallowed
+# `src/generated` would quietly stop `npm run gen:manifest` formatting this package's own manifest —
+# and would do it silently, since formatting failures there are cosmetic by design.
+#
+# The pattern matches FILES, not the directory. `src/**` would exclude `src/generated` itself, and
+# gitignore semantics cannot re-include a file whose parent directory is excluded — a negation under
+# it looks correct and does nothing.
+src/**/*.ts
+!src/generated/**
+
+# Prose is hand-wrapped for the same reason, and 19 markdown files differ from prettier's wrapping.
+*.md
+docs/**/*.md

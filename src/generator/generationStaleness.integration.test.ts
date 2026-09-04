@@ -724,3 +724,72 @@ describe("the two worlds, on one screen", () => {
     assert.doesNotMatch(rendered, /writeServices\.[A-Z]/);
   });
 });
+
+describe("a successful generation ignores its own record", () => {
+  /** The `.gitignore` at stake: the one beside the marker, which is `src/` here. */
+  const gitignoreOf = (fixture: Fixture): string =>
+    path.join(path.dirname(fixture.markerPath), ".gitignore");
+
+  const occurrences = (contents: string): number =>
+    contents.split("\n").filter((line) => line.trim() === IOC_GENERATION_STATE_FILENAME).length;
+
+  describe("When a package has no .gitignore beside its generated directory", () => {
+    it("should create one ignoring the record, since its timestamp changes every run", async () => {
+      const fixture = await theFreshWorkspace();
+
+      assert.equal(occurrences(readFileSync(gitignoreOf(fixture), "utf8")), 1);
+      // Beside the marker, not at the project root: generation has no business editing a file it
+      // does not own.
+      assert.equal(path.dirname(gitignoreOf(fixture)), path.dirname(fixture.markerPath));
+      assert.equal(existsSync(path.join(fixture.projectRoot, ".gitignore")), false);
+    });
+  });
+
+  describe("When it writes the entry", () => {
+    it("should say so on stdout, so no file appears in git status unannounced", () => {
+      const fixture = buildFixture();
+      const { stdout, status } = spawnCli(fixture, ["generate"]);
+
+      assert.equal(status, 0);
+      assert.match(stdout, /Created src[/\\]\.gitignore ignoring \.ioc-generation-state\.json/u);
+      assert.match(stdout, /timestamp changes every run/u);
+    });
+
+    it("should say nothing on the runs after, having changed nothing", () => {
+      const fixture = buildFixture();
+      spawnCli(fixture, ["generate"]);
+      const { stdout } = spawnCli(fixture, ["generate"]);
+
+      assert.doesNotMatch(stdout, /\.gitignore/u);
+    });
+  });
+
+  describe("When generation runs a second time", () => {
+    it("should leave the .gitignore byte-identical, so a dirty-tree check stays clean", async () => {
+      const fixture = buildFixture();
+      await generate(fixture);
+      const afterFirst = readFileSync(gitignoreOf(fixture), "utf8");
+
+      await generate(fixture);
+
+      assert.equal(readFileSync(gitignoreOf(fixture), "utf8"), afterFirst);
+      assert.equal(occurrences(afterFirst), 1);
+    });
+  });
+
+  describe("When the consumer manages ignores centrally", () => {
+    it("should write nothing under manageGitignore: false", async () => {
+      const fixture = buildFixture();
+      writeFileSync(
+        fixture.configPath,
+        appIocConfig.replace("  packageName:", "  manageGitignore: false,\n  packageName:"),
+      );
+
+      await generate(fixture);
+
+      // The record itself is unaffected — the setting governs the `.gitignore` and nothing else.
+      assert.equal(existsSync(fixture.markerPath), true);
+      assert.equal(existsSync(gitignoreOf(fixture)), false);
+    });
+  });
+});

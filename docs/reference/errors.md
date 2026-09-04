@@ -53,6 +53,8 @@ File paths in this family are scan-directory relative, the same as the other dem
 
 **Discovery warnings** are prefixed `[ioc]` and never block generation. They cover units that matched a trigger but couldn't be used, concrete classes that inherit a contract without declaring `implements`, abstract classes declaring a contract nothing concrete registers, and class file names that would have keyed differently under Awilix `loadModules`. `ioc inspect --discovery` shows the same findings per export, with a categorized reason.
 
+**Dependency-key coverage** is reported as one block, prefixed `[ioc]`, naming every accepted unit whose deps parameter this generation could not read — file, line, export, the shape (`non-destructured-parameter`, `defaulted-parameter`, `array-binding-parameter`, `rest-element`, `nested-binding`, `computed-property`, `callable-parameter-type`, `unresolvable-signature`), the parameter as written, why that shape hides the keys, and the fix for that shape specifically. These units register and resolve normally; what they lack is a record of what they demand, so the package cannot claim `dependencyKeysComplete`. A **warning** by default — the code works, and failing a build over working code teaches teams to switch the check off — promoted to an error by `dependencyKeyCoverage: "error"`, silenced by `"off"`. The token is withheld either way. See [dependency-key coverage](/reference/cli#ioc-generate-dependency-key-coverage).
+
 **Group-lifetime errors** are prefixed `[ioc]` and carry a bracketed code per offender. A group is a family whose members are handed out interchangeably, so the family ranks one lifetime and the base is where it is declared. These aggregate too.
 
 | code | what it means | fix |
@@ -63,6 +65,10 @@ File paths in this family are scan-directory relative, the same as the other dem
 A member that redundantly restates the base's own marker is not an error: it is indistinguishable from inheriting it, and the base owns the lifetime either way.
 
 **Lifetime-inversion errors** carry the code `[lifetime-inversion]` and aggregate. The sentence states the floor rule, the pointer links [the chapter](/concepts/lifetimes#the-floor-rule), each offender names the consumer, the dependency, both lifetimes and what the combination does at runtime, and one fix line closes the run. `singleton → scoped` is an error; the other inversions are warnings, printed one at a time with their own pointer.
+
+A dependency registered by a composed package is attributed — `'mediaItemReadRepository' (scoped, composed package "@app/media-core")` — because the fix is written in this repository while the lifetime being complained about is not. Anything unannotated is this package's own.
+
+The same family carries one warning that is not an inversion: a group member the check reached and could not rank prints as `that edge is UNRANKED, not cleared`, naming the member, its registration key, and which of three reasons applies (the composing app supplies the key at bootstrap with no declared lifetime; a composed group root names a member no manifest this run read registers; nothing local or composed carries it). It is disclosure, not a verdict — an unranked edge is not a cleared one — and it is raised for non-transient consumers only, since a transient consumer outlives nothing and no lifetime the member turned out to have could have produced a finding. See [Across a composed boundary](/concepts/lifetimes#across-a-composed-boundary).
 
 **Scope-root verification findings** carry the codes `lbv_missing_key`, `lbv_type_mismatch`, `lbv_unused_key` and `lbv_composed_blind_spot`, and each links to the matching section of [Scope roots](/concepts/scope-roots#verification).
 

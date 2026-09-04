@@ -42,6 +42,12 @@ export type DiscoveredFactory = {
   /** Cradle keys demanded by this factory's deps destructuring (gen-time edge for
       lifetime-inversion analysis). Same omit rules as dependencyContractNames. */
   dependencyKeys?: string[];
+  /**
+   * True when `dependencyKeys` is absent because the deps parameter could not be READ, not because
+   * the unit demands nothing. The manifest cannot record the difference per unit, so generation
+   * records it here and the writer folds it into the manifest's `"dependencyKeysComplete"` claim.
+   */
+  dependencyKeysUnknown?: boolean;
 };
 
 /**
@@ -96,6 +102,8 @@ export type DiscoveredScopeRoot = {
    * subtree walk; same omit rules as {@link DiscoveredFactory.dependencyKeys}.
    */
   dependencyKeys?: string[];
+  /** See {@link DiscoveredFactory.dependencyKeysUnknown}. */
+  dependencyKeysUnknown?: boolean;
 };
 
 export type FactoryDiscoveryFileContext = {

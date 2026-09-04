@@ -538,4 +538,211 @@ export interface IocExternals {
       rmSync(fixture.projectRoot, { recursive: true, force: true });
     });
   });
+
+  /**
+   * The `registrations` fields that only ever acted on a locally discovered factory, aimed at a
+   * unit a composed package owns.
+   *
+   * They parsed, they passed the contract-name check (which accepts composed contract names on
+   * purpose), and then `buildComposedRegistrationOverridesFromConfig` read `default` and `source`
+   * and nothing else — so the rest were dropped in silence and the container ignored the config.
+   * The point of pinning them HERE rather than only in the check's unit tests is the last clause of
+   * that sentence: a refusal that fires only under `ioc validate` leaves the hole open for the verb
+   * people actually run.
+   */
+  describe("When ioc.config sets a local-only field on a composed-supplied implementation", () => {
+    /** A library owning `Storage`, with a lifetime the error message has to quote back. */
+    const storageLibrary = (): LibraryFixture => ({
+      name: LIB,
+      manifest: libManifest(
+        `Storage: { s3: ${libImpl("s3Storage", ', lifetime: "scoped"')}, disk: ${libImpl("diskStorage", ", default: true")} }`,
+      ),
+      registryTypes: libRegistryTypes(
+        "  s3Storage: { put(key: string): void };\n  diskStorage: { put(key: string): void };",
+        "",
+      ),
+    });
+
+    const storageFixture = (registrations: string) =>
+      buildAppFixture({
+        libraries: [storageLibrary()],
+        factories: { "buildClock.ts": APP_CLOCK },
+        configExtra: `\n  registrations: ${registrations},`,
+      });
+
+    it("should fail generation on lifetime, teaching root-vs-scope, and write nothing", async () => {
+      const fixture = storageFixture(
+        `{ Storage: { s3: { lifetime: "singleton" } } }`,
+      );
+
+      const message = await generateExpectingFailure(fixture);
+      assert.match(message, /lifetime cannot be set here/);
+      assert.match(message, /@test\/lib/);
+      assert.match(message, /declares Storage\.s3 as scoped/);
+      assert.match(message, /root container/);
+      assert.match(message, /inside a scope/);
+      assert.match(message, /change to @test\/lib, not to this config/);
+      assert.deepEqual(generatedFiles(fixture), []);
+
+      // Same verdict through validate: the two verbs run one suite, so they cannot disagree.
+      // (Validate needs the local artifacts on disk, which the refused generation did not write,
+      // so parity is asserted on the fixture that DOES generate, below.)
+      rmSync(fixture.projectRoot, { recursive: true, force: true });
+    });
+
+    it("should fail generation on name", async () => {
+      const fixture = storageFixture(
+        `{ Storage: { s3: { name: "storage" } } }`,
+      );
+
+      const message = await generateExpectingFailure(fixture);
+      assert.match(message, /name cannot be set here/);
+      assert.match(
+        message,
+        /@test\/lib owns Storage\.s3 and registers it as "s3Storage"/,
+      );
+      assert.deepEqual(generatedFiles(fixture), []);
+
+      rmSync(fixture.projectRoot, { recursive: true, force: true });
+    });
+
+    it("should fail generation on $contract.accessKey for a wholly composed contract", async () => {
+      const fixture = storageFixture(
+        `{ Storage: { $contract: { accessKey: "storage" } } }`,
+      );
+
+      const message = await generateExpectingFailure(fixture);
+      assert.match(message, /accessKey cannot be set here/);
+      assert.match(message, /@test\/lib/);
+      assert.deepEqual(generatedFiles(fixture), []);
+
+      rmSync(fixture.projectRoot, { recursive: true, force: true });
+    });
+
+    it("should fail generation on an implementation name matching nothing, with a suggestion", async () => {
+      const fixture = storageFixture(`{ Storage: { s3x: { default: true } } }`);
+
+      const message = await generateExpectingFailure(fixture);
+      assert.match(message, /references unknown implementation "s3x"/);
+      assert.match(
+        message,
+        /Composed implementations of Storage: disk \(@test\/lib\), s3 \(@test\/lib\)/,
+      );
+      assert.match(message, /Did you mean: "s3"\?/);
+      assert.deepEqual(generatedFiles(fixture), []);
+
+      rmSync(fixture.projectRoot, { recursive: true, force: true });
+    });
+
+    it("should name every offending field in ONE run", async () => {
+      const fixture = storageFixture(
+        `{ Storage: { $contract: { accessKey: "storage" }, s3: { lifetime: "singleton", name: "storage" }, disk: { name: "disk" } } }`,
+      );
+
+      const message = await generateExpectingFailure(fixture);
+      assert.match(message, /4 errors/);
+      assert.match(message, /"s3"\]\.lifetime cannot be set here/);
+      assert.match(message, /"s3"\]\.name cannot be set here/);
+      assert.match(message, /"disk"\]\.name cannot be set here/);
+      assert.match(message, /accessKey cannot be set here/);
+
+      rmSync(fixture.projectRoot, { recursive: true, force: true });
+    });
+
+    /**
+     * The other half of the rule, and the one that decides whether this stage refuses too much:
+     * `default` and `source` are statements about COMPOSITION, and `allowLifetimeInversion` is
+     * reachable for composed units through the scope-root walk's own suppression lookup. All three
+     * stay legal on a unit a library owns.
+     */
+    it("should accept default, source and allowLifetimeInversion on the same composed unit", async () => {
+      const fixture = storageFixture(
+        `{ Storage: { s3: { default: true, source: "${LIB}", allowLifetimeInversion: ["clock"] } } }`,
+      );
+
+      await generate(fixture);
+      assert.deepEqual(generatedFiles(fixture), [
+        "ioc-composed.ts",
+        "ioc-manifest.ts",
+        "ioc-registry.types.ts",
+      ]);
+      assert.match(
+        readFileSync(
+          path.join(fixture.generatedDir, "ioc-composed.ts"),
+          "utf8",
+        ),
+        /defaultImplementation: "s3"/,
+      );
+
+      const errors = await validateSummaries(fixture);
+      assert.deepEqual(errors, []);
+
+      rmSync(fixture.projectRoot, { recursive: true, force: true });
+    });
+
+    /**
+     * A LOCAL implementation is untouched by every refusal above — the fields do what they have
+     * always done, including under a contract a composed manifest also declares.
+     */
+    it("should leave the same fields working on a locally discovered implementation", async () => {
+      const fixture = buildAppFixture({
+        libraries: [storageLibrary()],
+        factories: { "buildClock.ts": APP_CLOCK },
+        configExtra: `\n  registrations: { Clock: { clock: { lifetime: "scoped", name: "appClock", default: true, allowLifetimeInversion: true }, $contract: { accessKey: "wallClock" } } },`,
+      });
+
+      await generate(fixture);
+      const manifest = readFileSync(
+        path.join(fixture.generatedDir, "ioc-manifest.ts"),
+        "utf8",
+      );
+      assert.match(manifest, /registrationKey: "appClock"/);
+      assert.match(manifest, /lifetime: "scoped"/);
+      assert.match(manifest, /accessKey: "wallClock"/);
+
+      const errors = await validateSummaries(fixture);
+      assert.deepEqual(errors, []);
+
+      rmSync(fixture.projectRoot, { recursive: true, force: true });
+    });
+
+    /**
+     * A contract implemented in BOTH places, configured against the library's implementation.
+     *
+     * `resolveRegistrationPlan.validateConfigImplementationKeys` judges implementation keys against
+     * LOCAL discovery alone, and used to throw here on a name the composed manifest declares — an
+     * app electing a library's implementation for a contract it also implements is exactly the
+     * arrangement `source` and `default` exist for. It now defers to the composition suite, which
+     * can see both sides.
+     */
+    it("should accept a composed implementation name under a contract that is also local", async () => {
+      const fixture = buildAppFixture({
+        libraries: [
+          {
+            name: LIB,
+            manifest: libManifest(
+              `Clock: { libClock: ${libImpl("libClock")} }`,
+            ),
+            registryTypes: libRegistryTypes(
+              "  libClock: { now(): number };",
+              "",
+            ),
+          },
+        ],
+        factories: { "buildClock.ts": APP_CLOCK },
+        configExtra: `\n  registrations: { Clock: { clock: { default: true }, libClock: { source: "${LIB}" } } },`,
+      });
+
+      await generate(fixture);
+      assert.match(
+        readFileSync(
+          path.join(fixture.generatedDir, "ioc-composed.ts"),
+          "utf8",
+        ),
+        /sourceOverride: \{\s*libClock: "@test\/lib",/,
+      );
+
+      rmSync(fixture.projectRoot, { recursive: true, force: true });
+    });
+  });
 });

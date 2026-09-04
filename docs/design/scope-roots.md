@@ -1,5 +1,13 @@
 # Scope-root registration units
 
+::: warning Dated design record — not current reference
+This is the design document for scope roots as it was written, and as the feature shipped through **4.0.x**. It is kept as a record of the reasoning, so its body is left as written even where the implementation has since moved on.
+
+Treat nothing here as current behaviour. In particular, **feature-token lists and the trigger conditions for advisories in this document are known to be out of date** — 4.1 splits the manifest feature vocabulary and changes when the composed blind-spot advisory is raised.
+
+For what the tool does today, see [scope roots](/concepts/scope-roots).
+:::
+
 **Status:** Staged. Stages 1 (discovery), 2 (generation-time subtree verification) and 3a (opener emission) implemented on the `scope-roots` branch, post-3.0.0. Stage 3b — the consuming-app migration proof, including the deletion of `container: asValue(container)` — is unstarted.
 
 **Date:** August 2026 (against v3.0.0)

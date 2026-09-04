@@ -351,6 +351,10 @@ export const iocConfigSchema = z
     groupBaseTypeAliases: groupBaseTypeAliasesSchema.optional(),
     lifetimeMarkers: lifetimeMarkersSchema.optional(),
     scopeProvided: scopeProvidedSchema.optional(),
+    dependencyKeyCoverage: z
+      .enum(["warn", "error", "off"], { error: "must be warn | error | off when set" })
+      .optional(),
+    manageGitignore: z.boolean({ error: "must be a boolean when set" }).optional(),
   })
   .strict()
   .superRefine((config, ctx) => {

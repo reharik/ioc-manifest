@@ -30,13 +30,14 @@ import type {
   IocGroupNodeManifest,
   IocGroupRootManifest,
   IocGroupsManifest,
+  IocManifestFeature,
   IocScopeRootsManifest,
   ModuleFactoryManifestMetadata,
   ScopeRootVariantManifestMetadata,
 } from "../core/manifest.js";
 import {
-  IOC_MANIFEST_FEATURES,
   IOC_MANIFEST_FEATURES_EXPORT_NAME,
+  iocManifestFeaturesFor,
 } from "../core/manifest.js";
 import {
   openerFunctionTypeText,
@@ -522,6 +523,45 @@ const serializeScopeRootsForManifest = (
   return lines.join("\n");
 };
 
+/**
+ * Whether this manifest may claim `"dependencyKeysComplete"` — that every unit reaching `contracts`
+ * had its demand set determined, so absence of `dependencyKeys` on a unit means "demands nothing".
+ *
+ * Measured over the PLANNED units rather than every discovered one: a factory that never reaches
+ * `contracts` is not something a reader of this file can be misled about. Units are identified by
+ * the (modulePath, exportName) pair every other join in the generator uses.
+ *
+ * Pessimistic where it cannot join: a planned unit with no discovery row is a unit whose demand set
+ * nothing vouched for, and the whole value of this token is that it is never given away for free.
+ */
+const dependencyKeysAreComplete = (
+  acceptedFactories: readonly DiscoveredFactory[],
+  plans: readonly ResolvedContractRegistration[],
+): boolean => {
+  const identity = (unit: {
+    modulePath: string;
+    exportName: string;
+  }): string => `${unit.modulePath}\u0000${unit.exportName}`;
+
+  const unknownByIdentity = new Map<string, boolean>();
+  for (const factory of acceptedFactories) {
+    unknownByIdentity.set(
+      identity(factory),
+      factory.dependencyKeysUnknown === true,
+    );
+  }
+
+  for (const plan of plans) {
+    for (const impl of plan.implementations) {
+      if (unknownByIdentity.get(identity(impl)) !== false) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+};
+
 const serializeMainIocManifestSource = (
   contractManifest: IocContractManifest,
   groupsManifest: IocGroupsManifest | undefined,
@@ -530,6 +570,7 @@ const serializeMainIocManifestSource = (
   importLines: string[],
   moduleArrayLines: string[],
   scopeProvidedKeys: readonly string[],
+  declaredFeatures: readonly IocManifestFeature[],
 ): string => {
   const header = `/* AUTO-GENERATED. DO NOT EDIT.
 Primary container manifest.
@@ -568,9 +609,9 @@ ${moduleArrayLines.join("\n")}
 
 export const IOC_SCOPE_PROVIDED_KEYS = [${scopeProvidedKeys.map((k) => JSON.stringify(k)).join(", ")}] as const;
 
-/* Optional manifest data this file is known to carry in full. A composing app reads it to tell
-   "this unit records none of this" apart from "this manifest predates the field". */
-export const ${IOC_MANIFEST_FEATURES_EXPORT_NAME} = [${IOC_MANIFEST_FEATURES.map((f) => JSON.stringify(f)).join(", ")}] as const;
+/* Optional manifest data this file carries, and how completely. A composing app reads it to tell
+   "this unit records none of this" apart from "this file could not record it". */
+export const ${IOC_MANIFEST_FEATURES_EXPORT_NAME} = [${declaredFeatures.map((f) => JSON.stringify(f)).join(", ")}] as const;
 `;
 };
 
@@ -1159,6 +1200,12 @@ export const buildManifestArtifactSources = (
     importLines,
     moduleArrayLines,
     options.demandSupply.scopeProvidedKeys,
+    iocManifestFeaturesFor({
+      dependencyKeysComplete: dependencyKeysAreComplete(
+        sortedFactories,
+        plans,
+      ),
+    }),
   );
 
   const typesPath = path.join(

@@ -66,8 +66,8 @@ export type ScopeRootFindingCode =
   | "lbv_unused_key"
   | "lifetime_inversion"
   /**
-   * The subtree reaches a composed package whose manifest carries no dependency data, so part of
-   * this variant's subtree could not be walked. Advisory, never an error — see
+   * The subtree reaches a composed package whose manifest carries no dependency data it vouches
+   * for in full, so part of this variant's subtree could not be walked. Advisory, never an error — see
    * {@link formatComposedBlindSpotAdvisory}.
    */
   | "lbv_composed_blind_spot";
@@ -162,8 +162,8 @@ export type ScopeRootVariantVerification = {
   /** Declared lbv keys the subtree never demands (dead weight on the boundary contract). */
   unusedDeclaredKeys: readonly string[];
   /**
-   * Composed packages this variant's subtree reaches whose manifests carry no dependency data,
-   * sorted.
+   * Composed packages this variant's subtree reaches whose manifests carry no dependency data they
+   * vouch for in full, sorted.
    *
    * The stated blind spot behind this variant's verdict. Non-empty means `satisfied` is a verdict
    * over the part of the subtree that could be walked, not over the whole of it.
@@ -255,7 +255,7 @@ export type ScopeRootSupplyIndex = {
    */
   externalKeys: ReadonlySet<string> | undefined;
   /**
-   * Composed packages whose manifest carries no dependency data, sorted.
+   * Composed packages whose manifest carries no dependency data it vouches for in full, sorted.
    *
    * Carried on the index because it travels with the supply it qualifies: every verdict drawn from
    * this index over a subtree touching one of these packages is incomplete, and the caller has to
@@ -546,8 +546,8 @@ type SubtreeWalk = {
   /** Group root keys generation resolves that this caller could not expand (inspection). */
   generationResolvedGroupEdges: readonly DemandEdge[];
   /**
-   * Composed packages this subtree actually reached whose manifests carry no dependency data,
-   * sorted.
+   * Composed packages this subtree actually reached whose manifests carry no dependency data they
+   * vouch for in full, sorted.
    *
    * Reached, not merely composed: a package the app depends on but whose units this subtree never
    * resolves puts no blind spot in THIS variant's verdict, and saying otherwise would train readers
@@ -796,6 +796,11 @@ const demandSiteLabel = (
  * bare ✔ is not. Upgrading it to a failure would break every app composing a package that has not
  * regenerated yet, which is a bootstrap tax on the innocent; downgrading it to silence is the
  * false confidence this whole check exists to remove.
+ *
+ * It names two causes because it now has two. A package can be blind because its manifest predates
+ * `dependencyKeys`, or because its manifest carries them for some units and cannot vouch for the
+ * rest — the second was previously silent, since the manifest asserted full coverage unconditionally
+ * and this advisory believed it.
  */
 const formatComposedBlindSpotAdvisory = (
   ctx: ScopeRootVerificationContext,
@@ -803,9 +808,10 @@ const formatComposedBlindSpotAdvisory = (
   packageNames: readonly string[],
 ): string =>
   [
-    `[ioc] ${variantLabel(ctx, variant)}: the resolution subtree reaches composed package(s) ${packageNames.map((name) => JSON.stringify(name)).join(", ")} whose manifest carries no dependency data, so late-bound-value verification is INCOMPLETE for that part of the subtree.`,
-    `    Anything those packages' units demand is invisible here: a declared key they demand may be reported as never demanded, and an undeclared key they demand cannot be reported at all.`,
-    `    Fix: regenerate those packages with a version of ioc-manifest that writes "dependencyKeys" into the manifest, then re-run generation here.`,
+    `[ioc] ${variantLabel(ctx, variant)}: the resolution subtree reaches composed package(s) ${packageNames.map((name) => JSON.stringify(name)).join(", ")} whose manifest carries no dependency data it vouches for in full, so late-bound-value verification is INCOMPLETE for that part of the subtree.`,
+    `    Anything those packages' units demand may be invisible here: a declared key they demand may be reported as never demanded, and an undeclared key they demand may not be reported at all.`,
+    `    Either the manifest predates per-unit "dependencyKeys" entirely, or it carries them without claiming "dependencyKeysComplete" — which means some factory there takes its dependencies as a plain parameter (\`(deps: Deps)\`) or a rest/computed binding, shapes the keys cannot be read from.`,
+    `    Fix: regenerate those packages with a version of ioc-manifest that writes "dependencyKeysComplete", and where that token is still withheld, destructure those factories' deps parameter (\`({ a, b }: Deps)\`) so their demands can be recorded. Then re-run generation here.`,
     ...docsFooter("lbv_composed_blind_spot"),
   ].join("\n");
 

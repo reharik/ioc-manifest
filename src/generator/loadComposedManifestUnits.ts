@@ -19,6 +19,13 @@
  * the sources are in another package and may not even be present. Such a package is reported by
  * name in {@link ComposedManifestSupply.packagesWithoutDependencyData} so its callers can say so
  * out loud rather than return a confident verdict over a subtree they could not see.
+ *
+ * A manifest that carries the field PARTIALLY lands in the same list, and for the same reason. The
+ * field is derived syntactically, so a unit written `(deps: Deps)` records no keys while demanding
+ * plenty; here that is indistinguishable from a unit demanding nothing, and a subtree through it is
+ * just as unwalkable. Only the `"dependencyKeysComplete"` feature token says the difference has
+ * been ruled out — the older `"dependencyKeys"` token asserted coverage it could not check, and is
+ * read here as the capability claim it actually is.
  */
 import fs from "node:fs";
 import type {
@@ -66,8 +73,9 @@ export type ComposedManifestUnit = {
   /**
    * Cradle keys this unit demands, when the manifest carries them.
    *
-   * `undefined` means "not known" and never "none": a unit whose manifest predates the field and a
-   * unit that genuinely demands nothing are indistinguishable here, which is exactly why
+   * `undefined` means "not known" and never "none": a unit whose manifest predates the field, a unit
+   * whose deps parameter the generator could not read, and a unit that genuinely demands nothing are
+   * all indistinguishable here, which is exactly why
    * {@link ComposedManifestSupply.packagesWithoutDependencyData} exists.
    */
   dependencyKeys?: readonly string[];
@@ -138,10 +146,12 @@ export type ComposedManifestSupply = {
    */
   groupRootsByGroupKey: ReadonlyMap<string, ComposedGroupRoot>;
   /**
-   * Composed packages whose manifest carries no dependency-key data.
+   * Composed packages whose manifest does not vouch for its dependency-key data IN FULL — it
+   * carries none, or carries some without claiming `"dependencyKeysComplete"`.
    *
    * Sorted. Non-empty means some part of any subtree reaching those packages is unwalkable, which
-   * callers must disclose rather than paper over.
+   * callers must disclose rather than paper over. Partial coverage is listed alongside none because
+   * the consequence is identical: absence of keys on a unit cannot be read as "demands nothing".
    */
   packagesWithoutDependencyData: readonly string[];
   /**
@@ -158,7 +168,8 @@ export type ComposedManifestSupply = {
    *
    * A strict subset of {@link packagesWithoutDependencyData}, and kept apart from it because the
    * two answer different questions. That list means "some part of a subtree is unwalkable", which
-   * an unreadable package and a package predating the field both cause. This one means "nothing at
+   * an unreadable package, a package predating the field, and a package with incomplete coverage
+   * all cause. This one means "nothing at
    * all is known about this package" — which is what a reader has to know before concluding that a
    * name is unknown, since the name may perfectly well live in the file that could not be opened.
    *
@@ -184,7 +195,13 @@ export type ComposedManifestPackageSupply = {
   accessKeys: ReadonlyMap<string, string>;
   groupMembersByGroupKey: ReadonlyMap<string, readonly string[]>;
   groupRootsByGroupKey: ReadonlyMap<string, ComposedGroupRoot>;
-  /** True when the manifest declares that it carries `dependencyKeys` in full. */
+  /**
+   * True when the manifest declares `"dependencyKeysComplete"` — that every unit in it had its
+   * demand set determined, so absence of keys on a unit means "demands nothing".
+   *
+   * NOT the older `"dependencyKeys"` token, which every manifest this generator has ever written
+   * declares unconditionally and which therefore vouches for nothing.
+   */
   carriesDependencyKeys: boolean;
   /** True when the manifest declares that it carries `lifetimeSource` in full. */
   carriesLifetimeSource: boolean;
@@ -322,7 +339,7 @@ export const parseComposedManifestSupplySource = (
     groupMembersByGroupKey,
     groupRootsByGroupKey,
     carriesDependencyKeys: (parsed.declaredFeatures ?? []).includes(
-      "dependencyKeys",
+      "dependencyKeysComplete",
     ),
     carriesLifetimeSource: (parsed.declaredFeatures ?? []).includes(
       "lifetimeSource",

@@ -129,6 +129,14 @@ The practical form of this is that you do not decide a unit's lifetime by lookin
 
 ## Lifetime inversion checks
 
+::: warning Upgrading to 4.1 — new errors on code that generated cleanly before
+4.1 ranks dependency edges that cross into a composed package. Until then, every key a composed manifest supplied was classified as an external and skipped, so a singleton in one package holding a scoped registration in another was ranked by nobody. A composed monorepo can expect several inversions on the first run after upgrading.
+
+**None of them is new breakage.** Each is a real captive dependency that has been resolving wrongly for as long as it has existed, and that nothing reported: a singleton freezing a scoped instance at first construction and reusing it across every scope. Where the scoped registration is a unit of work, that is one transaction object serving every request.
+
+Resolve them rather than suppressing them. The usual fixes are moving the consumer behind a [scope opener](/concepts/scope-roots) so it is built per request, or giving it a dependency that does not need request scope — a raw handle rather than the scoped wrapper. `allowLifetimeInversion` (below) remains available where the inversion is genuinely intended, and remains the wrong answer where it is not.
+:::
+
 Awilix lifetimes have an ordering: a `singleton` lives for the life of the container, a `scoped` instance lives for one scope (typically one request), a `transient` is rebuilt on every resolve. When a longer-lived registration depends on a shorter-lived one, the longer-lived service captures a single instance of that dependency at first construction and reuses it forever — quietly defeating the shorter lifetime.
 
 The classic case: a `singleton` that depends on a `scoped` repository holding a per-request unit-of-work. The singleton is built once, captures one repository, and every later request writes through that first request's transaction. Nothing throws; the state just silently goes stale. The consumer doesn't even have to touch the scoped resource — holding something that holds it is enough.
@@ -174,6 +182,37 @@ registrations: {
 
 Prefer the `string[]` form. `true` silences every inversion for that consumer — including ones you introduce later and didn't mean to. Listing the keys you're knowingly inverting keeps the rest of the check live. The field is config-only and never appears in the generated manifest.
 
+### Across a composed boundary
+
+In app mode the check reads every [composed package's](/monorepo/composition) manifest as supply and ranks edges into it on the same terms as local ones. It did not always: every key a composed manifest supplies is an *external* from the consuming package's point of view, the externals gate ran first, and so every edge crossing the boundary was skipped. Neither side ranked them — the consuming package could not see the dependency's lifetime, and the supplying package could not see the consumer.
+
+**"Skip" now means one thing.** A demanded key is skipped only when it is genuinely supplied by the composing app at bootstrap and no manifest anywhere states a lifetime for it, so there is nothing to rank against. It no longer means "supplied by any manifest other than this one". Direct edges, contract default slots, and group hops into a composed package are all ranked; a scope-provided key is ranked as per-request ahead of everything, since the app registers it onto the scope whatever a manifest says.
+
+**Composed group roots merge with local ones**, the way composition merges them at runtime: a group key present in both places ranks the union of the members, and the cradle hands out that union. That is what makes all three shapes rankable — a root only a library declares, a locally empty root whose members all arrive by composition, and the mixed root with some of each. A member's lifetime is read from the local plan first and **falls back to the composed unit** that registers it.
+
+A dependency that lives in another package says so, because the fix is written *here* while the lifetime being complained about is written *there*:
+
+```
+[lifetime-inversion] 'mediaGrantService' (singleton) depends on 'mediaItemReadRepository'
+(scoped, composed package "@app/media-core") — a singleton freezes its scoped dependency at
+first construction and reuses it across every scope.
+```
+
+Anything unannotated in a report is this package's own.
+
+**A member that cannot be ranked is disclosed, not dropped.** A mixed group used to report its local members, silently omit the ones it could not resolve, and return a verdict that read as complete. An unranked edge is not a cleared edge, so it now prints as its own warning naming the member and which of three reasons applies:
+
+```
+[ioc] [lifetime-inversion] 'grantSync' (singleton) depends on group 'writeServices' member
+'archiveWrite', whose registration 'archiveWrite' has no lifetime this run can read (a composed
+group root names it, but no manifest this run read registers it) — that edge is UNRANKED, not
+cleared.
+```
+
+The three reasons are the composing app supplying that key at bootstrap with no declared lifetime; a composed group root naming a member no manifest this run read registers; and no local registration and no composed manifest carrying it at all. It appears for **non-transient consumers only** — a transient consumer outlives nothing, so no lifetime the member turned out to have could have produced a finding, and disclosing an edge that could not have been reported either way is noise rather than honesty.
+
+One consequence is worth stating plainly: the guarantee is "checked wherever the members were visible at generation", not "checked, unconditionally". A run that ranks a group root without composed supply — generating against a stale manifest, or an app generated by a version predating this wiring — ranks the local members and no others, and a composed member's lifetime was then never ranked by anything, here or there. Regenerate the app after regenerating its libraries.
+
 ## The runtime is strict
 
 `registerIocFromManifest` turns on Awilix **strict mode** by default. Strict is Awilix's own runtime correctness net: it refuses to register a singleton on a scoped container, resolves singletons against the root container so one cannot capture a scope, and — the check that matters here — **throws at first resolve when a longer-lived unit is handed a shorter-lived dependency**, instead of quietly freezing the first instance.
@@ -203,6 +242,8 @@ is not a runtime exemption.
 A member's *own* direct edges are still checked normally — reading a member starts its own resolution, so a member that itself holds something shorter-lived throws exactly as a direct resolve of it would.
 
 Contract default slots (`aliasTo`), group roots, and scope-root openers are all registered transient for reasons that have nothing to do with how long their values live, and are marked leak-safe so strict does not read that detail as a leak. Injecting an opener or a group into a singleton works.
+
+**`isLeakSafe` on a group root is not a clearance for what is inside it.** It says the root itself holds nothing — a group value is inert, and a transient registration of it would otherwise read to strict as a leak into any singleton that demands it. It says nothing about the member the consumer eventually reads. Awilix could not rank that edge even if the root were not marked: the member slot resolves lazily, with no enclosing `resolve()` on the stack to rank it against. So a singleton demanding a group whose members are scoped is a real captive dependency that strict will never see, in either mode, and the generation-time check is genuinely the only place it is caught.
 
 ## The captive dependency
 

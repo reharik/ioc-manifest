@@ -29,6 +29,7 @@ import { selectDefaultImplementationName } from "../core/defaultImplementationSe
 import type { DiscoveredFactory } from "./types.js";
 import { contractNameToDefaultRegistrationKey } from "./naming.js";
 import { resolveContractAccessKey } from "../core/contractAccessKey.js";
+import { nearestName } from "../diagnostics/nearestName.js";
 
 /**
  * Where a resolved registration's lifetime came from.
@@ -385,53 +386,6 @@ const mergeContractOverrides = (
   return out;
 };
 
-const suggestContractName = (
-  unknown: string,
-  candidates: readonly string[],
-): string | undefined => {
-  const lower = unknown.toLowerCase();
-  const exact = candidates.find((c) => c.toLowerCase() === lower);
-  if (exact !== undefined) {
-    return exact;
-  }
-
-  let best: string | undefined;
-  let bestDist = 3;
-  for (const candidate of candidates) {
-    const dist = levenshteinDistance(unknown, candidate);
-    if (dist > 0 && dist < bestDist) {
-      bestDist = dist;
-      best = candidate;
-    }
-  }
-  return bestDist <= 2 ? best : undefined;
-};
-
-const levenshteinDistance = (a: string, b: string): number => {
-  const rows = a.length + 1;
-  const cols = b.length + 1;
-  const dp: number[][] = Array.from({ length: rows }, () =>
-    Array.from({ length: cols }, () => 0),
-  );
-  for (let i = 0; i < rows; i++) {
-    dp[i][0] = i;
-  }
-  for (let j = 0; j < cols; j++) {
-    dp[0][j] = j;
-  }
-  for (let i = 1; i < rows; i++) {
-    for (let j = 1; j < cols; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      dp[i][j] = Math.min(
-        dp[i - 1][j] + 1,
-        dp[i][j - 1] + 1,
-        dp[i - 1][j - 1] + cost,
-      );
-    }
-  }
-  return dp[a.length][b.length];
-};
-
 const formatComposedContractList = (
   composed: ComposedManifestContractNames,
 ): string => {
@@ -503,7 +457,7 @@ export const validateConfigContractsExist = (
         ? Array.from(composedContractNames.all)
         : []),
     ];
-    const suggestion = suggestContractName(contract, candidates);
+    const suggestion = nearestName(contract, candidates);
     // The scope of the claim is the scope of the search. Configuring a COMPOSED contract — electing
     // a library's implementation as the app's default — is a first-class pattern, so the universe
     // this is measured against spans both, and the sentence says so rather than leaving a reader to
@@ -537,10 +491,18 @@ export const validateConfigContractsExist = (
 /**
  * Every implementation key under `registrations[contract]` must match a discovered implementation
  * name for that contract (stable factory / resolver key from discovery).
+ *
+ * A contract a composed manifest ALSO declares is exempt, and has to be: this map holds local
+ * discovery only, so a contract implemented in both places would see an entry naming the library's
+ * implementation as a name it has never heard of and refuse a first-class arrangement — an app
+ * electing a library's implementation as the default for a contract it also implements itself.
+ * Those entries are adjudicated where the composed implementation names actually exist, by
+ * `composition/checks/appConfig.ts`, which both verbs run.
  */
 const validateConfigImplementationKeys = (
   config: IocConfig | undefined,
   contractMap: Map<string, Map<string, DiscoveredFactory>>,
+  composedContractNames?: ComposedManifestContractNames,
 ): void => {
   if (config?.registrations === undefined) {
     return;
@@ -551,6 +513,9 @@ const validateConfigImplementationKeys = (
   )) {
     const discovered = contractMap.get(contractName);
     if (discovered === undefined) {
+      continue;
+    }
+    if (composedContractNames?.all.has(contractName) === true) {
       continue;
     }
 
@@ -731,7 +696,11 @@ const validateIocConfigSemantics = (
       ? { unreadableComposedPackages }
       : undefined,
   );
-  validateConfigImplementationKeys(config, contractMap);
+  validateConfigImplementationKeys(
+    config,
+    contractMap,
+    composedContractNames,
+  );
   validateAtMostOneConfigDefaultPerContract(config);
 
   const mergedByContract = new Map<string, Map<string, DiscoveredFactory>>();

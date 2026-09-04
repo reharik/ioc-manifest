@@ -173,6 +173,21 @@ export type IocScanDirSpec = {
  */
 export type IocDiscoveryScanDirs = string | string[] | IocScanDirSpec[];
 
+/**
+ * Severity for the generation-time report on units whose deps parameter could not be read
+ * (see `reportUnknownDependencyKeys.ts`).
+ *
+ * - `"warn"` (default): print the offenders and continue. Such a factory RUNS — the cradle is
+ *   passed as one object and every property read resolves — so the default must not fail a build.
+ * - `"error"`: fail generation. For packages that have been cleaned and want CI to hold the line;
+ *   the consequence of an unread parameter (a unit silently skipped by the lifetime check, a
+ *   scope-root walk that stops early, a coverage token withheld for every downstream consumer) is
+ *   the same silent-skip failure class the coverage token exists to expose.
+ * - `"off"`: say nothing. Note this silences only the message: the manifest still withholds
+ *   `"dependencyKeysComplete"`, because the token describes the code, not the setting.
+ */
+export type IocDependencyKeyCoverage = "warn" | "error" | "off";
+
 export type IocConfig = {
   discovery: {
     scanDirs: IocDiscoveryScanDirs;
@@ -224,6 +239,27 @@ export type IocConfig = {
    * composed manifest — they are excluded from the externals-satisfaction check.
    */
   scopeProvided?: string[];
+  /**
+   * Severity of the generation-time report on units whose deps parameter could not be read.
+   * Default `"warn"`. See {@link IocDependencyKeyCoverage}.
+   */
+  dependencyKeyCoverage?: IocDependencyKeyCoverage;
+  /**
+   * Whether a successful generation may add `.ioc-generation-state.json` to the `.gitignore` beside
+   * it, creating that file if there is none. Default `true`.
+   *
+   * On by default because the alternative is a trap rather than a preference: the record carries a
+   * timestamp, so it changes on every run, and a consumer who commits it and runs an unscoped
+   * `git diff --exit-code` in CI gets a red build forever for a file that is pure local
+   * diagnostics. Defaulting this off would leave every new adopter to discover that themselves.
+   *
+   * Set `false` if ignores are managed centrally — a workspace-root `.gitignore` already carrying
+   * `**\/.ioc-generation-state.json` (which is what the docs recommend) covers every package, and
+   * generation cannot see it from the package it is generating, so it would add a redundant entry
+   * per package. Nothing about the marker or the freshness check depends on this setting; it
+   * governs the `.gitignore` write and nothing else.
+   */
+  manageGitignore?: boolean;
 };
 
 export const defineIocConfig = (config: IocConfig): IocConfig => config;

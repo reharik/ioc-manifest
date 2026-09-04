@@ -340,3 +340,148 @@ export const formatStalenessBanner = (
 export const GENERATION_FAILURE_ARTIFACTS_NOTE =
   "[ioc] Nothing was written: the artifacts on disk remain from the last successful generation and were not modified. " +
   `A marker (${IOC_GENERATION_STATE_FILENAME}) records this failure so \`ioc validate\`, \`ioc inspect\` and \`ioc explain\` can say they are describing stale output.`;
+
+/**
+ * What {@link ensureGenerationStateIgnored} did, so the caller can say so.
+ *
+ * `declined` and `failed` are kept apart even though both mean "nothing was written". Declining is
+ * a decision — the consumer explicitly un-ignored the marker, or the `.gitignore` is a symlink out
+ * of the package — and failing is a filesystem that would not cooperate. Neither is worth
+ * interrupting a successful generation over, but only one of them would be worth investigating.
+ */
+export type GenerationStateIgnoreOutcome =
+  | "created"
+  | "appended"
+  | "already-ignored"
+  | "declined"
+  | "failed";
+
+/**
+ * The literal `.gitignore` patterns that already ignore the marker, for a `.gitignore` sitting in
+ * the marker's own directory.
+ *
+ * Literal forms only, deliberately. A general answer would mean evaluating gitignore globs — a
+ * `*.json` in the file would ignore the marker too — and reimplementing git's matcher to avoid one
+ * redundant line is the wrong trade. The cost of missing such a case is bounded and self-healing:
+ * one extra line is appended once, and every run after that recognises the line this module itself
+ * wrote. Idempotence does not depend on the matcher being complete, only on it recognising
+ * {@link IOC_GENERATION_STATE_FILENAME}.
+ *
+ * A trailing-slash form (`.ioc-generation-state.json/`) is absent on purpose: it matches
+ * directories only, so it does not ignore the marker and must not be read as if it did.
+ */
+const IGNORE_FORMS: readonly string[] = [
+  IOC_GENERATION_STATE_FILENAME,
+  `/${IOC_GENERATION_STATE_FILENAME}`,
+  `**/${IOC_GENERATION_STATE_FILENAME}`,
+  `/**/${IOC_GENERATION_STATE_FILENAME}`,
+];
+
+/**
+ * Trailing whitespace is not significant in a `.gitignore` line (git strips it unless escaped) and
+ * `\r` is an artefact of a CRLF checkout. Leading whitespace IS significant — a line `" foo"`
+ * matches a file whose name begins with a space — so it is left alone.
+ */
+const trimIgnoreLine = (line: string): string => line.replace(/\s+$/u, "");
+
+/** Reads one `.gitignore` line as a verdict about the marker, or `undefined` if it says nothing. */
+const ignoreVerdictOf = (rawLine: string): "ignored" | "negated" | undefined => {
+  const line = trimIgnoreLine(rawLine);
+  if (line.length === 0 || line.startsWith("#")) {
+    return undefined;
+  }
+  if (line.startsWith("!")) {
+    return IGNORE_FORMS.includes(line.slice(1)) ? "negated" : undefined;
+  }
+  return IGNORE_FORMS.includes(line) ? "ignored" : undefined;
+};
+
+/** The file a newly created `.gitignore` gets: the reason, then the line. */
+const NEW_GITIGNORE_CONTENTS = `# Local state from the last \`ioc generate\` — a timestamp and an input fingerprint.
+# It changes on every run, so an unscoped dirty-tree check in CI would always fail.
+${IOC_GENERATION_STATE_FILENAME}
+`;
+
+/**
+ * Ensures the marker's own directory has a `.gitignore` that ignores it.
+ *
+ * ### Why the library does this at all
+ *
+ * The record carries a timestamp, so it changes on EVERY successful generation. A consumer who
+ * commits it and runs an unscoped `git diff --exit-code` in CI gets a red build on every run,
+ * forever, for a file that is pure local diagnostics. That is a deterministic trap rather than an
+ * edge case, and the only place it can be closed once is here.
+ *
+ * ### Same directory, never upwards
+ *
+ * The `.gitignore` written is the one beside the marker, derived from `markerPath` so that no second
+ * notion of where the marker lives is introduced. Nothing walks up looking for a repo root: a
+ * package's generation has no business editing a file it does not own, and the directory the marker
+ * lands in is the narrowest place an entry can do its job.
+ *
+ * The cost of that narrowness is the case this cannot see — a workspace-root `.gitignore` already
+ * carrying `**\/.ioc-generation-state.json`, which is exactly what the docs recommend. There the
+ * entry written here is redundant, and `manageGitignore: false` is the way out.
+ *
+ * ### Never louder than the run it is helping
+ *
+ * Best effort throughout, and never rethrows, for the same reason {@link writeGenerationRecord} is:
+ * this runs after the artifacts have already landed, and a read-only filesystem, a permissions
+ * error, or a `.gitignore` symlinked somewhere else must not turn a successful generation into a
+ * failed one. Every such path returns an outcome instead of throwing.
+ */
+export const ensureGenerationStateIgnored = async (
+  markerPath: string,
+): Promise<GenerationStateIgnoreOutcome> => {
+  const gitignorePath = path.join(path.dirname(markerPath), ".gitignore");
+  try {
+    let stats: fs.Stats;
+    try {
+      stats = await fsp.lstat(gitignorePath);
+    } catch {
+      // No `.gitignore` here yet. `wx` rather than a plain write: if something creates one between
+      // the lstat and here, losing the race must not mean clobbering what the winner wrote.
+      await fsp.writeFile(gitignorePath, NEW_GITIGNORE_CONTENTS, {
+        encoding: "utf8",
+        flag: "wx",
+      });
+      return "created";
+    }
+
+    // A symlink is the one shape that would let an append reach outside this package — the thing
+    // this function is scoped never to do. Declining is the honest answer; the consumer's central
+    // ignore file is theirs to edit.
+    if (stats.isSymbolicLink() || !stats.isFile()) {
+      return "declined";
+    }
+
+    const existing = await fsp.readFile(gitignorePath, "utf8");
+    // Last match wins in gitignore, so every line is read rather than stopping at the first hit. A
+    // negation BELOW an ignore is a consumer deciding they want the marker tracked, and appending
+    // underneath it would silently overturn that decision; an ignore below a negation is the same
+    // decision in the other direction, and appending there would be redundant.
+    let standing: "ignored" | "negated" | undefined;
+    for (const line of existing.split("\n")) {
+      standing = ignoreVerdictOf(line) ?? standing;
+    }
+    if (standing === "ignored") {
+      return "already-ignored";
+    }
+    if (standing === "negated") {
+      return "declined";
+    }
+
+    // Append rather than rewrite, so every existing byte is left exactly as it was. The only
+    // addition beyond the entry itself is the newline an unterminated last line needs to keep the
+    // entry from being swallowed into it.
+    const separator = existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
+    await fsp.appendFile(
+      gitignorePath,
+      `${separator}${IOC_GENERATION_STATE_FILENAME}\n`,
+      "utf8",
+    );
+    return "appended";
+  } catch {
+    return "failed";
+  }
+};

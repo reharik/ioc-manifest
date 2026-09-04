@@ -87,19 +87,47 @@ export const iocManifest = {
 } as const satisfies IocGeneratedContainerManifest;
 ```
 
-`dependencyKeys` records the cradle keys a unit destructures out of its deps parameter. It exists for **composing apps**: a manifest is all a consumer ever sees of a library, so without the keys a composed unit is a dead end in any demand walk — which is how a scope root whose subtree runs through a composed package used to miss every late-bound value that subtree demands. It is omitted when a unit demands nothing, and omitted entirely for a deps parameter that is not a top-level object binding pattern (the same "prefer omission" rule `dependencyContractNames` follows). Because absence is therefore ambiguous, the manifest also exports `IOC_MANIFEST_FEATURES` — a sibling export, not a manifest property, so that older runtimes (which read every unrecognized top-level manifest property as a group root) are unaffected:
-
-```ts
-export const IOC_MANIFEST_FEATURES = ["dependencyKeys", "lifetimeSource"] as const;
-```
-
-A composed manifest without that export predates the field, and a consuming app says so out loud rather than reporting a confident verdict over a subtree it could not walk.
+`dependencyKeys` records the cradle keys a unit destructures out of its deps parameter. It exists for **composing apps**: a manifest is all a consumer ever sees of a library, so without the keys a composed unit is a dead end in any demand walk — which is how a scope root whose subtree runs through a composed package used to miss every late-bound value that subtree demands. It is omitted when a unit demands nothing, and omitted entirely for a deps parameter that is not a top-level object binding pattern (the same "prefer omission" rule `dependencyContractNames` follows). Absence is therefore ambiguous, which is what [manifest feature tokens](#manifest-feature-tokens) exist to resolve.
 
 `lifetimeSource` is on the same footing, for the same reason. It records **which mechanism decided** a unit's lifetime — `lifetime-marker`, `group-base-marker`, `factory-config`, `discovery-root`, or `default` (see [lifetime provenance](/concepts/lifetimes#lifetime-provenance)) — so that `ioc explain` in a composing app can answer "why is this scoped" about a unit whose sources are in another package. It is omitted for a unit whose plan carried none, and a manifest that does not declare the feature gets the honest degraded answer rather than a guess.
 
 `kind: "class"` is emitted only for [class units](/concepts/classes); its absence reads as `"factory"`. That matches how every other conventional value here (`default`, `accessKey`, `discoveredBy`) stays out of the output rather than being restated on every entry — and since schema v3 refuses v2 manifests outright, there is no cross-version reader to consider, so the smaller diff wins.
 
 At runtime a class unit registers as `asFunction(cradle => new Ctor(cradle))` — behaviorally equivalent to `asClass` under PROXY injection, but routed through the shared wrapper so class units get the same [resolution diagnostics](/reference/errors) as factories.
+
+## Manifest feature tokens
+
+Every optional field in a manifest is omitted when it is empty, so absence never distinguishes "there is none" from "the generator that wrote this file did not know about the field". For a field a composing app reasons about, that is the difference between a real verdict and a blind one. So a manifest declares positively what it carries, in a **sibling export** — deliberately not a property of `iocManifest`, because every unrecognized top-level property of that object is read back as a group root, by this runtime and by every earlier one:
+
+```ts
+export const IOC_MANIFEST_FEATURES = [
+  "dependencyKeys",
+  "dependencyKeysComplete",
+  "lifetimeSource",
+] as const;
+```
+
+This vocabulary is a **published contract**: other packages' manifests are read against it, so a token means the same thing in every file that carries it and a reader that honours one must go on honouring it. The list emitted is computed **per manifest** — a *capability* token is unconditional, a *coverage* token is earned.
+
+| token | kind | what it claims |
+| --- | --- | --- |
+| `dependencyKeys` | capability | This manifest's generator knows the `dependencyKeys` field and emits it wherever it has keys to emit. Nothing more. Every manifest this generator has ever written can say it honestly. |
+| `dependencyKeysComplete` | coverage | Every unit reaching `contracts` had its demand set actually **determined** at generation. On such a manifest, an absent `dependencyKeys` means "demands nothing" and nothing else. Computed per manifest: one factory whose deps parameter could not be read withholds it for the whole package. |
+| `lifetimeSource` | capability | This manifest's generator knows the `lifetimeSource` field and emits it for every unit whose plan carried provenance. |
+
+The distinction is not pedantry. `dependencyKeys` is derived syntactically, from a destructured first parameter and nothing else, so a factory written `(deps: Deps)` — idiomatic, and not a mistake — records no keys while demanding plenty, and is indistinguishable in the file from a unit that demands nothing. Only `dependencyKeysComplete` rules that out, which makes it the one token that licenses a consumer to walk a subtree through this package and call the result complete. Without it, an app's [scope-root verification](/concepts/scope-roots#composed-blind-spots) reports the blind spot beside its verdict instead of claiming coverage it does not have.
+
+`lifetimeSource` has no coverage sibling because it needs none: provenance resolution cannot come up empty the way key extraction can — it ends at `default`, which is a real answer meaning "nothing declared one" — so on every manifest this generator writes, absence means the file predates the field. A second token there would carry no information, and a published vocabulary should not grow tokens that carry none.
+
+### Why two tokens rather than one conditional token
+
+The obvious alternative is to keep one token and emit it only when coverage is complete. It does not work, for a reason that has nothing to do with which design is tidier: **manifests already on disk declare `dependencyKeys` unconditionally and cannot take it back.** Making the existing token conditional would leave every published manifest trusted until the day its own package regenerates, with no way for a consumer to tell which files were vouching for coverage and which were merely announcing a field.
+
+A token no old manifest can emit inverts that. The consumer stops being falsely confident on its **next run**, rather than on the day every producer it depends on happens to upgrade. `dependencyKeys` is read as the capability claim it always truthfully was; `dependencyKeysComplete` carries the claim that was previously being made without being checked.
+
+### `dependencyKeyCoverage` does not move the token
+
+The [`dependencyKeyCoverage`](/config/reference#dependencykeycoverage) setting governs how loudly the producing package reports its own unreadable factories — `"warn"` (default), `"error"`, or `"off"`. It does not affect what the manifest declares. **The token follows the code, not the setting**: `"off"` silences the message and the package still withholds `dependencyKeysComplete`, because the units whose demands could not be read are still there and every consumer still has to know.
 
 ## Group base type identifiers
 

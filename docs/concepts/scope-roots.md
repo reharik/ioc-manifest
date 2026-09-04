@@ -76,9 +76,16 @@ This one is also how a *removed* consumer surfaces: a key that was demanded last
 
 ### Composed blind spots
 
-`lbv_composed_blind_spot` — the subtree reaches a composed package whose manifest carries no dependency data, so that part of the subtree could not be walked.
+`lbv_composed_blind_spot` — the subtree reaches a composed package whose manifest carries no dependency data *it vouches for in full*, so that part of the subtree could not be walked.
 
-Advisory, never an error, and printed even next to a satisfied verdict, because it qualifies the verdict itself: "satisfied" over a subtree that was only partly walked is exactly the false confidence this line exists to remove. The fix is to regenerate the named packages with a version of ioc-manifest that writes `dependencyKeys` into the manifest.
+Advisory, never an error, and printed even next to a satisfied verdict, because it qualifies the verdict itself: "satisfied" over a subtree that was only partly walked is exactly the false confidence this line exists to remove.
+
+Two different states raise it, and the advisory names both because the fix differs:
+
+- The manifest predates per-unit `dependencyKeys` entirely. Regenerate that package with a current version.
+- The manifest carries keys but does not claim [`dependencyKeysComplete`](/guide/what-gets-generated#manifest-feature-tokens) — some factory there takes its dependencies as a plain parameter (`(deps: Deps)`) or a rest/computed binding, shapes the keys cannot be read from. Regenerating alone will not clear it: those factories have to destructure their deps parameter (`({ a, b }: Deps)`) so their demands can be recorded. That package's own generation names them, file and line.
+
+Either way, re-run generation here afterwards. The older `dependencyKeys` token is *not* enough on its own: it says the generator knew the field, not that every unit's demands were determined, and reading it as coverage is what used to suppress this advisory over a subtree nobody had walked.
 
 ## Troubleshooting
 

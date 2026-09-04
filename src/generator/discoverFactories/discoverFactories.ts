@@ -30,7 +30,10 @@ import {
   scanFactoryFile,
 } from "./scanFactoryFile.js";
 import { unitDepsSignatureDecl } from "./contractSite.js";
-import { inferFactoryDependencies } from "./inferFactoryDependencyContracts.js";
+import {
+  inferFactoryDependencies,
+  type DependencyKeysUnknownShape,
+} from "./inferFactoryDependencyContracts.js";
 
 const normalizePath = (p: string): string => path.normalize(p);
 
@@ -111,9 +114,7 @@ const formatScopeRootArityError = (
 ): string =>
   [
     `[ioc] ${offenders.length} factory export(s) annotate a scope root with the wrong number of type arguments. The scope-root marker is written \`${SCOPE_ROOT_MARKER_FORM}\`: the first type argument is the root contract resolved from the scope, the second is the declared object type of the scope's late-bound values (e.g. \`ScopeRoot<IRouter, { viewerId: ViewerId }>\`). The second may be omitted to declare a boundary with no late-bound values (\`ScopeRoot<IRouter>\`), which is a declaration of the empty set — the set is declared, never inferred from the resolution subtree. See docs/design/scope-roots.md:`,
-    ...offenders.map(
-      (o) => `  - ${o.modulePath} export "${o.exportName}"`,
-    ),
+    ...offenders.map((o) => `  - ${o.modulePath} export "${o.exportName}"`),
   ].join("\n");
 
 /**
@@ -143,7 +144,13 @@ const defaultExportContractSite = (
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
   exportName: string,
-): { site: NonNameImportableContractSite; unitKind: "factory" | "class"; line: number } | undefined => {
+):
+  | {
+      site: NonNameImportableContractSite;
+      unitKind: "factory" | "class";
+      line: number;
+    }
+  | undefined => {
   const analysis = collectFileAnalysisForFactoryDiscovery(sourceFile);
   const unit = analysis.unitDeclByExport.get(exportName);
   if (unit === undefined) {
@@ -230,7 +237,8 @@ const formatDefaultExportContractError = (
         { label: "site", value: `${o.modulePath}:${o.line}` },
         { label: "annotates", value: o.site.writtenName },
         {
-          label: o.site.form === "local-default-export" ? "declared in" : "module",
+          label:
+            o.site.form === "local-default-export" ? "declared in" : "module",
           value: JSON.stringify(moduleLabel(o.site, projectRoot)),
         },
         {
@@ -346,8 +354,38 @@ const formatContractNameCollisionError = (
  */
 type DependencyEnrichable = Pick<
   DiscoveredFactory,
-  "modulePath" | "exportName" | "dependencyContractNames" | "dependencyKeys"
+  | "modulePath"
+  | "exportName"
+  | "dependencyContractNames"
+  | "dependencyKeys"
+  | "dependencyKeysUnknown"
 >;
+
+/**
+ * One accepted unit whose demand set could not be read, with everything a message needs to send the
+ * author to the exact line.
+ *
+ * Accepted is the point. These units register, resolve and run; what they do not do is tell the
+ * generator what they demand — so the lifetime check skips them, the scope-root walk stops at them,
+ * and the manifest withholds its coverage claim on their account. Until this record existed the
+ * only party that never heard about any of that was the one who could fix it.
+ */
+export type UnknownDependencyKeysUnit = {
+  modulePath: string;
+  exportName: string;
+  /** How the unit is spoken about in the message: an ordinary unit, or a scope-root variant. */
+  unitLabel: string;
+  /** Which written shape defeated the analysis. */
+  shape: DependencyKeysUnknownShape;
+  /** The offending parameter, verbatim from the source, when there was one to read. */
+  parameterText?: string;
+  /** 1-based line of the parameter (or of the unit, when the parameter is what is missing). */
+  line?: number;
+};
+
+/** 1-based line of `node` in its file, for a `path:line` the editor can jump to. */
+const lineOf = (sourceFile: ts.SourceFile, node: ts.Node): number =>
+  sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
 
 const enrichDependencyContracts = (
   program: ts.Program,
@@ -355,6 +393,8 @@ const enrichDependencyContracts = (
   contractNames: ReadonlySet<string>,
   discoveryPaths: FactoryDiscoveryPaths,
   sourceFileByPath: Map<string, ts.SourceFile>,
+  unknownOut: UnknownDependencyKeysUnit[],
+  unitLabel: string,
 ): void => {
   // Only the unit list can make this a no-op. `contractNames` narrows which dependencies are named
   // as CONTRACTS; it says nothing about the cradle KEYS, which are binding names and are inferred
@@ -377,17 +417,36 @@ const enrichDependencyContracts = (
     );
     const sourceFile = sourceFileByPath.get(absPath);
     if (!sourceFile) {
+      // Nothing was read, so nothing is known — including whether this unit demands anything. A
+      // silent `continue` here is what let the manifest claim full key coverage over units it had
+      // never opened.
+      f.dependencyKeysUnknown = true;
+      unknownOut.push({
+        modulePath: f.modulePath,
+        exportName: f.exportName,
+        unitLabel,
+        shape: "unresolvable-signature",
+      });
       continue;
     }
     const analysis = collectFileAnalysisForFactoryDiscovery(sourceFile);
     const unit = analysis.unitDeclByExport.get(f.exportName);
     if (!unit) {
+      f.dependencyKeysUnknown = true;
+      unknownOut.push({
+        modulePath: f.modulePath,
+        exportName: f.exportName,
+        unitLabel,
+        shape: "unresolvable-signature",
+      });
       continue;
     }
     // Same deps path for both unit kinds: a class's constructor is a `ts.FunctionLike`, so the
     // factory-parameter analyzer reads it unchanged.
     const decl = unitDepsSignatureDecl(unit);
     if (!decl) {
+      // Only a class with no constructor lands here, and a class with no constructor takes nothing
+      // from the cradle. Determined, and empty — not unknown.
       continue;
     }
     const inferred = inferFactoryDependencies(checker, decl, contractNames);
@@ -399,6 +458,22 @@ const enrichDependencyContracts = (
       inferred.dependencyKeys.length > 0
     ) {
       f.dependencyKeys = inferred.dependencyKeys;
+    }
+    if (inferred.dependencyKeysUnknown === true) {
+      f.dependencyKeysUnknown = true;
+      const paramNode = decl.parameters[0];
+      unknownOut.push({
+        modulePath: f.modulePath,
+        exportName: f.exportName,
+        unitLabel,
+        shape: inferred.dependencyKeysUnknownShape ?? "unresolvable-signature",
+        ...(paramNode !== undefined
+          ? {
+              parameterText: paramNode.getText(sourceFile),
+              line: lineOf(sourceFile, paramNode),
+            }
+          : { line: lineOf(sourceFile, decl) }),
+      });
     }
   }
 };
@@ -425,6 +500,11 @@ export const discoverFactories = (
    * scope root, distinguished by `variantName` / (`modulePath`, `exportName`).
    */
   scopeRoots: DiscoveredScopeRoot[];
+  /**
+   * Accepted units — factories, classes and scope-root variants alike — whose deps parameter could
+   * not be read, in scan order. Reported by generation; see `reportUnknownDependencyKeys.ts`.
+   */
+  unknownDependencyKeyUnits: UnknownDependencyKeysUnit[];
 } => {
   const checker = program.getTypeChecker();
   const sourceFileByPath = buildSourceFileIndex(program);
@@ -619,12 +699,15 @@ export const discoverFactories = (
   }
 
   const knownContracts = new Set(contractMap.keys());
+  const unknownDependencyKeyUnits: UnknownDependencyKeysUnit[] = [];
   enrichDependencyContracts(
     program,
     acceptedFactories,
     knownContracts,
     discoveryPaths,
     sourceFileByPath,
+    unknownDependencyKeyUnits,
+    "registration unit",
   );
   // Stage 2: scope-root units get the same deps enrichment. Stage 1 skipped it because it is a
   // demand/supply analysis; the inferred `dependencyKeys` are what the subtree walk starts from.
@@ -634,6 +717,8 @@ export const discoverFactories = (
     knownContracts,
     discoveryPaths,
     sourceFileByPath,
+    unknownDependencyKeyUnits,
+    "scope-root variant",
   );
 
   const sortedFiles = collectRecords
@@ -647,5 +732,6 @@ export const discoverFactories = (
     acceptedFactories,
     discoveryFiles: sortedFiles,
     scopeRoots,
+    unknownDependencyKeyUnits,
   };
 };

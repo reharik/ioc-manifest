@@ -121,3 +121,14 @@ export const buildComputedBinding = ({
   logSvc.log("x");
   return { client: "pg" };
 };
+
+/**
+ * Declares no parameters at all — the one shape whose empty demand set is KNOWN rather than merely
+ * unreadable. Everything else that yields no keys is an unread parameter, not an absent one.
+ */
+export const buildNoDeps = (): KnexConfig => ({ client: "pg" });
+
+/** Destructures nothing out of a cradle it does name: determined, and empty. */
+export const buildEmptyBinding = ({}: KnexConfigDeps): KnexConfig => ({
+  client: "pg",
+});

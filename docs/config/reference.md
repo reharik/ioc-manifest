@@ -135,6 +135,32 @@ const reader = scope.resolve("viewerAlbumReadService"); // works
 
 This is distinct from the `scoped` **lifetime**: a scoped-lifetime service is _instantiated_ once per scope; a scope-provided _value_ is _injected_ into the scope at runtime. The two are independent — a service can be one without the other.
 
+### `dependencyKeyCoverage`
+
+How loudly generation reports accepted units whose deps parameter it could not read. `"warn"` (the default), `"error"`, or `"off"`.
+
+```ts
+dependencyKeyCoverage: "error",
+```
+
+Dependency keys are derived syntactically, from a destructured first parameter and nothing else. A factory written `(deps: Deps)`, `({ a, ...rest }: Deps)`, or with a computed or nested binding records no demand at all — and a unit with no recorded demand is skipped by the [lifetime-inversion check](/concepts/lifetimes#lifetime-inversion-checks), ends a [scope-root subtree walk](/concepts/scope-roots#verification), and withholds [`dependencyKeysComplete`](/guide/what-gets-generated#manifest-feature-tokens) for its whole package. The report names each offender by file, line and export, quotes the parameter, and gives the fix for that particular shape.
+
+It **warns** by default rather than failing, because these factories run correctly — Awilix hands the cradle over as that one object and every property read resolves. What is defective is the generator's view of the code, not the code, and failing a build over working code on a check that did not exist a release ago teaches teams to switch the check off. Use `"error"` once a package is clean and you want CI to hold the line.
+
+`"off"` silences the message and nothing else. **The coverage token follows the code, not the setting** — a package with unreadable factories withholds `dependencyKeysComplete` at every level, so every composing app still learns that a subtree through it cannot be walked.
+
+### `manageGitignore`
+
+Whether a successful generation may add `.ioc-generation-state.json` to the `.gitignore` beside it, creating that file if there is none. Default `true`.
+
+```ts
+manageGitignore: false,
+```
+
+On by default because the alternative is a trap rather than a preference: the record carries a timestamp, so it changes on every run, and a consumer who commits it and runs an unscoped `git diff --exit-code` in CI gets a red build forever over a file that is pure local diagnostics. See [the CLI reference](/reference/cli#two-worlds-the-staleness-banner) for what is written and what is left alone.
+
+Set it `false` if ignores are managed centrally — a workspace-root `**/.ioc-generation-state.json` covers every package, and generation cannot see it from inside one, so it would otherwise add a redundant entry per package. Nothing about the record or the freshness check depends on this setting; it governs the `.gitignore` write and nothing else.
+
 ### App-mode fields
 
 These only apply in app mode (a package that composes manifests from other packages):

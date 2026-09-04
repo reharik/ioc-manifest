@@ -361,7 +361,7 @@ const formatScopeRootDetail = (
   // walked is exactly the false confidence this line exists to qualify.
   if (verification.blindComposedPackages.length > 0) {
     lines.push(
-      `      ${c.yellow}!${c.reset} ${c.dim}subtree reaches composed ${verification.blindComposedPackages.join(", ")} — no dependency data in their manifests, lbv verification incomplete for that subtree${c.reset}`,
+      `      ${c.yellow}!${c.reset} ${c.dim}subtree reaches composed ${verification.blindComposedPackages.join(", ")} — no dependency data they vouch for in full, lbv verification incomplete for that subtree${c.reset}`,
     );
   }
 

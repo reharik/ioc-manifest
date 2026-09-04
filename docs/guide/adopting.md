@@ -117,6 +117,21 @@ That chain is the fastest route from "why is this scoped" to the file to open. I
 
 → [Lifetimes](/concepts/lifetimes) · [The floor rule](/concepts/lifetimes#the-floor-rule) · [Lifetime provenance](/concepts/lifetimes#lifetime-provenance)
 
+## Destructure the deps parameter
+
+An existing codebase usually has factories written `(deps: Deps)` and reaching into `deps` in the body. That runs perfectly — Awilix passes the cradle as that one object and every property read resolves — so nothing about it is broken. What it costs is the *record* of what the unit demands, which is read syntactically off the binding pattern and from nowhere else:
+
+```ts
+export const buildMediaServeController = (deps: MediaServeControllerDeps) => ...  // demands nothing, as far as generation can tell
+export const buildMediaServeController = ({ mediaStorage, logger }: MediaServeControllerDeps) => ...  // records both keys
+```
+
+The first run reports every such unit by file, line and export, with the fix for its particular shape — eight are recognised, including the rest element (`({ a, ...rest }: Deps)`), which looks like it records its demands and does the opposite. Three things rest on that record: the [lifetime-inversion check](/concepts/lifetimes#lifetime-inversion-checks) skips a unit with no recorded demand, a [scope-root subtree walk](/concepts/scope-roots#verification) stops at one, and the package's manifest withholds [`dependencyKeysComplete`](/guide/what-gets-generated#manifest-feature-tokens) — which downgrades the analysis of every app that composes this package, not only this package's own.
+
+It is a **warning**, so adoption is not blocked on converting them; work through the list as you go. Once a package is clean, set `dependencyKeyCoverage: "error"` in `ioc.config.ts` and CI holds the line. `"off"` silences the message and nothing else — the coverage token follows the code, not the setting.
+
+→ [`dependencyKeyCoverage`](/config/reference#dependencykeycoverage) · [Manifest feature tokens](/guide/what-gets-generated#manifest-feature-tokens)
+
 ## Foreign types need local names
 
 Contract identity is the name written at the contract site, resolved to the declaration it names. A package that exposes its type only as a **default export** or through `export =` — the shape a good many `@types` packages and CommonJS typings still have, the router case being the one everybody hits — has no name to resolve to. The declaration's exported name is literally `default`, and there is no such thing as importing that:
@@ -179,7 +194,7 @@ A failing generation leaves a marker beside the generated directory, and the thr
 
 The working rule: **trust `generate` about your sources, and the banner about your artifacts.** When a `validate` report and a `gen` report disagree, that gap is not a bug in either; it is the distance you have travelled since the last green run. Re-run `gen` before believing anything the other three say.
 
-The banner goes to stderr, so piping a report into a file or another tool still gets only the report, and `--json` carries the same record as a `staleness` field instead. Add `**/.ioc-generation-state.json` to `.gitignore` — it is local, timestamped tooling state.
+The banner goes to stderr, so piping a report into a file or another tool still gets only the report, and `--json` carries the same record as a `staleness` field instead. Do not commit `.ioc-generation-state.json` — it is local, timestamped tooling state, and generation adds it to the `.gitignore` beside it for you. If your CI asserts a clean tree, scope the check to the generated directory (`git diff --exit-code -- 'src/generated'`); an unscoped one fails on every run, because the marker's timestamp moves every run. See [the CLI reference](/reference/cli#two-worlds-the-staleness-banner).
 
 The commoner version of the same confusion has nothing failing at all: you edit a library, forget the regenerate/rebuild ordering, and the app's `validate` reports the old world with total confidence. Every generation records a fingerprint of its inputs, so the artifact-reading verbs can now say when a package's output may predate its sources:
 

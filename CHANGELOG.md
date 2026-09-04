@@ -5,7 +5,138 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [4.0.2]
+## [4.1.0]
+
+### Changed
+
+- **Builds that passed on 4.0.2 may fail on 4.1.0.** The lifetime fix below surfaces inversions
+  that were always present and never reported. A composed monorepo can expect several on the first
+  run after upgrading, and none of them is new breakage — each is an edge that has been resolving
+  wrongly for as long as it has existed.
+
+  Every one is a captive dependency: a singleton holding a scoped instance freezes it at first
+  construction and reuses it across every scope. Where the scoped registration is a unit of work,
+  that is one transaction object serving every request, with no boundary anywhere to end it.
+
+  Resolve them rather than suppressing them. The usual fixes are moving the consumer behind a scope
+  opener, or giving it a dependency that does not need request scope — a raw handle rather than the
+  scoped wrapper. `allowLifetimeInversion` remains available where the inversion is genuinely
+  intended, and remains the wrong answer where it is not.
+
+### Fixed
+
+- **Lifetime inversions across a composed manifest boundary are now detected.** The check skipped
+  any dependency key classified as external, and every key a composed manifest supplies is external
+  from the consuming package's point of view. A singleton in one package depending on a scoped
+  registration in another was ranked by nobody: not by the consuming package's generation, which
+  could not see the dependency's lifetime, and not by the supplying package's, which could not see
+  the consumer. Awilix strict mode caught some of these at first resolve and none of the ones
+  running through a group root, whose lazy member slots have no resolution stack to rank against.
+
+  `"skip"` now means what it says — genuinely supplied by the composing app at bootstrap with no
+  declared lifetime — rather than "supplied by any manifest other than this one". Composed group
+  roots merge with local ones the way `composeManifests` merges them at runtime, member lifetimes
+  fall back to composed units when the local plan does not carry them, and direct and access-key
+  edges into a composed package are ranked on the same terms:
+
+  ```
+  [lifetime-inversion] 'mediaGrantService' (singleton) depends on 'mediaItemReadRepository'
+  (scoped, composed package "@app/media-core") — a singleton freezes its scoped dependency at
+  first construction and reuses it across every scope.
+  ```
+
+  A group member whose lifetime cannot be determined is now disclosed rather than dropped. A mixed
+  group previously reported its local members, silently omitted its composed ones, and returned a
+  verdict that read as complete; it now emits an `UNRANKED, not cleared` warning naming the member
+  and which of the three reasons applies.
+
+- **`dependencyKeys` no longer claims coverage it may not have.** The token was asserted
+  unconditionally, so a package containing a single factory whose dependencies could not be read
+  still told every consumer its coverage was complete. Downstream that suppressed the composed
+  blind-spot advisory — the mechanism whose entire purpose is to say a subtree could not be walked —
+  and a composing app got a confident verdict over a graph it had not seen.
+
+  `dependencyKeys` is now what it always truthfully was: a capability claim, meaning this generator
+  knows the field and emits it where it has keys. Every manifest ever written can honestly say it.
+  `dependencyKeysComplete` is the new coverage claim, computed per manifest, meaning every unit
+  reaching `contracts` had its demand set determined — so an absent `dependencyKeys` means "demands
+  nothing" rather than "could not tell".
+
+  Two tokens rather than one conditional token, because manifests already on disk declare the old
+  one unconditionally and cannot take it back. Making it conditional would have left every
+  published manifest trusted until its own package regenerates, with no way for a consumer to know
+  which. A token no old manifest can emit stops the false confidence on the consumer's next run
+  instead.
+
+### Added
+
+- **A successful generation now ignores its own record.** `.ioc-generation-state.json` carries a
+  timestamp, so its bytes change on every run even when the generated output is byte-identical. A
+  consumer who committed it and asserted a clean tree in CI got a red build on every push, forever,
+  for a file that is pure local diagnostics — a deterministic trap rather than an edge case, and one
+  every consumer with such a check would hit.
+
+  Generation now adds the entry to the `.gitignore` **beside the record**, creating that file if
+  there is none, and says which it did:
+
+  ```
+  Added .ioc-generation-state.json to src/.gitignore — local generation state, and its timestamp changes every run.
+  ```
+
+  Nothing walks up to a repo root: the directory the record lands in is the narrowest place an entry
+  can do its job, and a package's generation has no business editing a file it does not own. An
+  existing `.gitignore` is appended to and never rewritten, so every other byte survives; a run that
+  finds the entry already there (`.ioc-generation-state.json`, `/.ioc-generation-state.json`,
+  `**/.ioc-generation-state.json`) writes nothing and prints nothing, which makes the second run and
+  every run after it a no-op. An explicit `!.ioc-generation-state.json` is read as the consumer
+  wanting the record tracked and is left alone, as is a `.gitignore` that is a symlink — following
+  one would reach outside the package. Every filesystem error is swallowed: this runs after the
+  artifacts have already landed, and a read-only checkout must not turn a successful generation into
+  a failed one.
+
+  New `manageGitignore?: boolean` in `ioc.config.ts`, default `true`. Set it `false` if ignores are
+  managed centrally — a workspace-root `**/.ioc-generation-state.json` covers every package, and
+  generation cannot see it from inside one, so it would otherwise add a redundant entry per package.
+  Nothing about the record or the freshness check depends on the setting.
+
+  The CLI reference now also names the CI check this is really about: `git diff --exit-code` fails
+  every run because the timestamp moves, and `git diff --exit-code -- 'src/generated'` is the
+  scoped form that actually asserts generation is deterministic. That the record sits _beside_ the
+  generated directory rather than inside it has always been what makes the scoped check work.
+
+- **A factory whose dependencies cannot be read is now reported by the package that owns it.**
+  Dependency keys are derived syntactically, from a destructured first parameter and nothing else. A
+  factory written any other way records no demand at all — it is skipped by the lifetime check, it
+  ends a scope-root walk, and it withholds `dependencyKeysComplete` for its whole package. Until now
+  nothing said so, and the only signal reached consumers, who cannot fix it:
+
+  ```
+  [ioc] 1 accepted unit demands dependencies this generation could not read, so this package's
+  manifest cannot claim "dependencyKeysComplete":
+    - media/mediaServeController.ts:10 registration unit "buildMediaServeController"
+        [non-destructured-parameter]
+        written: (deps: MediaServeControllerDeps)
+        why: the first parameter is a plain identifier, so the keys the body will read off it at
+             runtime are not written anywhere this analysis can see.
+        fix: destructure the first parameter — `({ a, b }: Deps)` — naming the cradle keys the
+             body uses.
+  ```
+
+  Eight shapes are recognised and named separately, because the fix differs and a generic message
+  misleads: non-destructured parameter, defaulted parameter, rest element, nested binding, array
+  binding, computed property, callable parameter type, and unresolvable signature. The rest element
+  is the one that looks correct — `({ logger, ...rest }: Deps)` names a real key and then discards
+  it along with everything else — and it is the only shape whose fix does not always terminate in a
+  working edit, since a body that genuinely forwards the whole cradle cannot have its demand set
+  recorded at all. The message says so rather than implying otherwise.
+
+  New `dependencyKeyCoverage?: "warn" | "error" | "off"` in `ioc.config.ts`, default `"warn"`.
+  Unlike a class with a non-injectable constructor, which is rejected because it cannot be
+  constructed at all, these factories run correctly — Awilix hands the cradle over as that one
+  object and every read resolves. Failing a build over working code, on a check that did not exist a
+  release ago, teaches teams to disable the check rather than fix the factories. `"error"` is for
+  packages already clean that want CI to hold the line; `"off"` silences the message and nothing
+  else, since the coverage token follows the code rather than the setting.
 
 ### Internal
 
@@ -48,6 +179,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default — the second of which matters, because a generated directory is very often gitignored and
   the CLI has been skipping it while still paying for the spawn. Prettier remains an optional peer
   dependency, and a project without it still generates unformatted files exactly as before.
+
+  A config-key seam was added alongside the lane seam: `src/config/configKeySeam.test.ts` parses
+  `IocConfig` out of source and compares its property names against `iocConfigSchema.shape` in both
+  directions. It was written after `dependencyKeyCoverage` shipped on the type but not the schema,
+  which is `.strict()` — the flag was thoroughly tested through the function and completely
+  unusable from an `ioc.config.ts`.
 
 ## [4.0.1]
 
