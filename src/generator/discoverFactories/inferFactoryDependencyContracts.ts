@@ -44,8 +44,12 @@ export type DependencyKeysUnknownShape =
  * - Rest elements (`...rest`) => unknown (too broad).
  * - Nested binding patterns => unknown (not direct top-level cradle picks).
  * - Computed / non-literal property names => unknown.
+ *
+ * Exported so the composed resolution graph reads a unit's demand set through the SAME rules
+ * discovery does. A second reading of a binding pattern is a second chance to disagree about what a
+ * factory demands, and reachability is decided on that answer.
  */
-const getBindingPatternPropertyNames = (
+export const getBindingPatternPropertyNames = (
   pattern: ts.ObjectBindingPattern,
 ): DependencyKeysUnknownShape | string[] => {
   const names: string[] = [];

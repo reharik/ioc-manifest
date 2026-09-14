@@ -21,6 +21,13 @@ import {
   isSuppliedAssignableToDemandedTypes,
 } from "../typeComparison.js";
 import type { CompositionProgramContext } from "../compositionProgram.js";
+import {
+  classifyExternalReachability,
+  type ComposedGraphUnit,
+  type ComposedResolutionGraph,
+  type ScopeVariantReach,
+  type UnsuppliedDemand,
+} from "../composedResolutionGraph.js";
 
 type SupplierSlice = ParsedManifestSlice;
 
@@ -288,6 +295,111 @@ const buildGroupedMemberIssue = (
   };
 };
 
+/** Where a demand was made, in the reader's terms: which export, in which file, in which package. */
+const demandSiteLabel = (unit: ComposedGraphUnit): string =>
+  `${JSON.stringify(unit.exportName)} in ${unit.modulePath} (${unit.packageLabel})`;
+
+/** `variantName → registrationKey → … → key`, the path the walk actually took. */
+const viaLine = (demand: UnsuppliedDemand, externalKey: string): string =>
+  [...demand.via, externalKey].join(" → ");
+
+/**
+ * The scope-reachable finding: an obligation that does not come due at composition.
+ *
+ * `undefined` when every variant that reaches the key already carries it — which is a PASS, and the
+ * ordinary outcome once a consumer has declared the value. The check must not leave a residue
+ * behind on the way to saying nothing is wrong.
+ *
+ * The variants named are only the unsatisfied ones. A variant that declares the key has nothing to
+ * fix, and listing it under a failure teaches the reader to skim the list they are meant to act on.
+ */
+const buildScopeReachableIssue = (
+  slice: ParsedManifestSlice,
+  externalKey: string,
+  demandedText: string,
+  reaches: readonly ScopeVariantReach[],
+): ValidationIssue | undefined => {
+  const unsatisfied = reaches.filter((reach) => !reach.satisfied);
+  if (unsatisfied.length === 0) {
+    return undefined;
+  }
+
+  const demandSites = [
+    ...new Set(reaches.map((reach) => demandSiteLabel(reach.demand.demandedBy))),
+  ];
+
+  const variantBlocks = unsatisfied.flatMap((reach) => [
+    "",
+    `  ${reach.variant.contractName} / ${reach.variant.variantName}`,
+    `    (${reach.variant.modulePath}, export ${JSON.stringify(reach.variant.exportName)})`,
+    `    via: ${viaLine(reach.demand, externalKey)}`,
+    // The manifest records the declared SET, not the declared types — `lbvKeys` is a key list, and
+    // rendering a type here would mean inventing one. Named as keys so nobody reads it as a type.
+    `    declared lbv keys: ${reach.variant.declaredLbvKeys.length === 0 ? "(none)" : reach.variant.declaredLbvKeys.join(", ")}`,
+    `    fix: add \`${externalKey}: ${demandedText}\` to the ScopeRoot<${reach.variant.contractName}, ...> late-bound-value set on ${JSON.stringify(reach.variant.exportName)}`,
+  ]);
+
+  return {
+    category: "externals",
+    severity: "error",
+    summary: `Unsatisfied: ${JSON.stringify(externalKey)} is scope-reachable only, and ${unsatisfied.length} of the ${reaches.length} scope root variant${reaches.length === 1 ? "" : "s"} that reach it ${unsatisfied.length === 1 ? "does" : "do"} not carry it.`,
+    details: [
+      `key:       ${JSON.stringify(externalKey)}  demanded by ${sliceLabel(slice)}`,
+      `demanded:  ${demandedText}`,
+      ...demandSites.map((site) => `demanded by ${site}`),
+      "Every resolution path that reaches this key crosses a scope boundary, so the root container is never asked for it. It is a late-bound value of the scopes that reach it, not a composition-level external — a value bound at scope-open is never in the composed cradle, and registering one on the root container would not satisfy these paths.",
+      `Propagated to ${reaches.length} scope root variant${reaches.length === 1 ? "" : "s"}. Unsatisfied at ${unsatisfied.length}:`,
+      ...variantBlocks,
+    ],
+    suggestedFix: `Add ${JSON.stringify(externalKey)} to the declared late-bound-value set of each variant listed above (or name it in \`scopeProvided\` if every scope in this app carries it).`,
+    packages: [
+      ...new Set([
+        slice.sourceId,
+        ...unsatisfied.map((reach) => reach.variant.sourceId),
+      ]),
+    ],
+    ...(docsUrlForCode("scope-reachable-external") !== undefined
+      ? { docUrl: docsUrlForCode("scope-reachable-external")! }
+      : {}),
+  };
+};
+
+/**
+ * Mixed reachability: one path reaches the key from a composition root, another only through a
+ * scope.
+ *
+ * A hard error, and the root path is what the message is about. The scope paths are real and a
+ * declaration there is a real fix for THEM — but it does nothing for the root path, which still
+ * resolves to nothing, and a message that led with the scope half would read as "declare it
+ * somewhere and this goes away". It does not.
+ */
+const buildMixedReachabilityIssue = (
+  slice: ParsedManifestSlice,
+  externalKey: string,
+  demandedText: string,
+  rootDemands: readonly UnsuppliedDemand[],
+  reaches: readonly ScopeVariantReach[],
+): ValidationIssue => ({
+  category: "externals",
+  severity: "error",
+  summary: `Unsatisfied: nothing supplies ${JSON.stringify(externalKey)}, which ${sliceLabel(slice)} expects the container to already have, and a resolution path reaches it from a composition root.`,
+  details: [
+    `key:       ${JSON.stringify(externalKey)}  demanded by ${sliceLabel(slice)}`,
+    `demanded:  ${demandedText}`,
+    "No composed manifest offers this key in its IocGeneratedCradle.",
+    ...rootDemands.flatMap((demand) => [
+      `root path: ${viaLine(demand, externalKey)}`,
+      `           demanded by ${demandSiteLabel(demand.demandedBy)}`,
+    ]),
+    `This key is ALSO reached under ${reaches.length} scope root variant${reaches.length === 1 ? "" : "s"}, where a late-bound value can carry it. That does not settle the path above: a value bound at scope-open never enters the root cradle, so the root path still resolves to nothing. Fix the root path.`,
+  ],
+  suggestedFix: `Register a factory for ${demandedText} under key ${JSON.stringify(externalKey)} in this app, or stop resolving the root-side consumer outside a scope so every path to ${JSON.stringify(externalKey)} crosses a scope boundary.`,
+  packages: attributionFor(slice),
+  ...(docsUrlForCode("scope-reachable-external") !== undefined
+    ? { docUrl: docsUrlForCode("scope-reachable-external")! }
+    : {}),
+});
+
 export type CheckExternalsOptions = {
   /**
    * The program `checkRegistryIntegrity` already built and inspected. Shared so the gate and the
@@ -306,6 +418,24 @@ export type CheckExternalsOptions = {
    * Production always goes through `runAllValidationChecks`, which supplies it.
    */
   readonly brokenTypesPaths?: ReadonlySet<string>;
+  /**
+   * The composed resolution graph, when the caller has one.
+   *
+   * Absent means "no graph was built", and every external is then judged as root-resolvable — the
+   * behaviour this check had before reachability existed. Production always supplies it;
+   * `runCompositionChecks` builds it once and shares it.
+   */
+  readonly graph?: ComposedResolutionGraph;
+  /**
+   * `ioc.config.scopeProvided` — keys the app has DECLARED enter at a scope boundary.
+   *
+   * Read only when settling a scope-reachable key at a variant: an explicit statement that a key is
+   * carried by the scope satisfies the variants that reach it, the same way a declared lbv does. It
+   * is deliberately not consulted on a root-reachable key — an explicit declaration cannot make a
+   * root path resolve, and letting it try would turn the escape hatch into a way to silence a real
+   * unsatisfied external.
+   */
+  readonly scopeProvidedKeys?: readonly string[];
 };
 
 export const checkExternalsSatisfaction = (
@@ -328,8 +458,9 @@ export const checkExternalsSatisfaction = (
   // Built once: every unsatisfied key is asked the same question, and the roots do not change
   // during the run.
   const groupKeyIndex = buildComposedGroupKeyIndex(compositionCtx);
+  const scopeProvidedKeys = new Set(options?.scopeProvidedKeys ?? []);
 
-  for (const slice of compositionCtx.slices) {
+  for (const [sliceIndex, slice] of compositionCtx.slices.entries()) {
     for (const [externalKey, { typeText: demandedText }] of Object.entries(
       slice.externals,
     )) {
@@ -365,6 +496,53 @@ export const checkExternalsSatisfaction = (
         if (groupHit !== undefined) {
           issues.push(
             buildGroupedMemberIssue(slice, externalKey, demandedText, groupHit),
+          );
+          continue;
+        }
+
+        // WHEN the obligation comes due, before WHETHER it is met. The check below is correct in
+        // what it checks and was wrong in when it demanded an answer: it treated every external as
+        // root-resolvable, so it adjudicated at composition time a promise that is not owed until
+        // scope-open — and no amount of registering could keep it.
+        const reachability =
+          options?.graph === undefined
+            ? ({ kind: "unknown", blindSpots: [] } as const)
+            : classifyExternalReachability(
+                options.graph,
+                externalKey,
+                sliceIndex,
+                scopeProvidedKeys,
+              );
+
+        // Zero paths, zero obligations — and that is a PASS, not a skip. A consumer that composes a
+        // package and never resolves the part of it that demands this key owes nothing, and saying
+        // so with silence is the whole point: there is nothing for it to fix.
+        if (reachability.kind === "unreachable") {
+          continue;
+        }
+
+        if (reachability.kind === "scope-only") {
+          const issue = buildScopeReachableIssue(
+            slice,
+            externalKey,
+            demandedText,
+            reachability.reaches,
+          );
+          if (issue !== undefined) {
+            issues.push(issue);
+          }
+          continue;
+        }
+
+        if (reachability.kind === "mixed") {
+          issues.push(
+            buildMixedReachabilityIssue(
+              slice,
+              externalKey,
+              demandedText,
+              reachability.rootDemands,
+              reachability.reaches,
+            ),
           );
           continue;
         }

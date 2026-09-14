@@ -79,6 +79,13 @@ const DOC_TARGET_BY_CODE: Readonly<Record<string, string>> = {
 
   // ── Composition suite categories (`ioc validate` / app-mode `ioc generate`) ────────────────────
   externals: "monorepo/composition#externals",
+  /**
+   * Its own anchor rather than the `externals` one: the rule a reader lands on here is not "supply
+   * this key", it is "this key is owed at scope-open, by these variants" — a different obligation
+   * with a different remedy, and the general externals section would hand them advice this rule
+   * forbids.
+   */
+  "scope-reachable-external": "monorepo/composition#scope-reachable-externals",
   "registry-integrity": "reference/cli#ioc-validate",
   "same-key-conflict": "monorepo/composition#resolving-same-key-conflicts",
   "group-kind": "monorepo/composition#groups-across-manifests",

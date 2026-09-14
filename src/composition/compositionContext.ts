@@ -39,6 +39,7 @@ import type {
   ParsedGroupRoot,
   ParsedImplementationMeta,
   ParsedManifestSlice,
+  ParsedScopeRootVariant,
 } from "./types.js";
 
 const readFileUtf8 = (filePath: string): string =>
@@ -105,6 +106,35 @@ const projectGroupRoots = (
 };
 
 /**
+ * Scope-root variants, narrowed to what the composed resolution graph reads.
+ *
+ * `relImport` and `moduleIndex` are emission concerns and stop here; everything else is identity
+ * (which export, in which module, under which contract and variant) or the declared late-bound-value
+ * set the graph measures a scope-reachable demand against.
+ */
+const projectScopeRoots = (
+  scopeRoots: ReturnType<typeof parseGeneratedManifestSource>["scopeRoots"],
+): Record<string, Record<string, ParsedScopeRootVariant>> => {
+  const out: Record<string, Record<string, ParsedScopeRootVariant>> = {};
+  for (const [contractName, variants] of Object.entries(scopeRoots ?? {})) {
+    const byVariant: Record<string, ParsedScopeRootVariant> = {};
+    for (const [variantName, meta] of Object.entries(variants)) {
+      byVariant[variantName] = {
+        exportName: meta.exportName,
+        openerKey: meta.openerKey,
+        variantKey: meta.variantKey,
+        contractName: meta.contractName,
+        variantName: meta.variantName,
+        modulePath: meta.modulePath,
+        lbvKeys: meta.lbvKeys,
+      };
+    }
+    out[contractName] = byVariant;
+  }
+  return out;
+};
+
+/**
  * One slice from manifest + registry-types SOURCE TEXT, whatever produced it.
  *
  * Exported because it is the projection boundary — the point where the full parsed manifest is
@@ -149,6 +179,7 @@ export const buildCompositionSlice = (
     declaredFeatures: parsed.declaredFeatures,
     contracts: projectContracts(parsed.contracts),
     groupRoots: projectGroupRoots(parsed.groupRoots),
+    scopeRoots: projectScopeRoots(parsed.scopeRoots),
     cradleKeys: new Set(cradleProps.keys()),
     cradleTypes,
     externals,
@@ -351,6 +382,7 @@ export const loadCompositionContext = async (
       configPath,
       slices,
       sourceFiles,
+      scanDirs: options.paths.scanDirs,
       pendingArtifacts,
       tsconfig: tsconfigContext,
       composedPackageNames,

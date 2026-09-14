@@ -5,6 +5,62 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.0]
+
+### Added
+
+- **A shared package may now own a scoped factory.** Composition classified every external as
+  root-resolvable, so a key whose value only exists per-request — a scoped logger's `logContext`, a
+  correlation id, a tenant id, a viewer — was checked at composition time against an obligation that
+  does not come due until scope-open. Nothing could satisfy it: a value bound at scope-open is never
+  in the composed cradle. The check was correct in what it checked and wrong in when it demanded an
+  answer, and the result was a rule nobody agreed to — shared packages may not contain scoped
+  factories — which gutted composition for exactly the cross-cutting concerns most worth sharing. A
+  consumer could not work around it, because the factory lives in somebody else's package.
+
+  Externals are now classified by **reachability** rather than assumed root-resolvable. For each
+  key, composition finds every resolution path that reaches it. If some path reaches it from a
+  composition root it is a composition-level external and is judged exactly as before. If every path
+  crosses a scope boundary it is a *scope-reachable external*, and the obligation propagates outward
+  to the scope-root variants that can actually reach it, where it is settled by that variant's
+  declared late-bound-value set — the same rule, and the same remedy, scope demands have always had:
+
+  ```
+  [externals] Unsatisfied: "logContext" is scope-reachable only, and 1 of the 2 scope root variants that reach it does not carry it.
+    key:       "logContext"  demanded by @packages/infrastructure
+    demanded:  Record<string, unknown>
+    demanded by "build__ScopedLogger" in logger/scopedLogger.ts (@packages/infrastructure)
+    Propagated to 2 scope root variants. Unsatisfied at 1:
+
+      GraphQLContext / publicRead
+        (graphql/context/requestContextFactories.ts, export "build__PublicReadGraphQLContext")
+        via: publicRead → viewerAlbumReadService → scopedLogger → logContext
+        declared lbv keys: viewerId
+        fix: add `logContext: Record<string, unknown>` to the ScopeRoot<GraphQLContext, ...> late-bound-value set on "build__PublicReadGraphQLContext"
+  ```
+
+  Propagation is per VARIANT and never per root contract. Variants of one contract declare different
+  late-bound-value sets, so they have different subtrees and reach different keys; asking every
+  variant of a root for a value only one of them resolves would demand declarations nobody consumes.
+  A variant that reaches the key and already carries it is satisfied and prints nothing.
+
+  A key **no** path reaches carries no obligation at all. A background worker that composes a package
+  and never resolves through the part of it that demands the key composes clean, with no diagnostic —
+  the same exemption `scopeProvided` already granted, now reached without declaring anything.
+
+  Mixed reachability stays a hard error, and the message is about the root path. A declaration at the
+  scope end does not launder a root path that still resolves to nothing.
+
+  Classification is automatic: no new config key, and nothing to declare in the package that owns the
+  factory. It is computed from data the manifests already carry, so there is no schema change and
+  existing configurations start working with no edits. Where the data cannot support it — a composed
+  manifest that does not claim `dependencyKeysComplete`, or a scope-root variant whose demand set
+  cannot be read — the classification is withheld and every external is judged as it was before,
+  rather than quietly passing on a demand nobody could see. See
+  [scope-reachable externals](docs/monorepo/composition.md#scope-reachable-externals).
+
+  This is a loosening. Configurations that failed now pass; none that passed now fails.
+
 ## [4.1.0]
 
 ### Changed

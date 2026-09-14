@@ -23,6 +23,7 @@ import { checkRegistryIntegrity } from "./checks/registryIntegrity.js";
 import { checkSameKeyConflicts } from "./checks/sameKeyConflict.js";
 import { checkSchemaVersions } from "./checks/schemaVersion.js";
 import { checkSlotOccupancy } from "./checks/slotOccupancy.js";
+import { buildComposedResolutionGraph } from "./composedResolutionGraph.js";
 import { createCompositionProgram } from "./compositionProgram.js";
 import { timePhase } from "../diagnostics/phaseTiming.js";
 import type { CompositionContext, ValidationIssue } from "./types.js";
@@ -55,6 +56,13 @@ export const runCompositionChecks = (
     checkRegistryIntegrity(ctx, programCtx),
   );
 
+  // The composed picture as a GRAPH, built once here for the same reason the program is: a check
+  // that builds its own view of the composed set is a check that can disagree with its neighbours
+  // about the thing they are all judging.
+  const graph = timePhase("composition: resolution graph", () =>
+    buildComposedResolutionGraph(ctx, programCtx),
+  );
+
   return [
     ...checkSchemaVersions(ctx),
     ...integrity.issues,
@@ -62,6 +70,10 @@ export const runCompositionChecks = (
       checkExternalsSatisfaction(ctx, {
         typeCheckerCtx: programCtx,
         brokenTypesPaths: integrity.brokenTypesPaths,
+        graph,
+        ...(config.scopeProvided !== undefined
+          ? { scopeProvidedKeys: config.scopeProvided }
+          : {}),
       }),
     ),
     ...checkSameKeyConflicts(ctx),

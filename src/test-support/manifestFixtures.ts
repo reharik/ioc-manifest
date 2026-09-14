@@ -90,6 +90,7 @@ export const parsedSlice = (
   declaredFeatures: undefined,
   contracts: {},
   groupRoots: {},
+  scopeRoots: {},
   cradleKeys: new Set(),
   cradleTypes: {},
   externals: {},
@@ -107,6 +108,9 @@ export const compositionContextFixture = (
   // types files alone. Production always goes through `loadCompositionContext`, which supplies the
   // app's real source set.
   sourceFiles: [],
+  // No scan root either: with none resolved, a recorded `modulePath` is read relative to
+  // `projectRoot`, which is what a fixture that writes its files flat into a temp dir wants.
+  scanDirs: [],
   pendingArtifacts: undefined,
   tsconfig: undefined,
   composedPackageNames: slices.slice(1).map((s) => s.sourceId),

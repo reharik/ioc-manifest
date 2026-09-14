@@ -146,6 +146,26 @@ A fourth outcome is **skipped**: if the generated registry-types file a comparis
 
 **Library mode checks nothing here, and skips nothing either.** A library has no composed set to relate to; its `IocExternals` is a promise to whichever app composes it later, and that app's `generate` is the first run that can say whether the promise is kept.
 
+## Scope-reachable externals
+
+The three verdicts above all assume the key is something the ROOT container can be asked for. Not every external is. A shared package can own a factory whose dependencies only exist per-request — the canonical case being a scoped logger that demands a `logContext` nobody can register on the root container, because the value does not exist until a scope opens.
+
+So before asking whether a key is supplied, composition asks **when the obligation comes due**, by finding every resolution path that reaches it:
+
+- **Some path reaches it from a composition root.** An ordinary composition-level external, judged exactly as above.
+- **Every path crosses a scope boundary.** A *scope-reachable external*: not a composition-level obligation at all. The obligation propagates outward to the [scope root](/concepts/scope-roots) variants that can actually reach it, and is settled there — by that variant's declared late-bound-value set, or by naming the key in [`scopeProvided`](/config/reference#scopeprovided). A variant that reaches it and carries it is satisfied and prints nothing.
+- **No path reaches it.** No obligation. A worker that composes the package and never resolves through the part of it that demands the key owes nothing, and composes clean with no diagnostic.
+
+Propagation is **per variant**, never per root contract. Variants of one contract declare different late-bound-value sets, so they have different resolution subtrees and reach different keys; asking every variant of a root for a value only one of them resolves would demand declarations nobody consumes.
+
+**Mixed reachability is a hard error**, and the message is about the root path. If one path reaches the key from a root and another only through a scope, the root path is still unsatisfiable — a value bound at scope-open never enters the root cradle — so a declaration at the scope end does not launder it.
+
+Classification is automatic: no config key, and nothing to declare in the package that owns the factory. It is computed from data the manifests already carry, so a package that has regenerated needs no edit for its consumers to benefit.
+
+::: tip When classification is withheld
+A walk is only as good as the demand data under it. If any composed manifest does not claim `dependencyKeysComplete` — some factory in it takes its dependencies as a plain `(deps: Deps)` parameter, a shape the keys cannot be read from — or if a scope-root variant's own demand set cannot be read, reachability is not a verdict and every external is judged as root-resolvable, exactly as it was before. Regenerate the packages the `[externals]` report names to get the sharper answer.
+:::
+
 ## Resolving same-key conflicts
 
 If two composed manifests both supply the same Awilix registration key, composition fails with a hard error naming both manifests. Resolve via the `source` field:

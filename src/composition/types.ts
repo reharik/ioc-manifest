@@ -111,6 +111,28 @@ export type ParsedGroupRoot = {
   readonly members: unknown;
 };
 
+/**
+ * One scope-root variant as its manifest states it.
+ *
+ * The composed resolution graph needs variants for the same reason the codegen-side subtree walk
+ * does: a variant is where a resolution path CROSSES a scope boundary, and a demand made below one
+ * is not a demand the root container ever sees. `lbvKeys` is the variant's DECLARED late-bound-value
+ * set, verbatim — never a set derived from the subtree.
+ *
+ * The variant's own demand set is deliberately absent: a manifest does not record it (a variant is
+ * not a `contracts` unit and claims no registration key), so it is read from source at the one seam
+ * that has a program — see `composedResolutionGraph.ts`.
+ */
+export type ParsedScopeRootVariant = {
+  readonly exportName: string;
+  readonly openerKey: string;
+  readonly variantKey: string;
+  readonly contractName: string;
+  readonly variantName: string;
+  readonly modulePath: string;
+  readonly lbvKeys: readonly string[];
+};
+
 export type ParsedManifestSlice = {
   /** Display label: local packageName or composed npm name. */
   readonly packageLabel: string;
@@ -132,6 +154,16 @@ export type ParsedManifestSlice = {
     Record<string, Readonly<Record<string, ParsedImplementationMeta>>>
   >;
   readonly groupRoots: Readonly<Record<string, ParsedGroupRoot>>;
+  /**
+   * Scope-root variants by root contract, then by variant name — the shape the manifest uses.
+   *
+   * Empty for a manifest that declares none, which is also what a pre-opener manifest reads as. The
+   * difference does not matter to any reader here: both mean "this package opens no scope through
+   * a variant this composition can see".
+   */
+  readonly scopeRoots: Readonly<
+    Record<string, Readonly<Record<string, ParsedScopeRootVariant>>>
+  >;
   readonly cradleKeys: ReadonlySet<string>;
   readonly cradleTypes: Readonly<
     Record<string, { readonly typeText: string }>
@@ -151,6 +183,15 @@ export type CompositionContext = {
    * its discovery targets, and `ioc validate` resolves the identical set from the same config.
    */
   readonly sourceFiles: readonly string[];
+  /**
+   * The app's resolved scan roots, as `manifestPaths` computes them.
+   *
+   * Carried because a manifest records a unit's `modulePath` relative to the scan root, and turning
+   * one back into a file in the shared program is exactly `resolveFactorySourceAbsPath`'s job. Both
+   * verbs resolve the set from the same config, so neither can look at a different file for the
+   * same recorded path.
+   */
+  readonly scanDirs: readonly import("../generator/manifestPaths.js").ResolvedScanDir[];
   /**
    * Generated artifacts whose on-disk content is not the content to judge, keyed by the path they
    * will be written to. `ioc generate` supplies the sources it is about to emit — judging the
