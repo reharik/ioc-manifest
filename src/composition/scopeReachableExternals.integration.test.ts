@@ -396,13 +396,56 @@ describe("scope-reachable externals", () => {
   });
 
   describe("When the consumer composes the package and opens no scope at all", () => {
-    it("should report no issues", () => {
+    /**
+     * An unreachable key is still reported, and the reason is structural rather than a missing
+     * guard.
+     *
+     * The walk seeds from the app's REGISTERED units. An app's real resolution roots are its
+     * composition root's own `container.resolve(...)` calls, which live in a bootstrap file that is
+     * not a discovery target and has no manifest row — so a library unit the bootstrap resolves
+     * directly looks unreachable here while being exactly what the app runs on.
+     *
+     * Reproduced in `examples/multi-package` while this rule was briefly enabled: a new unsatisfied
+     * external on `buildUploadService` (which the example's bootstrap resolves) left `ioc validate`
+     * reporting "no issues found" while the app threw `Could not resolve 'auditSink'` at its first
+     * resolve. Ordinary code throughout — no rest element, no dynamic resolution.
+     *
+     * Clearing on that inference would trade a build error for a production one. Making it sound
+     * needs the resolution ROOTS modelled, not more falsifiers closed.
+     */
+    it("should report the ordinary unsatisfied external", () => {
+      const issues = externalsIssues(
+        runCompositionChecks(
+          appConfig(),
+          workspace({
+            label: "no-scopes",
+            appUnits: [HTTP_SERVER],
+            appCradle: "  httpServer: { listen: () => void };",
+          }),
+        ),
+      );
+      assert.equal(issues.length, 1);
+      assert.match(issues[0]!.summary, /nothing supplies "logContext"/);
+    });
+
+    /**
+     * The DECLARED path, which does clear the key, kept beside the inferred one on purpose.
+     *
+     * `scopeProvided` in the owning package takes the key out of its `IocExternals` at the source,
+     * so no consumer is ever asked for it. A declaration by the party that knows carries weight an
+     * inference drawn from a consumer's partial graph does not, and that distinction is the whole
+     * reason one of these passes and the other does not.
+     */
+    it("should pass once the owning package declares the key scope-provided", () => {
+      // `scopeProvided` in the OWNER removes the key from its `IocExternals` entirely, which is why
+      // this fixture drops it from the library's declared externals rather than adding config here.
       const issues = runCompositionChecks(
         appConfig(),
         workspace({
-          label: "no-scopes",
+          label: "no-scopes-scope-provided",
           appUnits: [HTTP_SERVER],
           appCradle: "  httpServer: { listen: () => void };",
+          libExternals: "",
         }),
       );
       assert.deepEqual(externalsIssues(issues), []);

@@ -18,12 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   factories — which gutted composition for exactly the cross-cutting concerns most worth sharing. A
   consumer could not work around it, because the factory lives in somebody else's package.
 
-  Externals are now classified by **reachability** rather than assumed root-resolvable. For each
-  key, composition finds every resolution path that reaches it. If some path reaches it from a
-  composition root it is a composition-level external and is judged exactly as before. If every path
-  crosses a scope boundary it is a *scope-reachable external*, and the obligation propagates outward
-  to the scope-root variants that can actually reach it, where it is settled by that variant's
-  declared late-bound-value set — the same rule, and the same remedy, scope demands have always had:
+  Externals are now classified by **reachability**. For each key, composition finds every resolution
+  path that reaches it. If some path reaches it from a composition root it is a composition-level
+  external and is judged exactly as before. If every path crosses a scope boundary it is a
+  *scope-reachable external*, and the obligation propagates outward to the scope-root variants that
+  can actually reach it, where it is settled by that variant's declared late-bound-value set — the
+  same rule, and the same remedy, scope demands have always had:
 
   ```
   [externals] Unsatisfied: "logContext" is scope-reachable only, and 1 of the 2 scope root variants that reach it does not carry it.
@@ -44,10 +44,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   variant of a root for a value only one of them resolves would demand declarations nobody consumes.
   A variant that reaches the key and already carries it is satisfied and prints nothing.
 
-  A key **no** path reaches carries no obligation at all. A background worker that composes a package
-  and never resolves through the part of it that demands the key composes clean, with no diagnostic —
-  the same exemption `scopeProvided` already granted, now reached without declaring anything.
-
   Mixed reachability stays a hard error, and the message is about the root path. A declaration at the
   scope end does not launder a root path that still resolves to nothing.
 
@@ -59,7 +55,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than quietly passing on a demand nobody could see. See
   [scope-reachable externals](docs/monorepo/composition.md#scope-reachable-externals).
 
-  This is a loosening. Configurations that failed now pass; none that passed now fails.
+- **`ioc-composed.ts` now type-checks declared late-bound values against what a composed package
+  demands.** Clearing a key from the `[externals]` report is only half the job: the generated file
+  emits one compile-time assertion per external key, and for a scope-reachable key the old assertion
+  — that the key sits in `AppCradle` — can never hold. Left alone it fails `tsc` over the app's own
+  output on a run `ioc generate` has just passed.
+
+  So the assertion **relocates** rather than vanishing. For each opener that reaches the key, the
+  emitted file asserts that the opener's declared late-bound values carry it, with a type the
+  demanding package accepts.
+
+  This is **new capability, not restored parity**. `verifyScopeRoots` compares a declared late-bound
+  value against the types of LOCAL demand sites; for a demand inside a composed package it has
+  nothing to compare against, because a manifest records demand *keys* and never demand *types*.
+  `ioc-composed.ts` has both in scope. A variant declaring `logContext: string` against a demanded
+  `Record<string, unknown>` has never been caught by anything before, and now fails to compile:
+
+  ```
+  src/generated/ioc-composed.ts(39,14): error TS2344: Type '{ iocError: "the declared late-bound
+  value is not assignable to the demanded type"; key: "logContext"; opener:
+  "openAuthenticatedReadScope"; package: "@packages/infrastructure"; }' does not satisfy the
+  constraint 'true'.
+  ```
+
+  Each failure branch is a literal object naming its cause rather than a bare `false`: a conditional
+  that collapses to `false` reports the same sentence for every way of being wrong, on a line holding
+  nothing but an `_IocExpect<…>` instantiation. Compositions that clear nothing emit a byte-identical
+  `ioc-composed.ts`.
+
+### Documented
+
+- **What reachability can see, and what it does not.** The walk starts from registered units and
+  follows their recorded `dependencyKeys`. It does not see a composition root: `bootstrap.ts` is not
+  a discovery target, has no manifest row, and its `container.resolve("…")` calls are recorded
+  nowhere — so a library unit resolved directly by bootstrap, and everything only that unit demands,
+  is invisible to the walk.
+
+  This is why a key no recorded path reaches is still reported as unsatisfied rather than cleared.
+  "Nothing reaches it" is a far weaker statement than "your app never resolves it", and acting on the
+  first as though it were the second trades a build error for a production one — `ioc validate`
+  passing while the first `container.resolve` throws. A key that genuinely is not a container
+  obligation is declared rather than inferred, by the package that owns the factory, with
+  `scopeProvided`.
+
+  The same limit already governed lifetime-inversion ranking, scope-root subtree walks and externals
+  exclusion; it is now written down. See
+  [what reachability can see](docs/monorepo/composition.md#what-reachability-can-see).
 
 ## [4.1.0]
 

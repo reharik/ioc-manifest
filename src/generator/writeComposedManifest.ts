@@ -9,10 +9,45 @@ import {
 } from "../config/packageIdentifier.js";
 import type { ComposedRegistrationOverrides } from "../runtime/composedOverrides.js";
 
+/**
+ * One external key whose obligation is met at a scope boundary rather than on the root cradle.
+ *
+ * The assertion for such a key MOVES rather than vanishes: it is dropped from the `AppCradle` pick —
+ * where it could only ever be false, since a value bound at scope-open never enters the root cradle —
+ * and re-asserted against each reaching variant's emitted opener signature.
+ *
+ * Deliberately stated as `(key, reaching openers)` and nothing more. The emitter has no idea WHY a
+ * key relocated, which is the point: three separate mechanisms clear keys today — scope-reachability,
+ * `scopeProvided`, and the variant-lbv exclusion in `scopeRootExternalsExclusion.ts` — and the latter
+ * two currently drop the obligation with no replacement guard at all. Converging them onto this
+ * emitter should be plumbing, not a rewrite, so the shape is theirs to fill too.
+ */
+export type RelocatedExternalAssertion = {
+  readonly key: string;
+  /**
+   * Cradle keys of the openers that must carry {@link key} — those whose variant DECLARES it.
+   *
+   * Empty is legal and means one specific thing: the key is satisfied by an explicit
+   * `scopeProvided` declaration rather than by any variant's late-bound-value set. Such a key is
+   * registered onto the child scope by hand at runtime and never travels through an opener's
+   * parameter, so there is no signature to assert against — and asserting against one would fail a
+   * build that is correct. That is the same guard `scopeProvided` has always declined to offer;
+   * this type does not invent a new one for it.
+   */
+  readonly reachingOpenerKeys: readonly string[];
+};
+
 export type ComposedPackageSpec = {
   readonly packageName: string;
   readonly identifier: string;
   readonly externalKeys: readonly string[];
+  /**
+   * Keys from {@link externalKeys} whose assertion relocates to a scope boundary.
+   *
+   * Absent or empty leaves emission exactly as it was, which is what keeps output byte-identical
+   * for every composition that clears nothing.
+   */
+  readonly relocatedExternals?: readonly RelocatedExternalAssertion[];
 };
 
 export type WriteComposedManifestInput = {
@@ -95,6 +130,102 @@ const externalKeyToAssertionSuffix = (key: string): string => {
   return /^[0-9]/.test(sanitized) ? `_${sanitized}` : sanitized;
 };
 
+/**
+ * What the `AppCradle` pick may name.
+ *
+ * `keyof XExternals` when nothing relocated — byte-for-byte what this emitter has always written —
+ * and an explicit union otherwise. The literal form is not cosmetic: `Pick<T, K>` requires
+ * `K extends keyof T`, so leaving a relocated key inside `keyof XExternals` errors AT THE PICK,
+ * before any per-key assertion gets a chance to say something useful. Narrowing the pick is
+ * therefore required under any design that clears a key at all.
+ */
+const externalsPickKeys = (
+  spec: ComposedPackageSpec,
+  cap: string,
+  cradleAssertedKeys: readonly string[],
+): string =>
+  cradleAssertedKeys.length === spec.externalKeys.length
+    ? `keyof ${cap}Externals`
+    : cradleAssertedKeys.map((key) => tsPropertyAccessKey(key)).join(" | ");
+
+/**
+ * The relocated assertion: the obligation, restated where it is actually owed.
+ *
+ * Read it as "the opener's late-bound-value parameter carries this key, with a type the demanding
+ * package accepts". Three things make it the shape it is:
+ *
+ * - `Parameters<…>[0]` rather than a named alias, because the opener is reached through the cradle
+ *   and the cradle is what both halves of this file already agree on.
+ * - `extends { key: infer T }` rather than a direct index, because a variant with an EMPTY declared
+ *   set emits `() => …`, whose `Parameters<…>[0]` is `undefined` — indexing that is a compiler
+ *   error about the wrong thing, where this form is cleanly `false`.
+ * - `T extends Externals[key]`, supplied extends demanded, the same direction every other
+ *   satisfaction check in this codebase runs.
+ *
+ * It is also the only comparison in the toolchain that can be made at all: `verifyScopeRoots`
+ * type-checks a declared lbv against LOCAL demand sites, and returns early for composed units
+ * because a manifest records demand KEYS and never demand TYPES. Here both types are in scope.
+ *
+ * ### Why the failure branches are objects and not `false`
+ *
+ * A conditional type that collapses to `false` produces exactly one diagnostic — `Type 'false' does
+ * not satisfy the constraint 'true'` — for every way of being wrong. This assertion has two, and
+ * they have different fixes: the opener does not declare the key at all, or it declares it with a
+ * type the demanding package will not accept. A reader cannot tell them apart from the message, and
+ * with the cited line pointing at an `_IocExpect<…>` instantiation there is nothing else to read.
+ *
+ * So each branch fails to a literal object type naming the cause, the key, the opener and the
+ * package, and TypeScript prints that object in the diagnostic. The constraint is unchanged —
+ * anything that is not `true` still fails — and only the shape of the failure is different.
+ */
+const relocationFailureType = (
+  reason: string,
+  key: string,
+  openerKey: string,
+  packageName: string,
+): string =>
+  `{ iocError: ${JSON.stringify(reason)}; key: ${JSON.stringify(key)}; opener: ${JSON.stringify(openerKey)}; package: ${JSON.stringify(packageName)} }`;
+
+const buildRelocatedAssertionLines = (
+  spec: ComposedPackageSpec,
+  cap: string,
+  relocated: readonly RelocatedExternalAssertion[],
+): string[] => {
+  const lines: string[] = [];
+
+  for (const entry of relocated) {
+    const keySuffix = externalKeyToAssertionSuffix(entry.key);
+    const keyAccess = tsPropertyAccessKey(entry.key);
+
+    lines.push(
+      `// ${JSON.stringify(entry.key)} is carried at the scope boundary, not by the root container —`,
+      `// each assertion below reads the declared late-bound values of one opener that resolves it.`,
+    );
+
+    for (const openerKey of entry.reachingOpenerKeys) {
+      const alias = `_${cap}_${keySuffix}_at_${externalKeyToAssertionSuffix(openerKey)}`;
+      const notDeclared = relocationFailureType(
+        "this scope opener does not declare the key",
+        entry.key,
+        openerKey,
+        spec.packageName,
+      );
+      const wrongType = relocationFailureType(
+        "the declared late-bound value is not assignable to the demanded type",
+        entry.key,
+        openerKey,
+        spec.packageName,
+      );
+      lines.push(
+        `type ${alias} = Parameters<AppCradle[${tsPropertyAccessKey(openerKey)}]>[0] extends { ${keyAccess}: infer T } ? (T extends ${cap}Externals[${keyAccess}] ? true : ${wrongType}) : ${notDeclared};`,
+        `type ${alias}Assert = _IocExpect<${alias}>;`,
+      );
+    }
+  }
+
+  return lines;
+};
+
 const buildExternalsAssertionLines = (
   specs: readonly ComposedPackageSpec[],
 ): string[] => {
@@ -106,14 +237,23 @@ const buildExternalsAssertionLines = (
       continue;
     }
 
-    const cap = capitalizeIdentifier(spec.identifier);
-    const pickAlias = `_${cap}ExternalsPick`;
-    lines.push(
-      `// If any assertion below is \`false\`, run \`ioc validate\` for a detailed per-key explanation.`,
-      `type ${pickAlias} = Pick<${appCradle}, keyof ${cap}Externals>;`,
+    const relocated = spec.relocatedExternals ?? [];
+    const relocatedKeys = new Set(relocated.map((entry) => entry.key));
+    const cradleAssertedKeys = spec.externalKeys.filter(
+      (key) => !relocatedKeys.has(key),
     );
 
-    for (const externalKey of spec.externalKeys) {
+    const cap = capitalizeIdentifier(spec.identifier);
+    const pickAlias = `_${cap}ExternalsPick`;
+
+    if (cradleAssertedKeys.length > 0) {
+      lines.push(
+        `// If any assertion below is \`false\`, run \`ioc validate\` for a detailed per-key explanation.`,
+        `type ${pickAlias} = Pick<${appCradle}, ${externalsPickKeys(spec, cap, cradleAssertedKeys)}>;`,
+      );
+    }
+
+    for (const externalKey of cradleAssertedKeys) {
       const suffix = externalKeyToAssertionSuffix(externalKey);
       const keyAccess = tsPropertyAccessKey(externalKey);
       const satisfied = `_${cap}_${suffix}`;
@@ -122,6 +262,8 @@ const buildExternalsAssertionLines = (
         `type ${satisfied}Assert = _IocExpect<${satisfied}>;`,
       );
     }
+
+    lines.push(...buildRelocatedAssertionLines(spec, cap, relocated));
   }
 
   return lines;

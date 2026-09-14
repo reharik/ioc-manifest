@@ -18,7 +18,10 @@ import { checkExternalsSatisfaction, CHECKER_UNAVAILABLE_CAVEAT } from "./checks
 import { checkGroupConsistency } from "./checks/groups.js";
 import { checkSameKeyConflicts } from "./checks/sameKeyConflict.js";
 import { checkSchemaVersions } from "./checks/schemaVersion.js";
-import { buildCompositionSlice } from "./compositionContext.js";
+import {
+  buildCompositionSlice,
+  withPendingComposedArtifact,
+} from "./compositionContext.js";
 import { runCompositionChecks } from "./runCompositionChecks.js";
 
 describe("validate checks", () => {
@@ -923,6 +926,71 @@ describe("buildCompositionSlice", () => {
         { contractName: "ConsoleLogger", registrationKey: "consoleLogger" },
       ]);
       assert.deepEqual([...slice.cradleKeys], ["s3"]);
+    });
+  });
+});
+
+/**
+ * The seam the composed view's load-order move turns on.
+ *
+ * `ioc-composed.ts` is built FROM the composed view, so the view necessarily exists before that
+ * file does. This helper is the single step that closes the gap, and everything downstream — the
+ * program the suite reasons over — depends on it having run.
+ */
+describe("withPendingComposedArtifact", () => {
+  describe("When the loaded context carries only the manifest and types", () => {
+    it("should add this run's composed source without disturbing the others", () => {
+      const base = {
+        ...compositionContextFixture([parsedSlice({ packageLabel: "local" })]),
+        pendingArtifacts: new Map([
+          ["/pkg/generated/ioc-manifest.ts", "manifest source"],
+          ["/pkg/generated/ioc-registry.types.ts", "types source"],
+        ]),
+      };
+
+      const withComposed = withPendingComposedArtifact(
+        base,
+        "/pkg/generated/ioc-composed.ts",
+        "composed source",
+      );
+
+      assert.equal(
+        withComposed.pendingArtifacts?.get("/pkg/generated/ioc-composed.ts"),
+        "composed source",
+      );
+      assert.equal(
+        withComposed.pendingArtifacts?.get("/pkg/generated/ioc-manifest.ts"),
+        "manifest source",
+      );
+      assert.equal(withComposed.pendingArtifacts?.size, 3);
+    });
+
+    it("should leave the context it was given untouched", () => {
+      const base = {
+        ...compositionContextFixture([parsedSlice({ packageLabel: "local" })]),
+        pendingArtifacts: new Map([["/pkg/generated/ioc-manifest.ts", "m"]]),
+      };
+
+      withPendingComposedArtifact(base, "/pkg/generated/ioc-composed.ts", "c");
+
+      // Emission holds the pre-composed view; finding it mutated underneath would mean the source
+      // it wrote and the picture the suite judged had quietly diverged.
+      assert.equal(base.pendingArtifacts.size, 1);
+    });
+  });
+
+  describe("When the loaded context has no pending artifacts at all", () => {
+    it("should still carry the composed source", () => {
+      const withComposed = withPendingComposedArtifact(
+        compositionContextFixture([parsedSlice({ packageLabel: "local" })]),
+        "/pkg/generated/ioc-composed.ts",
+        "composed source",
+      );
+
+      assert.deepEqual(
+        [...(withComposed.pendingArtifacts ?? new Map())],
+        [["/pkg/generated/ioc-composed.ts", "composed source"]],
+      );
     });
   });
 });

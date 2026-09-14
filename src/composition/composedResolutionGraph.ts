@@ -43,7 +43,6 @@ import {
   mergedRowsForContract,
   composedContractNamesSorted,
 } from "./checks/composedContractRows.js";
-import type { CompositionProgramContext } from "./compositionProgram.js";
 import { isLocalSlice, sliceLabel } from "./sliceLabel.js";
 import type {
   CompositionContext,
@@ -289,14 +288,14 @@ const sourceFileAt = (
  */
 const variantDependencyKeys = (
   ctx: CompositionContext,
-  programCtx: CompositionProgramContext | undefined,
+  program: ts.Program | undefined,
   variant: ParsedScopeRootVariant,
 ): readonly string[] | undefined => {
-  if (programCtx === undefined) {
+  if (program === undefined) {
     return undefined;
   }
   const sourceFile = sourceFileAt(
-    programCtx.program,
+    program,
     resolveFactorySourceAbsPath(
       variant.modulePath,
       ctx.projectRoot,
@@ -330,7 +329,7 @@ const variantDependencyKeys = (
 
 const variantsFromSlices = (
   ctx: CompositionContext,
-  programCtx: CompositionProgramContext | undefined,
+  program: ts.Program | undefined,
 ): ComposedGraphVariant[] => {
   const variants: ComposedGraphVariant[] = [];
   ctx.slices.forEach((slice, sliceIndex) => {
@@ -349,7 +348,7 @@ const variantsFromSlices = (
           // Only a LOCAL variant's source is in this program. A composed package's is not, and
           // pretending otherwise would read `undefined` as "demands nothing" for every one of them.
           dependencyKeys: isLocalSlice(slice)
-            ? variantDependencyKeys(ctx, programCtx, variant)
+            ? variantDependencyKeys(ctx, program, variant)
             : undefined,
         });
       }
@@ -489,12 +488,12 @@ const walkFrom = (
  */
 export const buildComposedResolutionGraph = (
   ctx: CompositionContext,
-  programCtx: CompositionProgramContext | undefined,
+  program: ts.Program | undefined,
 ): ComposedResolutionGraph => {
   const unitByRegistrationKey = unitsFromSlices(ctx);
   const registrationKeyByAccessKey = accessKeysFromSlices(ctx);
   const memberKeysByGroupKey = groupMembersFromSlices(ctx);
-  const variants = variantsFromSlices(ctx, programCtx);
+  const variants = variantsFromSlices(ctx, program);
   const indexes = {
     unitByRegistrationKey,
     registrationKeyByAccessKey,
@@ -589,8 +588,13 @@ export type ScopeVariantReach = {
  * - `scope-only` — every path to it crosses a scope boundary. Not a composition-level obligation at
  *   all; it propagates to the variants that reach it and is settled there.
  * - `mixed` — both. The root path is still unsatisfiable, and the scope paths do not launder it.
- * - `unreachable` — nothing in this composition resolves through it. No obligation: a consumer that
- *   composes a package and never resolves the part of it that demands the key owes nothing.
+ * - `unreachable` — nothing in this composition resolves through it. Reported as an ordinary
+ *   unsatisfied external all the same: the key has no scope boundary to relocate its emitted
+ *   assertion to, so clearing it here would pass generation while `tsc` over the run's own
+ *   `ioc-composed.ts` failed. A package whose key genuinely is not a container obligation says so
+ *   itself, with `scopeProvided`, and the key never becomes an external at all. See the fall-through
+ *   in `checks/externals.ts` for why an owner's declaration and a consumer-side inference are not
+ *   interchangeable.
  * - `unknown` — the walk is incomplete, so none of the above is a verdict. Callers fall back.
  */
 export type ExternalKeyReachability =

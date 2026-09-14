@@ -109,10 +109,9 @@ export const iocManifest = {
 
 export const IOC_SCOPE_PROVIDED_KEYS = ["viewerId"] as const;
 
-/* Optional manifest data this file carries, and how completely. A composing app reads it to tell
-   "this unit records none of this" apart from "this file could not record it". */
+/* Optional manifest data this file is known to carry in full. A composing app reads it to tell
+   "this unit records none of this" apart from "this manifest predates the field". */
 export const IOC_MANIFEST_FEATURES = [
   "dependencyKeys",
-  "dependencyKeysComplete",
   "lifetimeSource",
 ] as const;

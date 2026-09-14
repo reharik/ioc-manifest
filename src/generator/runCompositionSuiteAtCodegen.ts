@@ -42,14 +42,11 @@
 import type { IocConfig } from "../config/iocConfig.js";
 import { withOffenderCount } from "../diagnostics/offenderCount.js";
 import {
-  loadCompositionContext,
-  type PendingLocalArtifacts,
-} from "../composition/compositionContext.js";
-import {
   buildValidationReport,
   formatValidationIssuesText,
 } from "../composition/compositionReport.js";
 import { runCompositionChecks } from "../composition/runCompositionChecks.js";
+import type { ComposedResolutionGraph } from "../composition/composedResolutionGraph.js";
 import {
   applyFreshnessTaint,
   assessFreshness,
@@ -60,18 +57,38 @@ import {
   isStale,
   isUnknown,
 } from "../diagnostics/freshness.js";
-import type { ValidationIssue } from "../composition/types.js";
-import type { IocTsconfigContext } from "./iocProgramContext.js";
+import type {
+  CompositionContext,
+  ValidationIssue,
+} from "../composition/types.js";
 import { timePhaseAsync } from "../diagnostics/phaseTiming.js";
 
 export type CompositionSuiteAtCodegenInput = {
   readonly projectRoot: string;
   readonly configPath: string;
   readonly config: IocConfig;
-  /** Discovery targets — the program's root set, so it is the app's build and not a synthetic one. */
-  readonly sourceFiles: readonly string[];
-  readonly pendingLocalArtifacts: PendingLocalArtifacts;
-  readonly tsconfig: IocTsconfigContext;
+  /**
+   * The composed view to judge, already loaded.
+   *
+   * This module used to load it itself, which made the composed view come into existence AFTER the
+   * composed source was built — and therefore unavailable to the thing that builds it. Emission now
+   * reads the same view, so the caller loads it once and hands it here. One load, one view: the
+   * source `ioc-composed.ts` is written from and the picture the suite judges cannot drift apart,
+   * because they are the same object.
+   *
+   * The caller is responsible for putting this run's `ioc-composed.ts` into
+   * {@link CompositionContext.pendingArtifacts} before calling — see `withPendingComposedArtifact`.
+   */
+  readonly context: CompositionContext;
+  /**
+   * The composed resolution graph the caller already built, when it has one.
+   *
+   * App-mode generation always does: `ioc-composed.ts` is emitted from this graph's classification,
+   * so the graph exists before the suite runs. Passing it in rather than rebuilding is not an
+   * optimisation — it is what stops the emitted assertions and the reported verdicts from being two
+   * independent opinions about the same composition.
+   */
+  readonly graph?: ComposedResolutionGraph;
 };
 
 export const COMPOSITION_SUITE_FAILURE_HEADER =
@@ -123,32 +140,12 @@ const formatFailure = (
 export const runCompositionSuiteAtCodegen = async (
   input: CompositionSuiteAtCodegenInput,
 ): Promise<readonly ValidationIssue[]> => {
-  const loaded = await timePhaseAsync("composition: context load", () =>
-    loadCompositionContext({
-      projectRoot: input.projectRoot,
-      configPath: input.configPath,
-      config: input.config,
-      pendingLocalArtifacts: input.pendingLocalArtifacts,
-      sourceFiles: input.sourceFiles,
-      tsconfig: input.tsconfig,
-    }),
-  );
-
-  if (!loaded.ok) {
-    throw new Error(
-      [
-        `[app-config] ${loaded.message}`,
-        ...(loaded.detail !== undefined ? [`  ${loaded.detail}`] : []),
-      ].join("\n"),
-    );
-  }
-
   const freshness = await timePhaseAsync("composition: freshness", () =>
     assessFreshness({
       projectRoot: input.projectRoot,
       configPath: input.configPath,
       config: input.config,
-      slices: loaded.context.slices,
+      slices: input.context.slices,
       includeLocal: false,
     }),
   );
@@ -160,7 +157,7 @@ export const runCompositionSuiteAtCodegen = async (
   }
 
   const issues = applyFreshnessTaint(
-    runCompositionChecks(input.config, loaded.context),
+    runCompositionChecks(input.config, input.context, input.graph),
     freshness,
   );
   const report = buildValidationReport(issues);

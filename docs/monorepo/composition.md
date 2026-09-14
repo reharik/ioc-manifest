@@ -153,8 +153,8 @@ The three verdicts above all assume the key is something the ROOT container can 
 So before asking whether a key is supplied, composition asks **when the obligation comes due**, by finding every resolution path that reaches it:
 
 - **Some path reaches it from a composition root.** An ordinary composition-level external, judged exactly as above.
-- **Every path crosses a scope boundary.** A *scope-reachable external*: not a composition-level obligation at all. The obligation propagates outward to the [scope root](/concepts/scope-roots) variants that can actually reach it, and is settled there — by that variant's declared late-bound-value set, or by naming the key in [`scopeProvided`](/config/reference#scopeprovided). A variant that reaches it and carries it is satisfied and prints nothing.
-- **No path reaches it.** No obligation. A worker that composes the package and never resolves through the part of it that demands the key owes nothing, and composes clean with no diagnostic.
+- **Every path crosses a scope boundary.** A *scope-reachable external*: not a composition-level obligation at all. The obligation propagates outward to the [scope root](/concepts/scope-roots) variants that can actually reach it, and is settled there — by that variant's declared late-bound-value set. A variant that reaches it and carries it is satisfied and prints nothing.
+- **No path reaches it.** Reported as an ordinary unsatisfied external, the same as before — the walk does not see enough of an app's resolutions to draw the opposite conclusion safely. See [What reachability can see](#what-reachability-can-see).
 
 Propagation is **per variant**, never per root contract. Variants of one contract declare different late-bound-value sets, so they have different resolution subtrees and reach different keys; asking every variant of a root for a value only one of them resolves would demand declarations nobody consumes.
 
@@ -162,9 +162,47 @@ Propagation is **per variant**, never per root contract. Variants of one contrac
 
 Classification is automatic: no config key, and nothing to declare in the package that owns the factory. It is computed from data the manifests already carry, so a package that has regenerated needs no edit for its consumers to benefit.
 
+### The assertion moves with the obligation
+
+Clearing a key from the `[externals]` report is only half the job. `ioc-composed.ts` emits a compile-time assertion per external key, and for a scope-reachable key the old one — "this key is in `AppCradle`" — can never be true, because a value bound at scope-open never enters the root cradle. Left alone it would fail `tsc` over the app's own generated output on a run `ioc generate` had just passed.
+
+So the assertion **relocates** rather than vanishing. For each opener that reaches the key, the emitted file asserts that the opener's declared late-bound values carry it, with a type the demanding package accepts:
+
+```ts
+type _Infra_logContext_at_openAuthenticatedReadScope =
+  Parameters<AppCradle["openAuthenticatedReadScope"]>[0] extends {
+    logContext: infer T;
+  }
+    ? T extends InfraExternals["logContext"]
+      ? true
+      : { iocError: "the declared late-bound value is not assignable to the demanded type"; key: "logContext"; opener: "openAuthenticatedReadScope"; package: "@packages/infrastructure" }
+    : { iocError: "this scope opener does not declare the key"; key: "logContext"; opener: "openAuthenticatedReadScope"; package: "@packages/infrastructure" };
+```
+
+This is a **new** check, not a restored one. `verifyScopeRoots` compares a declared late-bound value against the types of local demand sites, and has nothing to compare against for a demand inside a composed package — a manifest records demand *keys* and never demand *types*. Here both types are in scope, so a variant declaring `logContext: string` against a demanded `Record<string, unknown>` is caught for the first time.
+
+The failure branches are object types rather than `false` so the diagnostic says which of the two ways of being wrong this is, and for which key, opener and package. A conditional that collapses to `false` produces `Type 'false' does not satisfy the constraint 'true'` for every cause, with nothing on the cited line but an `_IocExpect<…>` instantiation.
+
 ::: tip When classification is withheld
 A walk is only as good as the demand data under it. If any composed manifest does not claim `dependencyKeysComplete` — some factory in it takes its dependencies as a plain `(deps: Deps)` parameter, a shape the keys cannot be read from — or if a scope-root variant's own demand set cannot be read, reachability is not a verdict and every external is judged as root-resolvable, exactly as it was before. Regenerate the packages the `[externals]` report names to get the sharper answer.
 :::
+
+## What reachability can see
+
+Reachability is computed over **registered units**. The walk starts from the registrations in the app's own manifest and follows each unit's recorded `dependencyKeys` through the composed set.
+
+It does not see your composition root. `bootstrap.ts` is not a discovery target, has no manifest row, and its `container.resolve("uploadService")` calls are recorded nowhere. **A library unit your bootstrap resolves directly is invisible to the walk** — and so is everything only that unit demands.
+
+In the example app on this page, the app registers `config` and `consoleLogger`, and its bootstrap resolves `uploadService`, `storage`, `archiveStorage`, `loggers`, `writeServices` and `requestTracingLogger` straight from the container. Not one of those six is reachable from a registered unit, so as far as the walk is concerned none of them participates in the graph at all.
+
+This is why a key nothing reaches is still reported as unsatisfied. "No recorded path reaches it" is a much weaker statement than "your app never resolves it", and treating the first as the second would trade a build error for a production one: `ioc validate` would pass while the first `container.resolve` threw `Could not resolve '…'`.
+
+Two consequences worth holding on to:
+
+- **Reachability only ever narrows an obligation onto something it can still check.** A scope-reachable key is not dismissed — it moves onto the openers that reach it, where a compile-time assertion still holds it. Nothing is cleared into thin air on the strength of the walk alone.
+- **A key that genuinely is not a container obligation is declared, not inferred.** That declaration belongs to the package that owns the factory: [`scopeProvided`](/config/reference#scopeprovided) removes the key from that package's `IocExternals` so no consumer is ever asked for it. A statement by the party that knows carries weight an inference drawn from a partial graph does not.
+
+The same limit applies to every static check here — lifetime-inversion ranking, scope-root subtree walks, externals exclusion. A unit that reaches around the container (importing a built container and calling `.resolve()` rather than declaring a dependency) is invisible to all of them, and cannot be detected: aliasing, re-export, `globalThis` and dynamic `import()` each defeat any check that tried. Declare your dependencies and the analysis is accurate; reach around the container and it is blind, quietly.
 
 ## Resolving same-key conflicts
 

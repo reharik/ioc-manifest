@@ -514,13 +514,26 @@ export const checkExternalsSatisfaction = (
                 scopeProvidedKeys,
               );
 
-        // Zero paths, zero obligations — and that is a PASS, not a skip. A consumer that composes a
-        // package and never resolves the part of it that demands this key owes nothing, and saying
-        // so with silence is the whole point: there is nothing for it to fix.
-        if (reachability.kind === "unreachable") {
-          continue;
-        }
-
+        // `unreachable` deliberately falls through to the ordinary unsatisfied error below.
+        //
+        // It is tempting to clear it — no recorded path reaches the key, so nothing will ever ask
+        // for it — and this has now been tried twice. What defeats it is not an exotic shape but
+        // the ordinary one: the walk's root seeds are the app's REGISTERED units, while an app's
+        // real resolution roots are its composition root's own `container.resolve(...)` calls, and
+        // those are recorded nowhere. `bootstrap.ts` is not a discovery target and has no manifest
+        // row. A library unit the bootstrap resolves directly is therefore "unreachable" to this
+        // walk while being the very thing the app runs on.
+        //
+        // Reproduced in `examples/multi-package`: give `buildUploadService` a new unsatisfied
+        // external, regenerate the library, and `ioc validate` in the app reports "no issues found"
+        // while the app throws `Could not resolve 'auditSink'` at the first resolve. No rest-spread,
+        // no dynamic resolution, no container closure — just a composition root doing what the docs
+        // show. Clearing on that inference trades a build error for a production one.
+        //
+        // Making it sound needs the resolution ROOTS modelled, not more falsifiers closed: either
+        // the app declares its entry points, or the tool reads them off the composition root. Until
+        // one of those exists, a key that genuinely is not a container obligation is said so by the
+        // package that owns it, with `scopeProvided` — a declaration by the party that knows.
         if (reachability.kind === "scope-only") {
           const issue = buildScopeReachableIssue(
             slice,

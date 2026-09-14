@@ -411,6 +411,59 @@ describe("app-mode generation runs the composition suite", () => {
     });
   });
 
+  describe("When the composed view is loaded before the composed source is built", () => {
+    /**
+     * The ordering the suite runs under changed: the composed view is now loaded in
+     * `generateManifest`, BEFORE `ioc-composed.ts` is built, so that emission and judgement read
+     * one view rather than two readings of the same manifests. What must survive the move is that
+     * the run is decided by THIS run's composed source and never by the copy on disk.
+     *
+     * Corrupting the on-disk file is how that is made observable: if anything in the pipeline read
+     * `ioc-composed.ts` from disk rather than from the pending overlay, this fixture would fail or
+     * report against garbage. It regenerates cleanly instead, and the file is replaced.
+     */
+    it("should ignore a stale ioc-composed.ts on disk and rewrite it", async () => {
+      const fixture = buildAppFixture({
+        libraries: [healthyLibrary()],
+        factories: { "buildClock.ts": APP_CLOCK, "buildLogger.ts": APP_LOGGER },
+      });
+
+      await generate(fixture);
+      const composedPath = path.join(fixture.generatedDir, "ioc-composed.ts");
+      const fresh = readFileSync(composedPath, "utf8");
+
+      writeFileSync(
+        composedPath,
+        "this is not TypeScript at all ][ type _Broken = AlsoMissing;\n",
+      );
+
+      await generate(fixture);
+
+      assert.equal(readFileSync(composedPath, "utf8"), fresh);
+    });
+
+    it("should generate on a first run with no ioc-composed.ts present", async () => {
+      const fixture = buildAppFixture({
+        libraries: [healthyLibrary()],
+        factories: { "buildClock.ts": APP_CLOCK, "buildLogger.ts": APP_LOGGER },
+      });
+
+      assert.equal(
+        existsSync(path.join(fixture.generatedDir, "ioc-composed.ts")),
+        false,
+        "precondition: the first run has no composed file to fall back on",
+      );
+
+      await generate(fixture);
+
+      assert.deepEqual(generatedFiles(fixture), [
+        "ioc-composed.ts",
+        "ioc-manifest.ts",
+        "ioc-registry.types.ts",
+      ]);
+    });
+  });
+
   describe("When a composed registry file does not compile", () => {
     it("should fail on the integrity error and report the comparisons it skipped", async () => {
       const fixture = buildAppFixture({

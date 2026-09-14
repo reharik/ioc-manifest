@@ -86,6 +86,12 @@ import { validateNonEmptyGroupsAtCodegen } from "./validateNonEmptyGroupsAtCodeg
 import { validateContractSlotOccupancyAtCodegen } from "./validateContractSlotOccupancyAtCodegen.js";
 import { runCompositionSuiteAtCodegen } from "./runCompositionSuiteAtCodegen.js";
 import {
+  loadCompositionContext,
+  withPendingComposedArtifact,
+} from "../composition/compositionContext.js";
+import { buildComposedResolutionGraph } from "../composition/composedResolutionGraph.js";
+import { relocatedExternalsBySourceId } from "./relocatedExternals.js";
+import {
   buildComposedGroupDemandIndex,
   mergeWithLocalPrecedence,
 } from "./composedGroupMembership.js";
@@ -676,20 +682,78 @@ const runGeneration = async (
         configPath,
         tsconfigContext.customConditions,
       );
+      // The composed view, loaded ONCE and before the composed source is built.
+      //
+      // It used to be loaded inside `runCompositionSuiteAtCodegen`, which put it out of reach of
+      // emission — the composed source was written from a separate reading of the same manifests.
+      // Emission and judgement now read one object, so they cannot describe different compositions.
+      const compositionLoad = await timePhaseAsync(
+        "composition: context load",
+        () =>
+          loadCompositionContext({
+            projectRoot: resolvedProjectRoot,
+            configPath,
+            config,
+            // No `composedPath`/`composedSource` yet — that file is what this view is used to build.
+            pendingLocalArtifacts: {
+              manifestPath: manifestOutPath,
+              manifestSource: artifactSources.mainSource,
+              typesPath: artifactSources.typesPath,
+              typesSource: artifactSources.typesSource,
+            },
+            sourceFiles: files,
+            tsconfig: tsconfigContext,
+          }),
+      );
+
+      if (!compositionLoad.ok) {
+        throw new Error(
+          [
+            `[app-config] ${compositionLoad.message}`,
+            ...(compositionLoad.detail !== undefined
+              ? [`  ${compositionLoad.detail}`]
+              : []),
+          ].join("\n"),
+        );
+      }
+
+      // The composed graph, built ONCE for this run and shared with the suite below.
+      //
+      // It reads the app's own program — already built, already holding every scope-root source —
+      // rather than standing up a second one. The suite would otherwise build its own, and emission
+      // and judgement would each be reasoning about their own copy of the composition.
+      const composedGraph = timePhase("composition: resolution graph", () =>
+        buildComposedResolutionGraph(compositionLoad.context, program),
+      );
+
+      const relocatedBySourceId = relocatedExternalsBySourceId({
+        context: compositionLoad.context,
+        graph: composedGraph,
+        scopeProvidedKeys: config.scopeProvided ?? [],
+      });
+
       const composedPackages = loadComposedPackageSpecs(
         resolvedProjectRoot,
         config.composedManifests!,
         tsconfigContext.customConditions,
-      );
+      ).map((spec) => {
+        const relocated = relocatedBySourceId.get(spec.packageName);
+        return relocated === undefined || relocated.length === 0
+          ? spec
+          : { ...spec, relocatedExternals: relocated };
+      });
       const composedOverrides =
         buildComposedRegistrationOverridesFromConfig(config);
-      composedOutPath = path.join(generatedDir, "ioc-composed.ts");
+      // A `const` alongside the outer `let`: the closure below defeats narrowing on a mutable
+      // binding, and the outer one exists only so the failure path can clean up after itself.
+      const composedPath = path.join(generatedDir, "ioc-composed.ts");
+      composedOutPath = composedPath;
       const composedSource = buildComposedManifestSource({
         generatedDir,
         composedPackages,
         overrides: composedOverrides,
       });
-      filesToWrite.push({ path: composedOutPath, contents: composedSource });
+      filesToWrite.push({ path: composedPath, contents: composedSource });
 
       // The composition suite — the same checks `ioc validate` runs, over the same program. Here,
       // and not earlier: every input it judges is now final (election, groups, demand/supply,
@@ -702,16 +766,17 @@ const runGeneration = async (
           projectRoot: resolvedProjectRoot,
           configPath,
           config,
-          sourceFiles: files,
-          tsconfig: tsconfigContext,
-          pendingLocalArtifacts: {
-            manifestPath: manifestOutPath,
-            manifestSource: artifactSources.mainSource,
-            typesPath: artifactSources.typesPath,
-            typesSource: artifactSources.typesSource,
-            composedPath: composedOutPath,
+          // This run's composed source joins the overlay here, so the suite's program reads the
+          // file this run would write rather than the previous run's copy on disk.
+          context: withPendingComposedArtifact(
+            compositionLoad.context,
+            composedPath,
             composedSource,
-          },
+          ),
+          // The SAME graph the assertions above were emitted from. Handing it over rather than
+          // letting the suite build its own is what makes "what was written" and "what was judged"
+          // the same claim rather than two claims that happen to agree.
+          graph: composedGraph,
         }),
       );
     }

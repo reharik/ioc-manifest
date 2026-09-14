@@ -23,7 +23,10 @@ import { checkRegistryIntegrity } from "./checks/registryIntegrity.js";
 import { checkSameKeyConflicts } from "./checks/sameKeyConflict.js";
 import { checkSchemaVersions } from "./checks/schemaVersion.js";
 import { checkSlotOccupancy } from "./checks/slotOccupancy.js";
-import { buildComposedResolutionGraph } from "./composedResolutionGraph.js";
+import {
+  buildComposedResolutionGraph,
+  type ComposedResolutionGraph,
+} from "./composedResolutionGraph.js";
 import { createCompositionProgram } from "./compositionProgram.js";
 import { timePhase } from "../diagnostics/phaseTiming.js";
 import type { CompositionContext, ValidationIssue } from "./types.js";
@@ -38,6 +41,7 @@ import type { CompositionContext, ValidationIssue } from "./types.js";
 export const runCompositionChecks = (
   config: IocConfig,
   ctx: CompositionContext,
+  prebuiltGraph?: ComposedResolutionGraph,
 ): ValidationIssue[] => {
   // Built once, here, and shared: the integrity gate must adjudicate the SAME program the
   // comparisons then read types out of, or it is vouching for something else.
@@ -56,12 +60,17 @@ export const runCompositionChecks = (
     checkRegistryIntegrity(ctx, programCtx),
   );
 
-  // The composed picture as a GRAPH, built once here for the same reason the program is: a check
-  // that builds its own view of the composed set is a check that can disagree with its neighbours
-  // about the thing they are all judging.
-  const graph = timePhase("composition: resolution graph", () =>
-    buildComposedResolutionGraph(ctx, programCtx),
-  );
+  // The composed picture as a GRAPH — one per run, never one per reader.
+  //
+  // App-mode generation builds it BEFORE this point, because `ioc-composed.ts` is emitted from the
+  // same classification these checks report on, and hands it in. Two constructions would be two
+  // chances for the file that gets written and the verdict that gets printed to describe different
+  // compositions, which is the exact failure the emitted assertions exist to catch.
+  const graph =
+    prebuiltGraph ??
+    timePhase("composition: resolution graph", () =>
+      buildComposedResolutionGraph(ctx, programCtx?.program),
+    );
 
   return [
     ...checkSchemaVersions(ctx),

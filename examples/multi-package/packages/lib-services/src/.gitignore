@@ -1,3 +1,0 @@
-# Local state from the last `ioc generate` — a timestamp and an input fingerprint.
-# It changes on every run, so an unscoped dirty-tree check in CI would always fail.
-.ioc-generation-state.json

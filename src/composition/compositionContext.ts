@@ -218,6 +218,30 @@ export type PendingLocalArtifacts = {
   readonly composedSource?: string;
 };
 
+/**
+ * The same context, with this run's `ioc-composed.ts` added to the pending overlay.
+ *
+ * `ioc-composed.ts` is built FROM the composed view rather than being an input to it, so the context
+ * is necessarily loaded before that file exists. This is the one step that closes the gap: the
+ * overlay the suite's program is constructed from carries the source this run is about to write,
+ * not the previous run's copy on disk.
+ *
+ * It is a rewrap rather than a mutation because {@link CompositionContext.pendingArtifacts} is a
+ * `ReadonlyMap` and the context is shared with emission — a caller holding the pre-composed view
+ * must not find it changed underneath them.
+ */
+export const withPendingComposedArtifact = (
+  context: CompositionContext,
+  composedPath: string,
+  composedSource: string,
+): CompositionContext => ({
+  ...context,
+  pendingArtifacts: new Map([
+    ...(context.pendingArtifacts ?? new Map<string, string>()),
+    [composedPath, composedSource],
+  ]),
+});
+
 export type LoadCompositionContextInput = {
   readonly projectRoot: string;
   readonly configPath: string;
