@@ -154,7 +154,8 @@ So before asking whether a key is supplied, composition asks **when the obligati
 
 - **Some path reaches it from a composition root.** An ordinary composition-level external, judged exactly as above.
 - **Every path crosses a scope boundary.** A *scope-reachable external*: not a composition-level obligation at all. The obligation propagates outward to the [scope root](/concepts/scope-roots) variants that can actually reach it, and is settled there — by that variant's declared late-bound-value set. A variant that reaches it and carries it is satisfied and prints nothing.
-- **No path reaches it.** Reported as an ordinary unsatisfied external, the same as before — the walk does not see enough of an app's resolutions to draw the opposite conclusion safely. See [What reachability can see](#what-reachability-can-see).
+- **No path reaches it, and some factory demanding it is root-resolvable.** Reported as an ordinary unsatisfied external, the same as before — the walk does not see enough of an app's resolutions to draw the opposite conclusion safely. The report names the demander that blocked the clearance. See [What reachability can see](#what-reachability-can-see).
+- **No path reaches it, and every factory demanding it is scoped.** Cleared: no obligation, no diagnostic, and the key leaves the emitted assertion block entirely. This is the one shape where "nothing reaches it" is safe to act on, and [What reachability can see](#what-reachability-can-see) explains why.
 
 Propagation is **per variant**, never per root contract. Variants of one contract declare different late-bound-value sets, so they have different resolution subtrees and reach different keys; asking every variant of a root for a value only one of them resolves would demand declarations nobody consumes.
 
@@ -197,10 +198,20 @@ In the example app on this page, the app registers `config` and `consoleLogger`,
 
 This is why a key nothing reaches is still reported as unsatisfied. "No recorded path reaches it" is a much weaker statement than "your app never resolves it", and treating the first as the second would trade a build error for a production one: `ioc validate` would pass while the first `container.resolve` threw `Could not resolve '…'`.
 
+### The one case where nothing reaching it is enough
+
+There is a single shape where the blind spot above cannot apply: **every factory demanding the key is scoped**.
+
+A resolve the walk cannot see is a resolve against the **root** container — that is what a composition root has. And a root resolve cannot reach a scoped factory; it fails at runtime whatever the walk saw. So an unrecorded bootstrap resolve cannot be hiding a path to a key only scoped factories demand, and the unmodelled roots stop mattering for that key. It is cleared: no obligation, no diagnostic, and no emitted assertion.
+
+The mixed case needs no separate rule. If *any* demanding factory is root-resolvable the general limit applies and the key is not cleared, whether or not a scoped factory demands it too.
+
+The scoped-ness read here is the one the demanding package's **manifest records**, never one inferred from its sources — a composing app cannot see another package's base classes. That matters in one specific way: a package whose `ioc.config` declares no [`lifetimeMarkers`](/config/reference#lifetimemarkers) block generates `lifetime: "singleton"` rows even for classes extending a scope lifecycle marker, because without the block the marker is inert. Such a demander blocks the clearance, correctly — and the report says so in as many words, naming the package and the missing block, rather than leaving an unsatisfied external with no visible cause.
+
 Two consequences worth holding on to:
 
 - **Reachability only ever narrows an obligation onto something it can still check.** A scope-reachable key is not dismissed — it moves onto the openers that reach it, where a compile-time assertion still holds it. Nothing is cleared into thin air on the strength of the walk alone.
-- **A key that genuinely is not a container obligation is declared, not inferred.** That declaration belongs to the package that owns the factory: [`scopeProvided`](/config/reference#scopeprovided) removes the key from that package's `IocExternals` so no consumer is ever asked for it. A statement by the party that knows carries weight an inference drawn from a partial graph does not.
+- **A key that genuinely is not a container obligation is declared, not inferred** — outside the scoped-only case above, where the inference is closed rather than merely plausible. That declaration belongs to the package that owns the factory: [`scopeProvided`](/config/reference#scopeprovided) removes the key from that package's `IocExternals` so no consumer is ever asked for it. A statement by the party that knows carries weight an inference drawn from a partial graph does not.
 
 The same limit applies to every static check here — lifetime-inversion ranking, scope-root subtree walks, externals exclusion. A unit that reaches around the container (importing a built container and calling `.resolve()` rather than declaring a dependency) is invisible to all of them, and cannot be detected: aliasing, re-export, `globalThis` and dynamic `import()` each defeat any check that tried. Declare your dependencies and the analysis is accurate; reach around the container and it is blind, quietly.
 

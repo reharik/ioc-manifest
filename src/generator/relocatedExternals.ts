@@ -22,9 +22,15 @@
  * list: the value is registered onto the child scope by hand and never travels through an opener's
  * parameter, so there is no signature to assert against.
  *
- * `unreachable` does not relocate, because the externals check does not clear it. That
- * classification is computed and deliberately not acted on; the fall-through in
- * `composition/checks/externals.ts` says why.
+ * An `unreachable` key — one no path reaches AND every factory demanding it is scoped — leaves the
+ * pick too, with no opener to re-assert against. It is not "relocated" in the moving sense; the
+ * obligation is gone rather than owed elsewhere. It travels through this module all the same
+ * because the emission mechanism is the same one: what makes a cleared key safe is leaving the
+ * `Pick<AppCradle, …>`, and a key the check clears while the pick still names it is exactly the
+ * green-generate/red-tsc split this module exists to prevent.
+ *
+ * `unreachable-blocked` does NOT leave the pick, because the externals check does not clear it —
+ * the fall-through in `composition/checks/externals.ts` says why.
  */
 import type {
   ComposedResolutionGraph,
@@ -94,9 +100,23 @@ export const relocatedExternalsBySourceId = (
         scopeProvided,
       );
 
-      // `unreachable` is NOT relocated: the externals check reports it as an ordinary unsatisfied
-      // external, so the assertion must keep demanding it. See the fall-through in
-      // `composition/checks/externals.ts` for why that classification is not acted on.
+      // A cleared key: no assertion, no opener, and out of the pick. The externals check reports
+      // nothing for it, so an assertion left behind here would fail `tsc` over an artifact this
+      // very run declared clean.
+      if (reachability.kind === "unreachable") {
+        const cleared = bySourceId.get(slice.sourceId) ?? [];
+        cleared.push({
+          key: externalKey,
+          reachingOpenerKeys: [],
+          reason: "unreachable",
+        });
+        bySourceId.set(slice.sourceId, cleared);
+        continue;
+      }
+
+      // `unreachable-blocked` keeps its assertion: the externals check reports it as an ordinary
+      // unsatisfied external, so the emitted artifact must keep demanding it. See the fall-through
+      // in `composition/checks/externals.ts` for why that classification is not acted on.
       if (reachability.kind !== "scope-only") {
         continue;
       }

@@ -83,6 +83,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing but an `_IocExpect<…>` instantiation. Compositions that clear nothing emit a byte-identical
   `ioc-composed.ts`.
 
+- **An external demanded only by scoped factories, that no path reaches, is now cleared.** This is
+  the third time the unreachable rule has moved in this release cycle, so the record is worth being
+  explicit about: it shipped, was pulled as unsound, and returns here under a restriction that makes
+  the unsoundness structurally impossible rather than merely unlikely.
+
+  What defeated the general rule is documented below under *What reachability can see*: the walk
+  seeds from registered units and cannot see a composition root, so "no recorded path reaches this
+  key" means either "the app never uses it" or "`bootstrap.ts` uses it and I cannot see that".
+  Clearing on that ambiguity traded a build error for a production one — `ioc validate` reporting no
+  issues while the first `container.resolve` threw.
+
+  That ambiguity **cannot arise when every factory demanding the key is scoped**. The resolve the
+  walk cannot see is a resolve against the ROOT container, and a root resolve cannot reach a scoped
+  factory — it fails at runtime regardless of what the walk saw. So an unrecorded bootstrap resolve
+  cannot be hiding a path to such a key, and the unmodelled root set stops mattering for it. The
+  restriction is a single test, and the mixed case collapses into it with nothing extra to write: if
+  *any* demanding factory is root-resolvable the general unsoundness applies and the key is not
+  cleared, whether or not a scoped factory also demands it.
+
+  The motivating shape is a worker that composes a shared infrastructure package for two or three of
+  its services, opens no scope, and never resolves through the package's scoped logger. Before this,
+  that worker could not generate at all — the logger's `logContext` was an obligation it had no way
+  to meet and no business meeting. It now clears with no obligation, no diagnostic, and no emitted
+  assertion. An api in the same monorepo, whose scopes *do* reach the same key, is untouched: the key
+  is scope-reachable there and keeps its relocated assertions.
+
+  When a key is **not** cleared, the report now names the demander that blocked it, with the lifetime
+  that demander records and where that lifetime came from. One case gets its own message, because it
+  is a different problem with a different fix: a package whose `ioc.config` declares no
+  `lifetimeMarkers` block generates `lifetime: "singleton"` rows even for classes extending a scope
+  lifecycle marker — without the block the marker is inert — and this rule can only read the row.
+
+  ```
+  [externals] Unsatisfied: nothing supplies "logContext", which @packages/infrastructure expects the container to already have.
+    key:       "logContext"  demanded by @packages/infrastructure
+    demanded:  Record<string, unknown>
+    No composed manifest offers this key in its IocGeneratedCradle.
+    No resolution path reaches this key, but it is not cleared: 1 of the 1 factory demanding it is resolvable from the root container, and a resolve from the app's composition root is not visible to this walk.
+      "build__ScopedLogger" in logger/scopedLogger.ts (@packages/infrastructure) — lifetime singleton BY DEFAULT — nothing in @packages/infrastructure declared one
+    A key demanded only by SCOPED factories is cleared instead: a root resolve cannot reach a scoped factory, so an unseen one cannot hide a path to the key.
+  ```
+
+  The three readings of a missing provenance stay distinct: declared singleton, singleton by default,
+  and a manifest whose generator predates `lifetimeSource` and records no provenance at all. A
+  diagnostic that reported the third as the second would send a reader to edit a config that is
+  already correct. Compositions that clear nothing emit a byte-identical `ioc-composed.ts`.
+
 ### Documented
 
 - **What reachability can see, and what it does not.** The walk starts from registered units and
@@ -97,6 +144,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   passing while the first `container.resolve` throws. A key that genuinely is not a container
   obligation is declared rather than inferred, by the package that owns the factory, with
   `scopeProvided`.
+
+  The limit is real for any key a root-resolvable factory demands, and stays. It does not reach the
+  scoped-only case above, where the walk's blindness is provably irrelevant rather than merely
+  narrow — a root resolve cannot reach a scoped factory, so there is no hidden path for the walk to
+  have missed.
 
   The same limit already governed lifetime-inversion ranking, scope-root subtree walks and externals
   exclusion; it is now written down. See

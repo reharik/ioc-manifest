@@ -145,6 +145,14 @@ const appScopeRootSource = (variants: readonly VariantSpec[]): string =>
 type FixtureOptions = {
   /** `ioc.config.scopeProvided` for the fixture app. */
   readonly scopeProvided?: readonly string[];
+  /**
+   * Leaves out the one app factory that reaches the library — the worker half of the worker/api
+   * split.
+   *
+   * Without it nothing local demands `scopedLogger`, so no path reaches `logContext` at all, and
+   * the key's fate rests entirely on the lifetime its only demander records.
+   */
+  readonly omitViewerService?: boolean;
 };
 
 const appIocConfig = (options?: FixtureOptions): string => `import { defineIocConfig } from "${iocManifestIndex}";
@@ -159,10 +167,11 @@ export default defineIocConfig({
     options?.scopeProvided === undefined
       ? ""
       : `\n  scopeProvided: ${JSON.stringify(options.scopeProvided)},`
+  }${
+    options?.omitViewerService === true
+      ? ""
+      : `\n  registrations: {\n    ViewerService: { viewerService: { lifetime: "scoped" } },\n  },`
   }
-  registrations: {
-    ViewerService: { viewerService: { lifetime: "scoped" } },
-  },
 });
 `;
 
@@ -237,10 +246,12 @@ const buildFixture = (
 
   writeFileSync(path.join(srcDir, "contracts.ts"), APP_CONTRACTS);
   writeFileSync(path.join(factoriesDir, "buildHttpServer.ts"), APP_HTTP_SERVER);
-  writeFileSync(
-    path.join(factoriesDir, "buildViewerService.ts"),
-    APP_VIEWER_SERVICE,
-  );
+  if (options?.omitViewerService !== true) {
+    writeFileSync(
+      path.join(factoriesDir, "buildViewerService.ts"),
+      APP_VIEWER_SERVICE,
+    );
+  }
   writeFileSync(
     path.join(factoriesDir, "scopeRoots.ts"),
     appScopeRootSource(variants),
@@ -437,6 +448,61 @@ describe("relocated externals in ioc-composed.ts", () => {
           `expected an assertion for ${opener}`,
         );
       }
+      assert.equal(typecheck(fixture), "");
+    });
+  });
+
+  /**
+   * The worker half of the worker/api split, with the same library both consumers compose.
+   *
+   * `LIB_MANIFEST` records `lifetime: "scoped"` on its only demander of `logContext`. A consumer
+   * that opens no scope and never resolves through the logger therefore reaches the key by no path
+   * at all — and because a root resolve cannot reach a scoped factory, an unrecorded bootstrap
+   * resolve cannot be hiding one either. The key is cleared.
+   *
+   * Compiled with a real program, because that is the half that used to break: a check that clears
+   * a key while the emitted `Pick<AppCradle, …>` still names it is a green generate and a red tsc
+   * over the same run's output.
+   */
+  describe("When no path reaches the key and its only demander is scoped", () => {
+    it("should drop the key from the cradle pick with no assertion", async () => {
+      const fixture = buildFixture([], { omitViewerService: true });
+      await generate(fixture);
+      const source = collapsed(fixture);
+
+      assert.doesNotMatch(source, /_LibInfraExternalsPick/);
+      assert.doesNotMatch(source, /_LibInfra_logContext/);
+      // The comment above a cleared key says what is true of it. "Carried at the scope boundary" is
+      // the one thing it is NOT — no scope carries it, because no scope reaches it.
+      assert.ok(
+        source.includes(
+          '// "logContext" is demanded only by scoped factories and no resolution path // reaches it, so the root container is never asked for it and there is nothing to assert.',
+        ),
+        `cleared-key comment not found in:\n${composedSource(fixture)}`,
+      );
+    });
+
+    it("should compile clean", async () => {
+      const fixture = buildFixture([], { omitViewerService: true });
+      await generate(fixture);
+      assert.equal(typecheck(fixture), "");
+    });
+
+    /**
+     * The api half, from the same library manifest: the key is reached under a scope, so it
+     * relocates to the opener exactly as before. The carve-out changes nothing here.
+     */
+    it("should still relocate the key in a consumer whose scope reaches it", async () => {
+      const fixture = buildFixture([SATISFYING_VARIANT]);
+      await generate(fixture);
+      const source = collapsed(fixture);
+
+      assert.match(source, /_LibInfra_logContext_at_openRequestScopeScopeAssert/);
+      assert.ok(
+        source.includes(
+          '// "logContext" is carried at the scope boundary, not by the root container —',
+        ),
+      );
       assert.equal(typecheck(fixture), "");
     });
   });

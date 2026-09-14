@@ -10,20 +10,31 @@ import {
 import type { ComposedRegistrationOverrides } from "../runtime/composedOverrides.js";
 
 /**
- * One external key whose obligation is met at a scope boundary rather than on the root cradle.
+ * One external key whose root-cradle assertion is dropped, and wherever it is re-asserted instead.
  *
- * The assertion for such a key MOVES rather than vanishes: it is dropped from the `AppCradle` pick —
- * where it could only ever be false, since a value bound at scope-open never enters the root cradle —
- * and re-asserted against each reaching variant's emitted opener signature.
+ * The usual case is a key met at a scope boundary: the assertion MOVES rather than vanishes — it
+ * leaves the `AppCradle` pick, where it could only ever be false since a value bound at scope-open
+ * never enters the root cradle, and is re-asserted against each reaching variant's emitted opener
+ * signature.
  *
- * Deliberately stated as `(key, reaching openers)` and nothing more. The emitter has no idea WHY a
- * key relocated, which is the point: three separate mechanisms clear keys today — scope-reachability,
- * `scopeProvided`, and the variant-lbv exclusion in `scopeRootExternalsExclusion.ts` — and the latter
- * two currently drop the obligation with no replacement guard at all. Converging them onto this
- * emitter should be plumbing, not a rewrite, so the shape is theirs to fill too.
+ * Deliberately stated as `(key, reaching openers)` and almost nothing more. The emitter has no idea
+ * WHY a key left the pick beyond the one bit {@link reason} carries, which is the point: three
+ * separate mechanisms clear keys today — scope-reachability, `scopeProvided`, and the variant-lbv
+ * exclusion in `scopeRootExternalsExclusion.ts` — and the latter two currently drop the obligation
+ * with no replacement guard at all. Converging them onto this emitter should be plumbing, not a
+ * rewrite, so the shape is theirs to fill too.
  */
 export type RelocatedExternalAssertion = {
   readonly key: string;
+  /**
+   * Which mechanism dropped the key, for the emitted comment and nothing else.
+   *
+   * Absent reads as `"scope-boundary"`, which keeps every composition that predates the second
+   * value byte-identical. It exists because the comment above a dropped key is prose a human
+   * reads, and "carried at the scope boundary" is simply false of a key that no scope carries — it
+   * is not reached at all. A wrong comment in an emitted artifact is worse than no comment.
+   */
+  readonly reason?: "scope-boundary" | "unreachable";
   /**
    * Cradle keys of the openers that must carry {@link key} — those whose variant DECLARES it.
    *
@@ -198,8 +209,15 @@ const buildRelocatedAssertionLines = (
     const keyAccess = tsPropertyAccessKey(entry.key);
 
     lines.push(
-      `// ${JSON.stringify(entry.key)} is carried at the scope boundary, not by the root container —`,
-      `// each assertion below reads the declared late-bound values of one opener that resolves it.`,
+      ...(entry.reason === "unreachable"
+        ? [
+            `// ${JSON.stringify(entry.key)} is demanded only by scoped factories and no resolution path`,
+            `// reaches it, so the root container is never asked for it and there is nothing to assert.`,
+          ]
+        : [
+            `// ${JSON.stringify(entry.key)} is carried at the scope boundary, not by the root container —`,
+            `// each assertion below reads the declared late-bound values of one opener that resolves it.`,
+          ]),
     );
 
     for (const openerKey of entry.reachingOpenerKeys) {

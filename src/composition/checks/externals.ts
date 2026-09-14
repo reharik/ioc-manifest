@@ -400,6 +400,81 @@ const buildMixedReachabilityIssue = (
     : {}),
 });
 
+/**
+ * Why one demanding factory is treated as root-resolvable, in the reader's terms.
+ *
+ * The distinction this draws is the difference between two entirely different afternoons. A unit
+ * deliberately marked singleton is a design fact, and the fix is elsewhere. A unit that records
+ * `"singleton"` only because its package declared no `lifetimeMarkers` is a CONFIG GAP: the base
+ * class saying `extends RequestScopeLifeCycle` is inert in that package's generation, the manifest
+ * row says singleton, and this rule can only read the row. Pointing at the missing block is the
+ * whole fix, and a reader has no way to guess it from an unsatisfied-external message.
+ *
+ * The third case is the honest one: a manifest whose generator predates `lifetimeSource` records no
+ * provenance at all, and absence there does NOT mean `"default"` — see `IOC_MANIFEST_FEATURES`.
+ * Saying "not recorded" is the only thing that manifest supports.
+ */
+const blockerLifetimeNote = (unit: ComposedGraphUnit): string => {
+  const lifetime = unit.lifetime ?? "(none recorded)";
+  if (!unit.lifetimeProvenanceDeclared) {
+    return `lifetime ${lifetime}; this manifest records no lifetime provenance`;
+  }
+  if (unit.lifetimeSource === "default") {
+    return `lifetime ${lifetime} BY DEFAULT — nothing in ${unit.packageLabel} declared one`;
+  }
+  return `lifetime ${lifetime}${unit.lifetimeSource === undefined ? "" : ` (from ${unit.lifetimeSource})`}`;
+};
+
+/** True when a blocker is singleton only because its package declared no lifetime at all. */
+const isDefaultLifetime = (unit: ComposedGraphUnit): boolean =>
+  unit.lifetimeProvenanceDeclared && unit.lifetimeSource === "default";
+
+/**
+ * The detail lines explaining why an unreachable key was NOT cleared.
+ *
+ * "Not cleared" without saying why is the shape of message someone files an issue about: the reader
+ * sees an unsatisfied external for a key nothing in their app appears to use, and has no way to
+ * learn that one root-resolvable demander is the entire reason. So the demanders are named, with
+ * the lifetime each one records and where that lifetime came from.
+ */
+const unreachableBlockedDetails = (
+  blockedBy: readonly ComposedGraphUnit[],
+  demanderCount: number,
+): string[] => {
+  if (demanderCount === 0) {
+    return [
+      "No resolution path reaches this key — but no composed unit records a demand for it either, so there is nothing to conclude from that silence and the obligation stands.",
+    ];
+  }
+  return [
+    `No resolution path reaches this key, but it is not cleared: ${blockedBy.length} of the ${demanderCount} factor${demanderCount === 1 ? "y" : "ies"} demanding it ${blockedBy.length === 1 ? "is" : "are"} resolvable from the root container, and a resolve from the app's composition root is not visible to this walk.`,
+    ...blockedBy.map(
+      (unit) =>
+        `  ${demandSiteLabel(unit)} — ${blockerLifetimeNote(unit)}`,
+    ),
+    "A key demanded only by SCOPED factories is cleared instead: a root resolve cannot reach a scoped factory, so an unseen one cannot hide a path to the key.",
+  ];
+};
+
+/**
+ * The fix line for a not-cleared unreachable key.
+ *
+ * A default-lifetime blocker gets its own, because the generic "register a factory" remedy is the
+ * wrong advice for it — the value is not missing, the lifetime is unread.
+ */
+const unreachableBlockedFix = (
+  externalKey: string,
+  demandedText: string,
+  blockedBy: readonly ComposedGraphUnit[],
+): string => {
+  const defaults = blockedBy.filter(isDefaultLifetime);
+  if (defaults.length === 0) {
+    return `Register a factory for ${demandedText} under key ${JSON.stringify(externalKey)} in this app, or compose another manifest that supplies it.`;
+  }
+  const packages = [...new Set(defaults.map((unit) => unit.packageLabel))];
+  return `Register a factory for ${demandedText} under key ${JSON.stringify(externalKey)} in this app — or, if ${packages.join(", ")} meant ${defaults.length === 1 ? "this factory" : "these factories"} to be scoped, add a \`lifetimeMarkers\` block to ${packages.length === 1 ? "its" : "their"} \`ioc.config\` and regenerate: without one the marker base class is inert and the manifest records a default singleton, which this check must read as root-resolvable.`;
+};
+
 export type CheckExternalsOptions = {
   /**
    * The program `checkRegistryIntegrity` already built and inspected. Shared so the gate and the
@@ -514,15 +589,14 @@ export const checkExternalsSatisfaction = (
                 scopeProvidedKeys,
               );
 
-        // `unreachable` deliberately falls through to the ordinary unsatisfied error below.
+        // `unreachable-blocked` falls through to the ordinary unsatisfied error below, and the
+        // reason it must is the whole reason the unrestricted unreachable rule was pulled twice.
         //
-        // It is tempting to clear it — no recorded path reaches the key, so nothing will ever ask
-        // for it — and this has now been tried twice. What defeats it is not an exotic shape but
-        // the ordinary one: the walk's root seeds are the app's REGISTERED units, while an app's
-        // real resolution roots are its composition root's own `container.resolve(...)` calls, and
-        // those are recorded nowhere. `bootstrap.ts` is not a discovery target and has no manifest
-        // row. A library unit the bootstrap resolves directly is therefore "unreachable" to this
-        // walk while being the very thing the app runs on.
+        // The walk's root seeds are the app's REGISTERED units, while an app's real resolution
+        // roots are its composition root's own `container.resolve(...)` calls, and those are
+        // recorded nowhere. `bootstrap.ts` is not a discovery target and has no manifest row. A
+        // library unit the bootstrap resolves directly is therefore "unreachable" to this walk
+        // while being the very thing the app runs on.
         //
         // Reproduced in `examples/multi-package`: give `buildUploadService` a new unsatisfied
         // external, regenerate the library, and `ioc validate` in the app reports "no issues found"
@@ -530,10 +604,16 @@ export const checkExternalsSatisfaction = (
         // no dynamic resolution, no container closure — just a composition root doing what the docs
         // show. Clearing on that inference trades a build error for a production one.
         //
-        // Making it sound needs the resolution ROOTS modelled, not more falsifiers closed: either
-        // the app declares its entry points, or the tool reads them off the composition root. Until
-        // one of those exists, a key that genuinely is not a container obligation is said so by the
-        // package that owns it, with `scopeProvided` — a declaration by the party that knows.
+        // What DOES clear is the case where every factory demanding the key is scoped — the
+        // `unreachable` branch immediately below. A bootstrap resolve goes to the root container
+        // and a root resolve cannot reach a scoped factory, so the unseen-root problem cannot
+        // arise: there is no hidden path for the walk to have missed. The general case is
+        // unchanged, and making IT sound still needs the resolution roots modelled, not more
+        // falsifiers closed.
+        if (reachability.kind === "unreachable") {
+          continue;
+        }
+
         if (reachability.kind === "scope-only") {
           const issue = buildScopeReachableIssue(
             slice,
@@ -568,9 +648,21 @@ export const checkExternalsSatisfaction = (
             `key:       ${JSON.stringify(externalKey)}  demanded by ${sliceLabel(slice)}`,
             `demanded:  ${demandedText}`,
             "No composed manifest offers this key in its IocGeneratedCradle.",
+            ...(reachability.kind === "unreachable-blocked"
+              ? unreachableBlockedDetails(
+                  reachability.blockedBy,
+                  reachability.demanderCount,
+                )
+              : []),
           ],
           suggestedFix:
-            `Register a factory for ${demandedText} under key ${JSON.stringify(externalKey)} in this app, or compose another manifest that supplies it.`,
+            reachability.kind === "unreachable-blocked"
+              ? unreachableBlockedFix(
+                  externalKey,
+                  demandedText,
+                  reachability.blockedBy,
+                )
+              : `Register a factory for ${demandedText} under key ${JSON.stringify(externalKey)} in this app, or compose another manifest that supplies it.`,
           // No suppliers to name — the whole finding is that there are none. The demander alone is
           // the package whose artifacts this rests on, and the one the field kept finding stale.
           packages: attributionFor(slice),

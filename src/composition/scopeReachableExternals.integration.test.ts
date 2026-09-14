@@ -19,6 +19,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import type { IocConfig } from "../config/iocConfig.js";
+import type {
+  IocImplementationLifetime,
+  IocLifetimeProvenance,
+} from "../core/manifest.js";
 import { MANIFEST_SCHEMA_VERSION } from "../schemaVersion.js";
 import { buildCompositionSlice } from "./compositionContext.js";
 import { runCompositionChecks } from "./runCompositionChecks.js";
@@ -45,10 +49,18 @@ type UnitSpec = {
   readonly registrationKey: string;
   readonly modulePath: string;
   readonly dependencyKeys?: readonly string[];
+  /** Defaults to `"singleton"`, which is what a row with nothing declared records. */
+  readonly lifetime?: IocImplementationLifetime;
+  /** Written only when given, exactly as a manifest omits it when the plan carried none. */
+  readonly lifetimeSource?: IocLifetimeProvenance;
 };
 
 const unitEntry = (unit: UnitSpec): string =>
-  `${unit.implementationName}: { registrationKey: ${JSON.stringify(unit.registrationKey)}, exportName: ${JSON.stringify(`build__${unit.implementationName}`)}, modulePath: ${JSON.stringify(unit.modulePath)}, contractName: ${JSON.stringify(unit.contractName)}, implementationName: ${JSON.stringify(unit.implementationName)}, lifetime: "singleton"${
+  `${unit.implementationName}: { registrationKey: ${JSON.stringify(unit.registrationKey)}, exportName: ${JSON.stringify(`build__${unit.implementationName}`)}, modulePath: ${JSON.stringify(unit.modulePath)}, contractName: ${JSON.stringify(unit.contractName)}, implementationName: ${JSON.stringify(unit.implementationName)}, lifetime: ${JSON.stringify(unit.lifetime ?? "singleton")}${
+    unit.lifetimeSource === undefined
+      ? ""
+      : `, lifetimeSource: ${JSON.stringify(unit.lifetimeSource)}`
+  }${
     unit.dependencyKeys === undefined
       ? ""
       : `, dependencyKeys: ${JSON.stringify(unit.dependencyKeys)}`
@@ -133,6 +145,13 @@ type WorkspaceSpec = {
   readonly libExternals?: string;
   /** Drops the coverage token from the library manifest, to pin the withheld-classification path. */
   readonly libWithoutCoverageToken?: boolean;
+  /**
+   * Drops the `lifetimeSource` token from the library manifest.
+   *
+   * Absence of the token is the third reading of a missing provenance — "the generator that wrote
+   * this predates the field" — and the one a diagnostic must not report as `"default"`.
+   */
+  readonly libWithoutProvenanceToken?: boolean;
 };
 
 const LIB_UNITS: readonly UnitSpec[] = [
@@ -175,9 +194,12 @@ const workspace = (spec: WorkspaceSpec): CompositionContext => {
     spec.appExternals ?? "",
   );
   const libManifestSource = manifestFile(spec.libUnits ?? LIB_UNITS);
-  const libManifest = spec.libWithoutCoverageToken === true
+  const libWithCoverage = spec.libWithoutCoverageToken === true
     ? libManifestSource.replace(', "dependencyKeysComplete"', "")
     : libManifestSource;
+  const libManifest = spec.libWithoutProvenanceToken === true
+    ? libWithCoverage.replace(', "lifetimeSource"', "")
+    : libWithCoverage;
   const libTypes = typesFile(
     spec.libCradle ?? "  scopedLogger: { info: (message: string) => void };",
     spec.libExternals ?? "  logContext: Record<string, unknown>;",
@@ -397,21 +419,21 @@ describe("scope-reachable externals", () => {
 
   describe("When the consumer composes the package and opens no scope at all", () => {
     /**
-     * An unreachable key is still reported, and the reason is structural rather than a missing
-     * guard.
+     * The demander here is a SINGLETON, and that is the whole reason the key is still reported.
      *
      * The walk seeds from the app's REGISTERED units. An app's real resolution roots are its
      * composition root's own `container.resolve(...)` calls, which live in a bootstrap file that is
      * not a discovery target and has no manifest row — so a library unit the bootstrap resolves
      * directly looks unreachable here while being exactly what the app runs on.
      *
-     * Reproduced in `examples/multi-package` while this rule was briefly enabled: a new unsatisfied
-     * external on `buildUploadService` (which the example's bootstrap resolves) left `ioc validate`
-     * reporting "no issues found" while the app threw `Could not resolve 'auditSink'` at its first
-     * resolve. Ordinary code throughout — no rest element, no dynamic resolution.
+     * Reproduced in `examples/multi-package` while the unrestricted rule was briefly enabled: a new
+     * unsatisfied external on `buildUploadService` (which the example's bootstrap resolves) left
+     * `ioc validate` reporting "no issues found" while the app threw `Could not resolve
+     * 'auditSink'` at its first resolve. Ordinary code throughout — no rest element, no dynamic
+     * resolution.
      *
-     * Clearing on that inference would trade a build error for a production one. Making it sound
-     * needs the resolution ROOTS modelled, not more falsifiers closed.
+     * A root resolve CAN reach a singleton, so that reproduction still bites here and the key is
+     * not cleared. The scoped-demander case below is the one where it cannot.
      */
     it("should report the ordinary unsatisfied external", () => {
       const issues = externalsIssues(
@@ -426,6 +448,22 @@ describe("scope-reachable externals", () => {
       );
       assert.equal(issues.length, 1);
       assert.match(issues[0]!.summary, /nothing supplies "logContext"/);
+    });
+
+    it("should name the demander that blocked the clearance", () => {
+      const issues = externalsIssues(
+        runCompositionChecks(
+          appConfig(),
+          workspace({
+            label: "no-scopes-blocker-named",
+            appUnits: [HTTP_SERVER],
+            appCradle: "  httpServer: { listen: () => void };",
+          }),
+        ),
+      );
+      const text = issues[0]!.details.join("\n");
+      assert.match(text, /not cleared: 1 of the 1 factory demanding it is resolvable from the root container/);
+      assert.match(text, /"build__ScopedLogger" in logger\/scopedLogger\.ts \(@lib\/infrastructure\)/);
     });
 
     /**
@@ -583,6 +621,219 @@ describe("scope-reachable externals", () => {
       );
       assert.equal(issues.length, 1);
       assert.match(issues[0]!.summary, /nothing supplies "logContext"/);
+    });
+  });
+
+  /**
+   * The scoped-only carve-out: the one shape where "no recorded path reaches it" is a verdict.
+   *
+   * The unrestricted rule could not ship because the walk cannot see the composition root, so an
+   * unreachable key might still be resolved by a `bootstrap.ts` nobody recorded. That ambiguity
+   * requires the demanding factory to be reachable from the ROOT container — and a scoped factory
+   * is not. A bootstrap resolve against the root fails at runtime no matter what this walk saw, so
+   * there is no hidden path for it to have missed.
+   *
+   * Motivating case: `logContext`, demanded only by a scoped logger in a shared infrastructure
+   * package, in a worker that composes the package and opens no scope. Before this rule that worker
+   * simply could not generate.
+   */
+  describe("When every factory demanding an unreachable key is scoped", () => {
+    const scopedLogger = (
+      extra: Partial<UnitSpec> = {},
+    ): readonly UnitSpec[] => [{ ...LIB_UNITS[0]!, lifetime: "scoped", ...extra }];
+
+    it("should clear the key with no diagnostic at all", () => {
+      const issues = runCompositionChecks(
+        appConfig(),
+        workspace({
+          label: "scoped-only-unreachable",
+          appUnits: [HTTP_SERVER],
+          appCradle: "  httpServer: { listen: () => void };",
+          libUnits: scopedLogger(),
+        }),
+      );
+      assert.deepEqual(externalsIssues(issues), []);
+    });
+
+    it("should clear it when the lifetime came from a declared marker", () => {
+      const issues = runCompositionChecks(
+        appConfig(),
+        workspace({
+          label: "scoped-by-marker",
+          appUnits: [HTTP_SERVER],
+          appCradle: "  httpServer: { listen: () => void };",
+          libUnits: scopedLogger({ lifetimeSource: "lifetime-marker" }),
+        }),
+      );
+      assert.deepEqual(externalsIssues(issues), []);
+    });
+
+    /**
+     * The same library, in a consumer that DOES reach the key under a scope — the worker/api split
+     * that motivated the rule, with one library definition and two consumers.
+     *
+     * Nothing about the scoped-demander carve-out touches this half: the key is reached, so it
+     * relocates to the variants exactly as it did before, and the obligation is still owed there.
+     */
+    it("should still relocate the key in a consumer whose scope reaches it", () => {
+      const reaching = workspace({
+        label: "scoped-only-but-reached",
+        appUnits: [VIEWER_SERVICE, HTTP_SERVER],
+        appCradle: APP_CRADLE,
+        libUnits: scopedLogger({ lifetimeSource: "lifetime-marker" }),
+        appVariants: [
+          {
+            variantName: "authenticatedRead",
+            exportName: "build__AuthenticatedReadGraphQLContext",
+            lbvKeys: [],
+            demands: ["viewerAlbumReadService"],
+          },
+        ],
+      });
+      const issues = externalsIssues(runCompositionChecks(appConfig(), reaching));
+
+      // Relocated, not cleared: the variant that reaches it does not carry it, so the obligation
+      // lands there and is reported there.
+      assert.equal(issues.length, 1);
+      assert.match(issues[0]!.summary, /scope-reachable only/);
+      assert.match(
+        issues[0]!.details.join("\n"),
+        /via: authenticatedRead → viewerAlbumReadService → scopedLogger → logContext/,
+      );
+    });
+
+    it("should pass in that consumer once the variant declares the key", () => {
+      const issues = runCompositionChecks(
+        appConfig(),
+        workspace({
+          label: "scoped-only-reached-declared",
+          appUnits: [VIEWER_SERVICE, HTTP_SERVER],
+          appCradle: APP_CRADLE,
+          libUnits: scopedLogger({ lifetimeSource: "lifetime-marker" }),
+          appVariants: [
+            {
+              variantName: "authenticatedRead",
+              exportName: "build__AuthenticatedReadGraphQLContext",
+              lbvKeys: ["logContext"],
+              demands: ["viewerAlbumReadService"],
+            },
+          ],
+        }),
+      );
+      assert.deepEqual(externalsIssues(issues), []);
+    });
+  });
+
+  describe("When one scoped and one root-resolvable factory demand the same unreachable key", () => {
+    /**
+     * The mixed case collapses into the restriction with nothing extra to write: one root-resolvable
+     * demander means the general unsoundness applies, and a scoped demander alongside it does not
+     * launder that. There is no third treatment.
+     */
+    const scenario = () =>
+      externalsIssues(
+        runCompositionChecks(
+          appConfig(),
+          workspace({
+            label: "one-scoped-one-root",
+            appUnits: [HTTP_SERVER],
+            appCradle: "  httpServer: { listen: () => void };",
+            libUnits: [
+              { ...LIB_UNITS[0]!, lifetime: "scoped", lifetimeSource: "lifetime-marker" },
+              {
+                contractName: "AuditWriter",
+                implementationName: "AuditWriter",
+                registrationKey: "auditWriter",
+                modulePath: "audit/auditWriter.ts",
+                dependencyKeys: ["logContext"],
+                lifetime: "singleton",
+                lifetimeSource: "factory-config",
+              },
+            ],
+            libCradle: [
+              "  scopedLogger: { info: (message: string) => void };",
+              "  auditWriter: { write: (line: string) => void };",
+            ].join("\n"),
+          }),
+        ),
+      );
+
+    it("should not clear the key", () => {
+      const issues = scenario();
+      assert.equal(issues.length, 1);
+      assert.match(issues[0]!.summary, /nothing supplies "logContext"/);
+    });
+
+    it("should name only the root-resolvable demander as the blocker", () => {
+      const text = scenario()[0]!.details.join("\n");
+      assert.match(text, /not cleared: 1 of the 2 factories demanding it is resolvable/);
+      assert.match(text, /"build__AuditWriter" in audit\/auditWriter\.ts/);
+      assert.doesNotMatch(text, /build__ScopedLogger/);
+      assert.match(text, /lifetime singleton \(from factory-config\)/);
+    });
+  });
+
+  describe("When the demander records a default singleton because nothing declared a lifetime", () => {
+    /**
+     * The config gap, which is a different afternoon from a deliberate singleton.
+     *
+     * A package whose `ioc.config` declares no `lifetimeMarkers` block generates rows that say
+     * `lifetime: "singleton", lifetimeSource: "default"` even when the class extends a scope
+     * lifecycle marker — the marker is inert without the block. This rule can only read the row, so
+     * it correctly refuses to clear; the diagnostic has to say that, or the reader is left staring
+     * at an unsatisfied external whose entire cause is one missing config block.
+     */
+    const scenario = () =>
+      externalsIssues(
+        runCompositionChecks(
+          appConfig(),
+          workspace({
+            label: "default-singleton-demander",
+            appUnits: [HTTP_SERVER],
+            appCradle: "  httpServer: { listen: () => void };",
+            libUnits: [{ ...LIB_UNITS[0]!, lifetimeSource: "default" }],
+          }),
+        ),
+      );
+
+    it("should not clear the key", () => {
+      assert.equal(scenario().length, 1);
+    });
+
+    it("should say the lifetime was defaulted rather than declared", () => {
+      assert.match(
+        scenario()[0]!.details.join("\n"),
+        /lifetime singleton BY DEFAULT — nothing in @lib\/infrastructure declared one/,
+      );
+    });
+
+    it("should point the fix at the owning package's lifetimeMarkers block", () => {
+      assert.match(
+        scenario()[0]!.suggestedFix,
+        /add a `lifetimeMarkers` block to its `ioc\.config` and regenerate/,
+      );
+      assert.match(scenario()[0]!.suggestedFix, /@lib\/infrastructure/);
+    });
+
+    /**
+     * The third reading of a missing provenance, and the one a diagnostic must not report as
+     * `"default"`: a manifest whose generator predates the field records nothing, and absence there
+     * says only that nobody wrote it down.
+     */
+    it("should say provenance is unrecorded when the manifest declares no such feature", () => {
+      const text = externalsIssues(
+        runCompositionChecks(
+          appConfig(),
+          workspace({
+            label: "no-provenance-token",
+            appUnits: [HTTP_SERVER],
+            appCradle: "  httpServer: { listen: () => void };",
+            libWithoutProvenanceToken: true,
+          }),
+        ),
+      )[0]!.details.join("\n");
+      assert.match(text, /lifetime singleton; this manifest records no lifetime provenance/);
+      assert.doesNotMatch(text, /BY DEFAULT/);
     });
   });
 

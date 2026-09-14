@@ -45,6 +45,10 @@ import {
 } from "./checks/composedContractRows.js";
 import { isLocalSlice, sliceLabel } from "./sliceLabel.js";
 import type {
+  IocImplementationLifetime,
+  IocLifetimeProvenance,
+} from "../core/manifest.js";
+import type {
   CompositionContext,
   ParsedScopeRootVariant,
 } from "./types.js";
@@ -65,6 +69,29 @@ export type ComposedGraphUnit = {
   /** Index into `ctx.slices`; `0` is the local package. */
   readonly sliceIndex: number;
   readonly dependencyKeys: readonly string[];
+  /**
+   * The lifetime this unit's manifest RECORDS — never one recomputed here.
+   *
+   * A composing app cannot see `class ScopedLogger extends RequestScopeLifeCycle` in a composed
+   * package's sources; it sees the row that package's generator wrote. So the recorded value is the
+   * only honest input, and a package that declared no `lifetimeMarkers` records `"singleton"` here
+   * no matter what its base classes say. {@link lifetimeSource} is what makes that distinguishable.
+   *
+   * `undefined` when the row carries no lifetime at all. Read as "not scoped" everywhere, which is
+   * the conservative direction: it can only withhold a clearance, never grant one.
+   */
+  readonly lifetime: IocImplementationLifetime | undefined;
+  /** Provenance as the manifest records it. `undefined` when the row carries none. */
+  readonly lifetimeSource: IocLifetimeProvenance | undefined;
+  /**
+   * Whether the owning manifest declares the `"lifetimeSource"` feature token.
+   *
+   * Without it, an absent {@link lifetimeSource} is two readings of one silence — "nothing declared
+   * a lifetime" and "the generator that wrote this predates the field" — and a diagnostic that
+   * picked one would be wrong half the time. Carried per unit rather than looked up from the slice
+   * because {@link classifyExternalReachability} is handed the graph and not the context.
+   */
+  readonly lifetimeProvenanceDeclared: boolean;
 };
 
 /** One scope boundary a resolution path can cross. */
@@ -153,6 +180,8 @@ const unitsFromSlices = (
   // genuine collision between a local and a composed registration is `same-key-conflict`'s finding
   // to report — not a fact this graph should quietly resolve one way and then reason from.
   ctx.slices.forEach((slice, sliceIndex) => {
+    const lifetimeProvenanceDeclared =
+      slice.declaredFeatures?.includes(LIFETIME_SOURCE) === true;
     for (const [contractName, impls] of Object.entries(slice.contracts)) {
       for (const [implementationName, meta] of Object.entries(impls)) {
         if (byRegistrationKey.has(meta.registrationKey)) {
@@ -168,6 +197,9 @@ const unitsFromSlices = (
           sourceId: slice.sourceId,
           sliceIndex,
           dependencyKeys: dependencyKeysOf(meta),
+          lifetime: meta.lifetime,
+          lifetimeSource: meta.lifetimeSource,
+          lifetimeProvenanceDeclared,
         });
       }
     }
@@ -359,6 +391,9 @@ const variantsFromSlices = (
 
 const DEPENDENCY_KEYS_COMPLETE = "dependencyKeysComplete";
 
+/** The feature token that makes an absent `lifetimeSource` readable as "not recorded". */
+const LIFETIME_SOURCE = "lifetimeSource";
+
 const blindSpotsFor = (
   ctx: CompositionContext,
   variants: readonly ComposedGraphVariant[],
@@ -515,6 +550,12 @@ export const buildComposedResolutionGraph = (
       sourceId: variant.sourceId,
       sliceIndex: variant.sliceIndex,
       dependencyKeys: variant.dependencyKeys ?? [],
+      // A variant IS the scope boundary, so `"scoped"` is not a stand-in the way its registration
+      // key is — it is what the thing is. Recorded for completeness; no reader reaches it, because
+      // a key a variant demands is `scope-only` before the scoped-demander rule is ever consulted.
+      lifetime: "scoped",
+      lifetimeSource: undefined,
+      lifetimeProvenanceDeclared: false,
     };
     for (const key of variantAsUnit.dependencyKeys) {
       demandedBy.set(key, variantAsUnit);
@@ -588,18 +629,25 @@ export type ScopeVariantReach = {
  * - `scope-only` — every path to it crosses a scope boundary. Not a composition-level obligation at
  *   all; it propagates to the variants that reach it and is settled there.
  * - `mixed` — both. The root path is still unsatisfiable, and the scope paths do not launder it.
- * - `unreachable` — nothing in this composition resolves through it. Reported as an ordinary
- *   unsatisfied external all the same: the key has no scope boundary to relocate its emitted
- *   assertion to, so clearing it here would pass generation while `tsc` over the run's own
- *   `ioc-composed.ts` failed. A package whose key genuinely is not a container obligation says so
- *   itself, with `scopeProvided`, and the key never becomes an external at all. See the fall-through
- *   in `checks/externals.ts` for why an owner's declaration and a consumer-side inference are not
- *   interchangeable.
+ * - `unreachable` — nothing in this composition resolves through it AND every factory demanding it
+ *   is scoped. Cleared: no obligation, no diagnostic. See {@link scopedOnlyDemanders} for why the
+ *   scoped restriction is what makes this sound when the general form is not.
+ * - `unreachable-blocked` — nothing reaches it, but at least one demanding factory is resolvable
+ *   from the root container, so the unmodelled-roots problem applies and the key is reported as an
+ *   ordinary unsatisfied external. The blockers are carried so the report can name them: "not
+ *   cleared" without saying why is the shape of message someone files an issue about.
  * - `unknown` — the walk is incomplete, so none of the above is a verdict. Callers fall back.
  */
 export type ExternalKeyReachability =
   | { readonly kind: "unknown"; readonly blindSpots: readonly string[] }
   | { readonly kind: "unreachable" }
+  | {
+      readonly kind: "unreachable-blocked";
+      /** Every demanding factory that is not scoped. Empty when nothing demands the key at all. */
+      readonly blockedBy: readonly ComposedGraphUnit[];
+      /** How many factories demand the key in total, blockers included. */
+      readonly demanderCount: number;
+    }
   | { readonly kind: "root"; readonly rootDemands: readonly UnsuppliedDemand[] }
   | { readonly kind: "scope-only"; readonly reaches: readonly ScopeVariantReach[] }
   | {
@@ -607,6 +655,56 @@ export type ExternalKeyReachability =
       readonly rootDemands: readonly UnsuppliedDemand[];
       readonly reaches: readonly ScopeVariantReach[];
     };
+
+/**
+ * Every factory in the composed set whose recorded demand set names the key.
+ *
+ * Deliberately NOT restricted to the demanding slice, unlike everything else in the classification.
+ * The question the scoped restriction asks is "can anything in this container ask for this key from
+ * the root", and a root-resolvable demander in some other package makes the answer yes no matter
+ * whose `IocExternals` the key is declared in. Narrowing here would be narrowing the falsifier set.
+ */
+const demandersOfKey = (
+  graph: ComposedResolutionGraph,
+  key: string,
+): readonly ComposedGraphUnit[] =>
+  [...graph.unitByRegistrationKey.values()].filter((unit) =>
+    unit.dependencyKeys.includes(key),
+  );
+
+/**
+ * Whether an unreachable key can be cleared: every factory demanding it is scoped.
+ *
+ * ### Why this restriction, when the general rule could not ship
+ *
+ * Reachability seeds from REGISTERED units and cannot see the composition root. `bootstrap.ts` is
+ * not a discovery target and has no manifest row, so a library unit the bootstrap resolves directly
+ * is invisible to the walk — and "no recorded path reaches it" then means either "the app never
+ * uses it" or "the bootstrap uses it and I cannot see that". Clearing on that ambiguity trades a
+ * build error for a production one; the reproduction is in `checks/externals.ts`.
+ *
+ * The ambiguity cannot arise when every demander is scoped. A bootstrap resolve goes to the ROOT
+ * container, and a root resolve cannot reach a scoped factory — that resolution fails at runtime
+ * regardless of what this walk saw. So an unseen bootstrap resolve cannot hide a path to the key,
+ * and the unmodelled root set is irrelevant for this case. That is the whole argument, and it is
+ * one test.
+ *
+ * The mixed case collapses into it with nothing extra to write: if ANY demander is root-resolvable
+ * the general unsoundness applies and the key is not cleared, whether or not a scoped factory also
+ * demands it.
+ *
+ * ### Zero demanders is not a vacuous yes
+ *
+ * "Every demander is scoped" is trivially true of no demanders, and that reading would clear a key
+ * on the strength of having found nothing — the same mistake the zero-seeds blind spot exists to
+ * refuse. A key declared external that no composed unit records a demand for means the demand data
+ * does not show the key at all, which is a reason to withhold rather than to clear.
+ */
+const scopedOnlyDemanders = (
+  demanders: readonly ComposedGraphUnit[],
+): boolean =>
+  demanders.length > 0 &&
+  demanders.every((unit) => unit.lifetime === "scoped");
 
 /**
  * Classifies one external key by reachability, restricted to the slice that DEMANDS it.
@@ -663,5 +761,14 @@ export const classifyExternalReachability = (
   if (reaches.length > 0) {
     return { kind: "scope-only", reaches };
   }
-  return { kind: "unreachable" };
+
+  const demanders = demandersOfKey(graph, key);
+  if (scopedOnlyDemanders(demanders)) {
+    return { kind: "unreachable" };
+  }
+  return {
+    kind: "unreachable-blocked",
+    blockedBy: demanders.filter((unit) => unit.lifetime !== "scoped"),
+    demanderCount: demanders.length,
+  };
 };
